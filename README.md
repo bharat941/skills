@@ -174,6 +174,16 @@ The aem-replication skill contains four specialist sub-skills:
 - 12+ troubleshooting scenarios with step-by-step resolution
 - 3,575 lines of comprehensive documentation
 
+### AEM as a Cloud Service — Rapid Development Environment (RDE)
+
+The `aem-rde` skill provides expert assistance for the Adobe I/O CLI plugin `@adobe/aio-cli-plugin-aem-rde` — used to deploy, inspect, log-tail, snapshot, and troubleshoot AEM Rapid Development Environments via `aio aem rde …` commands.
+
+| Skill | Description |
+|-------|-------------|
+| `aem-rde` | Translate goals into the right `aio aem rde` commands (deploy, status, history, logs, inspect, snapshot, setup); diagnose RDE problems; guide setup, experimental feature flags, and CI/build-environment usage |
+
+See `plugins/aem/cloud-service/skills/aem-rde/` for the skill and its reference files (commands, configuration, deployment types, troubleshooting, workflows).
+
 ### AEM as a Cloud Service — Best Practices & Migration
 
 Under `plugins/aem/cloud-service/skills/`, **`best-practices/`** is the **general-purpose** Cloud Service skill: pattern modules, Java baseline references (SCR→OSGi DS, resolver/logging, and related refs), and day-to-day Cloud Service alignment. Use it **without** loading **migration** for greenfield or maintainability work. **`migration/`** (BPA/CAM orchestration) is **scoped to legacy AEM → AEM as a Cloud Service** (not Edge Delivery or 6.5 LTS); it **delegates** concrete refactors to **`best-practices`** (`references/`). **Installing the AEM as a Cloud Service plugin** (`aem-cloud-service`, or the `plugins/aem/cloud-service` path with `npx skills` / `gh upskill`) **includes both**; the agent should load the appropriate `SKILL.md` for the task. Use **`gh upskill` / `npx skills` with `--skill`** when you need a specific bundled skill (see **Installation** above).

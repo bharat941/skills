@@ -44,6 +44,8 @@ aio config:set -l cloudmanager_environmentid 67890
 
 ## Working with multiple RDEs
 
+> **Single-user constraint:** Per Adobe's official AEM documentation, ideally only one developer should use a given RDE at a time. Concurrent deployments from multiple developers race against each other and produce confusing state. For team workflows, give each developer their own RDE rather than sharing.
+
 The clean pattern is **one `.aio` file per project**:
 
 ```
