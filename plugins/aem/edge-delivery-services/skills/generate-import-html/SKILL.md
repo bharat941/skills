@@ -3,7 +3,7 @@ name: generate-import-html
 description: Generate structured HTML from authoring analysis for AEM Edge Delivery Services. Creates section structure, applies block tables, handles metadata, and manages images folder.
 license: Apache-2.0
 metadata:
-  version: "1.0.0"
+  version: "2.0.0"
 ---
 
 # Generate Import HTML
