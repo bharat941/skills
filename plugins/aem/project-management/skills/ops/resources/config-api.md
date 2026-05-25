@@ -130,7 +130,7 @@ curl -s -X POST \
 
 ### Create Site Config
 
-**Fails if site already exists.
+**Fails if site already exists.**
 
 ```bash
 curl -s -X PUT \
