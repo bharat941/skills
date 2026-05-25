@@ -34,7 +34,10 @@ curl -s --connect-timeout 15 --max-time 120 -X POST \
 
 > This uses the `/*` wildcard path which is not explicitly documented in the admin API. It follows the same pattern as other bulk endpoints but behavior may vary.
 
-Before executing, confirm: "This will attempt to invalidate ALL cached content for the site. Proceed? (yes/no)"
+Before executing, you MUST:
+1. Tell user: "This will attempt to invalidate ALL cached content for the site."
+2. Ask: "Do you want to proceed? (yes/no)"
+3. Only execute if user confirms with "yes"
 
 ```bash
 curl -s --connect-timeout 15 --max-time 120 -X POST \

@@ -82,6 +82,13 @@ curl -s --connect-timeout 15 --max-time 120 -X POST \
 
 ### Remove Resource from Snapshot
 
+**DESTRUCTIVE OPERATION — CONFIRMATION REQUIRED**
+
+Before executing, you MUST:
+1. Tell user: "This will remove {path} from snapshot '{snapshotId}'. The resource will no longer be part of this staged release."
+2. Ask: "Do you want to proceed? (yes/no)"
+3. Only execute if user confirms with "yes"
+
 ```bash
 curl -s --connect-timeout 15 --max-time 120 -X DELETE \
   -H "Authorization: Bearer ${IMS_TOKEN}" \

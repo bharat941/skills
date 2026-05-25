@@ -86,6 +86,15 @@ Returns per-path status within the job.
 
 ### Stop Job
 
+**CONFIRMATION REQUIRED**
+
+Stopping a partially-completed bulk job leaves remaining paths unprocessed. For preview/publish jobs, this can leave content in a half-published state.
+
+Before executing, you MUST:
+1. Tell user: "This will stop job '{jobName}'. Any remaining paths will not be processed. Already-processed paths will keep their new state."
+2. Ask: "Do you want to proceed? (yes/no)"
+3. Only execute if user confirms with "yes"
+
 ```bash
 curl -s --connect-timeout 15 --max-time 120 -X DELETE \
   -H "Authorization: Bearer ${IMS_TOKEN}" \

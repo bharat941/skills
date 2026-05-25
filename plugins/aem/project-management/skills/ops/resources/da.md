@@ -195,22 +195,30 @@ Repeat until you receive HTTP 204 (complete, no more items).
 
 ### Copy Content
 
+**CAUTION — CONFIRMATION REQUIRED**
+
 Copy files or folders within DA. Uses **form-data** (not JSON).
+
+Before executing, you MUST:
+1. State: "This will copy '{source}' to '{destination}'."
+2. Warn: "If content already exists at the destination path, it will be silently overwritten with no undo."
+3. Ask: "Do you want to proceed? (yes/no)"
+4. Only execute if user confirms with "yes"
 
 ```bash
 curl -s --connect-timeout 15 --max-time 120 -X POST \
   -H "Authorization: Bearer ${IMS_TOKEN}" \
-  -F "destination=/${DEST_PATH}" \
+  -F "destination=/${ORG}/${SITE}/${DEST_PATH}" \
   "https://admin.da.live/copy/${ORG}/${SITE}/${SOURCE_PATH}"
 ```
 
-**Important:** The `destination` value is the path **within the site** (without org prefix). It starts with `/` followed by the site-relative path.
+**Important:** The `destination` value MUST be the **full path including org and site prefix**: `/{org}/{site}/{path}`. Using a site-relative path (e.g. `/new-page.html` without the `/{org}/{site}` prefix) silently fails — the API returns HTTP 204 but no copy occurs.
 
 **Example:** Copy template to new page
 ```bash
 curl -s --connect-timeout 15 --max-time 120 -X POST \
   -H "Authorization: Bearer ${IMS_TOKEN}" \
-  -F "destination=/new-page.html" \
+  -F "destination=/myorg/mysite/new-page.html" \
   "https://admin.da.live/copy/myorg/mysite/templates/basic.html"
 ```
 
@@ -218,7 +226,7 @@ curl -s --connect-timeout 15 --max-time 120 -X POST \
 ```bash
 curl -s --connect-timeout 15 --max-time 120 -X POST \
   -H "Authorization: Bearer ${IMS_TOKEN}" \
-  -F "destination=/archive/article.html" \
+  -F "destination=/myorg/mysite/archive/article.html" \
   "https://admin.da.live/copy/myorg/mysite/drafts/article.html"
 ```
 
@@ -229,29 +237,37 @@ curl -s --connect-timeout 15 --max-time 120 -X POST \
 ```bash
 curl -s --connect-timeout 15 --max-time 120 -X POST \
   -H "Authorization: Bearer ${IMS_TOKEN}" \
-  -F "destination=/archive/old-blog" \
+  -F "destination=/myorg/mysite/archive/old-blog" \
   -F "continuation-token=${CONTINUATION_TOKEN}" \
   "https://admin.da.live/copy/myorg/mysite/blog"
 ```
 
 ### Move/Rename Content
 
+**CAUTION — CONFIRMATION REQUIRED**
+
 Move or rename files/folders. Uses **form-data** (not JSON).
+
+Before executing, you MUST:
+1. State: "This will move '{source}' to '{destination}'."
+2. Warn: "If content already exists at the destination path, it will be silently overwritten with no undo."
+3. Ask: "Do you want to proceed? (yes/no)"
+4. Only execute if user confirms with "yes"
 
 ```bash
 curl -s --connect-timeout 15 --max-time 120 -X POST \
   -H "Authorization: Bearer ${IMS_TOKEN}" \
-  -F "destination=/${DEST_PATH}" \
+  -F "destination=/${ORG}/${SITE}/${DEST_PATH}" \
   "https://admin.da.live/move/${ORG}/${SITE}/${SOURCE_PATH}"
 ```
 
-**Important:** The `destination` value is the path **within the site** (without org prefix). Destination cannot be a descendant of the source (returns 400).
+**Important:** The `destination` value MUST be the **full path including org and site prefix**: `/{org}/{site}/{path}`. Using a site-relative path (without the `/{org}/{site}` prefix) silently fails — the API returns HTTP 204 but no move occurs. Destination cannot be a descendant of the source (returns 400).
 
 **Example:** Rename file
 ```bash
 curl -s --connect-timeout 15 --max-time 120 -X POST \
   -H "Authorization: Bearer ${IMS_TOKEN}" \
-  -F "destination=/new-name.html" \
+  -F "destination=/myorg/mysite/new-name.html" \
   "https://admin.da.live/move/myorg/mysite/old-name.html"
 ```
 
@@ -259,7 +275,7 @@ curl -s --connect-timeout 15 --max-time 120 -X POST \
 ```bash
 curl -s --connect-timeout 15 --max-time 120 -X POST \
   -H "Authorization: Bearer ${IMS_TOKEN}" \
-  -F "destination=/archive/2024/article.html" \
+  -F "destination=/myorg/mysite/archive/2024/article.html" \
   "https://admin.da.live/move/myorg/mysite/drafts/article.html"
 ```
 
@@ -430,7 +446,16 @@ curl -s --connect-timeout 15 --max-time 120 \
 
 ### Update DA Site Config
 
+**⚠️ CRITICAL OPERATION — CONFIRMATION REQUIRED**
+
 Uses **form-data** with a `config` field containing the JSON sheet structure.
+
+Before executing, you MUST:
+1. GET the current config first and show it to the user
+2. Verify the new config includes at least one CONFIG write entry (otherwise everyone gets locked out permanently — requires Cloudflare KV escalation to fix)
+3. Warn: "This will replace the DA site config. If CONFIG write permission is missing, all access will be permanently locked."
+4. Ask: "Do you want to proceed? (yes/no)"
+5. Only execute if user confirms with "yes"
 
 ```bash
 # Multi-sheet config

@@ -362,22 +362,29 @@ Read `resources/config.md` for setup instructions if site or other values are mi
 | Operation | Resource | Risk Level |
 |-----------|----------|------------|
 | Unpublish (single/bulk) | `content.md` | HIGH - Removes from live site |
+| Bulk publish (> 50 paths) | `content.md` | MEDIUM - Large surface area, partial failures possible |
 | Delete preview | `content.md` | MEDIUM |
 | Delete code | `code.md` | HIGH - Affects all sites in repoless |
+| Purge all cache (wildcard) | `cache.md` | MEDIUM - Site-wide cache miss spike |
 | Remove from index | `index.md` | MEDIUM - Removes from search |
 | Delete snapshot | `snapshots.md` | MEDIUM |
+| Remove resource from snapshot | `snapshots.md` | LOW - Changes staged release contents |
 | Remove user | `users.md` | HIGH - Revokes access |
-| Stop job | `jobs.md` | LOW |
+| Stop job | `jobs.md` | MEDIUM - Can leave content half-published |
 | Delete org/site config | `config-api.md` | CRITICAL - Can break site |
+| Config update (org/site) | `config-api.md` | HIGH - POST replaces entire config; can break site if malformed |
 | Delete secret | `secrets.md` | HIGH - Can break integrations |
 | Revoke API key | `apikeys.md` | HIGH - Can break CI/CD |
 | DA delete | `da.md` | HIGH - Permanently deletes from DA |
-| DA copy/move (overwrite) | `da.md` | MEDIUM - Can overwrite destination |
+| DA copy (overwrite) | `da.md` | MEDIUM - Can silently overwrite destination |
+| DA move/rename (overwrite) | `da.md` | MEDIUM - Can silently overwrite destination |
 | DA update config | `da.md` | HIGH - Can lock out all users if CONFIG write permission missing |
 | Revoke token | `tokens.md` | HIGH - Can break access |
 | Delete config version | `versioning.md` | MEDIUM - Permanently removes config history |
 | Restore config version | `versioning.md` | HIGH - Replaces current config |
-| Config update (org/site) | `config-api.md` | HIGH - Can break site if malformed |
+| Delete profile config | `profiles.md` | MEDIUM - Removes profile settings |
+| Delete index config | `index-config.md` | MEDIUM - Removes search indexing rules |
+| Delete sitemap config | `sitemap-config.md` | MEDIUM - Removes sitemap rules |
 
 ### Non-Destructive but Dangerous Operations
 

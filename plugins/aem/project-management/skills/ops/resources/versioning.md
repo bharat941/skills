@@ -84,7 +84,10 @@ curl -s --connect-timeout 15 --max-time 120 \
 ### Delete Version
 **DESTRUCTIVE - CONFIRMATION REQUIRED**
 
-Confirm: "This will permanently delete version '${VERSION_ID}'. Proceed? (yes/no)"
+Before executing, you MUST:
+1. Tell user: "This will permanently delete version '${VERSION_ID}'. The config history entry cannot be recovered."
+2. Ask: "Do you want to proceed? (yes/no)"
+3. Only execute if user confirms with "yes"
 
 ```bash
 # Org config version
@@ -106,7 +109,10 @@ curl -s --connect-timeout 15 --max-time 120 -X DELETE \
 ### Restore Version
 **CAUTION - CONFIRMATION REQUIRED**
 
-Confirm: "This will restore config to version '${VERSION_ID}'. Current config will be replaced. Proceed? (yes/no)"
+Before executing, you MUST:
+1. Tell user: "This will restore config to version '${VERSION_ID}'. The current config will be REPLACED entirely."
+2. Ask: "Do you want to proceed? (yes/no)"
+3. Only execute if user confirms with "yes"
 
 > Restore uses a `?restoreVersion=` query parameter on the config's own endpoint (POST), not on the versions sub-path.
 

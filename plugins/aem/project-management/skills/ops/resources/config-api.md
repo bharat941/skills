@@ -50,6 +50,17 @@ curl -s --connect-timeout 15 --max-time 120 \
 > Always GET the current config first, modify the full JSON, and POST the complete object back.
 > Sending a partial config will DELETE all fields not included in your request.
 ### Update Organization Config
+**⚠️ FULL REPLACE — CONFIRMATION REQUIRED**
+
+POST replaces the ENTIRE organization configuration (it is NOT a merge/patch).
+
+Before executing, you MUST:
+1. GET the current config first and show it to the user
+2. Show the proposed changes clearly
+3. Warn: "This will REPLACE the entire org config. Any fields not included will be deleted."
+4. Ask: "Do you want to proceed? (yes/no)"
+5. Only execute if user confirms with "yes"
+
 ```bash
 curl -s --connect-timeout 15 --max-time 120 -X POST \
   -H "Authorization: Bearer ${IMS_TOKEN}" \
@@ -98,6 +109,17 @@ curl -s --connect-timeout 15 --max-time 120 \
 
 > **⚠️ IMPORTANT: POST replaces the ENTIRE site configuration.** Always GET first, modify, then POST the full config back. Partial updates will wipe unincluded fields.
 ### Update Site Config
+**⚠️ FULL REPLACE — CONFIRMATION REQUIRED**
+
+POST replaces the ENTIRE site configuration (it is NOT a merge/patch).
+
+Before executing, you MUST:
+1. GET the current config first and show it to the user
+2. Show the proposed changes clearly
+3. Warn: "This will REPLACE the entire site config for '{site}'. Any fields not included will be deleted."
+4. Ask: "Do you want to proceed? (yes/no)"
+5. Only execute if user confirms with "yes"
+
 ```bash
 curl -s --connect-timeout 15 --max-time 120 -X POST \
   -H "Authorization: Bearer ${IMS_TOKEN}" \

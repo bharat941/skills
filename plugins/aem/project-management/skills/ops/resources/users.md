@@ -155,7 +155,10 @@ curl -s --connect-timeout 15 --max-time 120 -X POST \
 ### Remove Org User
 **DESTRUCTIVE OPERATION - CONFIRMATION REQUIRED**
 
-Confirm: "This will remove {userId} from the organization. Proceed? (yes/no)"
+Before executing, you MUST:
+1. Tell user: "This will remove {userId} from the organization. They will lose access to all sites under this org."
+2. Ask: "Do you want to proceed? (yes/no)"
+3. Only execute if user confirms with "yes"
 
 ```bash
 curl -s --connect-timeout 15 --max-time 120 -X DELETE \

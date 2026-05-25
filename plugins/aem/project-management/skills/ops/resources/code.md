@@ -62,7 +62,10 @@ curl -s --connect-timeout 15 --max-time 120 \
 
 **DESTRUCTIVE OPERATION - CONFIRMATION REQUIRED**
 
-Confirm: "This will delete {path} from the code bus. In repoless setups, this affects ALL sites. Proceed? (yes/no)"
+Before executing, you MUST:
+1. Tell user: "This will delete {path} from the code bus. In repoless setups, this affects ALL sites sharing the codebase."
+2. Ask: "Do you want to proceed? (yes/no)"
+3. Only execute if user confirms with "yes"
 
 ```bash
 curl -s --connect-timeout 15 --max-time 120 -X DELETE \

@@ -70,7 +70,10 @@ curl -s --connect-timeout 15 --max-time 120 -X POST \
 
 **DESTRUCTIVE OPERATION - CONFIRMATION REQUIRED**
 
-Before executing, confirm with user: "This will delete the preview for {path}. Proceed? (yes/no)"
+Before executing, you MUST:
+1. Tell user: "This will delete the preview for {path}."
+2. Ask: "Do you want to proceed? (yes/no)"
+3. Only execute if user confirms with "yes"
 
 ```bash
 curl -s --connect-timeout 15 --max-time 120 -X DELETE \
@@ -81,6 +84,7 @@ curl -s --connect-timeout 15 --max-time 120 -X DELETE \
 ### Publish (Single)
 
 **Requires `basic_publish`, `publish`, or `admin` role** (`live:write` permission).
+**Important:** If no preview has been triggered for this path in the current session, suggest: "Do you want me to preview first to verify the content, then publish?"
 
 ```bash
 curl -s --connect-timeout 15 --max-time 120 -X POST \
@@ -92,9 +96,16 @@ curl -s --connect-timeout 15 --max-time 120 -X POST \
 
 ### Publish (Bulk)
 
+**CONFIRMATION REQUIRED for > 50 paths.**
+
 **Limit: 1000 paths max per request.** For larger sets, batch into multiple calls.
 
-**DA sites:** Bulk operations with `/*` wildcard are not supported on Document Authoring sites. List paths explicitly instead.
+Before executing bulk publish with more than 50 paths, you MUST:
+1. Show the full list of paths that will be published
+2. Ask: "This will publish {N} pages to the live site. Do you want to proceed? (yes/no)"
+3. Only execute if user confirms with "yes"
+
+For wildcard (`/*`) operations, explain: "This creates an async job that may process thousands of pages."
 
 ```bash
 curl -s --connect-timeout 15 --max-time 120 -X POST \

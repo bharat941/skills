@@ -51,7 +51,10 @@ curl -s --connect-timeout 15 --max-time 120 \
 ### Revoke Token
 **DESTRUCTIVE OPERATION - CONFIRMATION REQUIRED**
 
-Confirm: "This will revoke token '{tokenId}'. Any systems using this token will lose access. Proceed? (yes/no)"
+Before executing, you MUST:
+1. Tell user: "This will revoke token '{tokenId}'. Any systems using this token will lose access immediately."
+2. Ask: "Do you want to proceed? (yes/no)"
+3. Only execute if user confirms with "yes"
 
 ```bash
 curl -s --connect-timeout 15 --max-time 120 -X DELETE \
