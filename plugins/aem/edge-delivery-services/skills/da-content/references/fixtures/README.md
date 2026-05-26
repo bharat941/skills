@@ -1,7 +1,7 @@
 # Asset boundary fixtures
 
 Empirical test fixtures used to verify the asset-handling rules in
-[references/media.md §2 (Asset lifecycle)](../references/media.md). If
+[references/media.md §2 (Asset lifecycle)](../media.md). If
 EDS preview-time sideloading behavior changes, re-upload these and
 diff the rendered output to confirm.
 
