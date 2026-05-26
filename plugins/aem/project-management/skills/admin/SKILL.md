@@ -158,7 +158,7 @@ Once you have the org name (either from saved config or user input), save it for
 ```bash
 # Create config directory if needed
 mkdir -p .claude-plugin
-# Ensure .claude-plugin is in .gitignore (contains auth tokens)
+# Ensure .claude-plugin is in .gitignore (contains project config)
 grep -qxF '.claude-plugin/' .gitignore 2>/dev/null || echo '.claude-plugin/' >> .gitignore
 
 # Save org name to config file (create or update)
@@ -180,13 +180,21 @@ Replace `{ORG_NAME}` with the actual organization name provided by the user.
 ### 0.5.1 Check for Existing Auth Token
 
 ```bash
-IMS_TOKEN=$(cat .claude-plugin/project-config.json 2>/dev/null | node -e "
-  const d = require('fs').readFileSync(0,'utf8');
-  try { console.log(JSON.parse(d).imsToken || ''); } catch(e) { console.log(''); }
+IMS_TOKEN=$(node -e "
+  const fs = require('fs');
+  try {
+    const t = JSON.parse(fs.readFileSync(process.env.HOME + '/.aem/ims-token.json', 'utf8'));
+    if (t.imsToken && t.imsTokenExpiry > Math.floor(Date.now()/1000) + 60) {
+      process.stdout.write(t.imsToken);
+    }
+  } catch (e) {}
 ")
-IMS_EXPIRY=$(cat .claude-plugin/project-config.json 2>/dev/null | node -e "
-  const d = require('fs').readFileSync(0,'utf8');
-  try { console.log(JSON.parse(d).imsTokenExpiry || 0); } catch(e) { console.log(0); }
+IMS_EXPIRY=$(node -e "
+  const fs = require('fs');
+  try {
+    const t = JSON.parse(fs.readFileSync(process.env.HOME + '/.aem/ims-token.json', 'utf8'));
+    process.stdout.write(String(t.imsTokenExpiry || 0));
+  } catch (e) { process.stdout.write('0'); }
 ")
 NOW=$(date +%s)
 
@@ -208,7 +216,7 @@ Skill({ skill: "project-management:auth" })
 This will:
 1. Open a browser for Adobe ID login
 2. Capture the IMS OAuth token automatically
-3. Save token to `.claude-plugin/project-config.json`
+3. Save token to `~/.aem/ims-token.json` (user-level, shared across projects)
 4. Auto-close the browser when complete
 
 ### 0.5.3 Verify Authentication
@@ -216,11 +224,16 @@ This will:
 After auth skill completes, verify token works:
 
 ```bash
-eval $(cat .claude-plugin/project-config.json | node -e "
+IMS_TOKEN=$(node -e "
+  const fs = require('fs');
+  try {
+    const t = JSON.parse(fs.readFileSync(process.env.HOME + '/.aem/ims-token.json', 'utf8'));
+    process.stdout.write(t.imsToken || '');
+  } catch (e) {}
+")
+ORG=$(cat .claude-plugin/project-config.json | node -e "
   const d = require('fs').readFileSync(0,'utf8');
-  const c = JSON.parse(d);
-  console.log('IMS_TOKEN=' + JSON.stringify(c.imsToken || ''));
-  console.log('ORG=' + JSON.stringify(c.org || ''));
+  console.log(JSON.parse(d).org || '');
 ")
 
 # Test with authenticated endpoint
@@ -274,9 +287,12 @@ Multiple sites = **repoless** setup. Single site = **standard** setup.
 **Then fetch individual site config for code and content details:**
 
 ```bash
-IMS_TOKEN=$(cat .claude-plugin/project-config.json | node -e "
-  const d = require('fs').readFileSync(0,'utf8');
-  console.log(JSON.parse(d).imsToken || '');
+IMS_TOKEN=$(node -e "
+  const fs = require('fs');
+  try {
+    const t = JSON.parse(fs.readFileSync(process.env.HOME + '/.aem/ims-token.json', 'utf8'));
+    process.stdout.write(t.imsToken || '');
+  } catch (e) {}
 ")
 curl -s -H "Authorization: Bearer ${IMS_TOKEN}" "https://admin.hlx.page/config/${ORG}/sites/{site-name}.json"
 ```

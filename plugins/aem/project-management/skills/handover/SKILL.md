@@ -126,7 +126,7 @@ Once you have the org name, save it so sub-skills can use it:
 ```bash
 # Create config directory if needed
 mkdir -p .claude-plugin
-# Ensure .claude-plugin is in .gitignore (contains auth tokens)
+# Ensure .claude-plugin is in .gitignore (contains project config)
 grep -qxF '.claude-plugin/' .gitignore 2>/dev/null || echo '.claude-plugin/' >> .gitignore
 
 # Save org name to config file
