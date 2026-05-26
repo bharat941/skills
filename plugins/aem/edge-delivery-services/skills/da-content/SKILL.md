@@ -20,6 +20,7 @@ reference for the task at hand:
 | Generating HTML for DA upload | [references/html-content.md](./references/html-content.md) |
 | Uploading images, video, PDFs, fonts | [references/media.md](./references/media.md) |
 | Hitting the DA admin API, auth, preview/publish | [references/platform.md](./references/platform.md) |
+| Re-verifying asset boundary behavior empirically | [references/fixtures/README.md](./references/fixtures/README.md) |
 
 Every factual claim in the references is tagged `[verified]` (read from
 code or observed empirically) or `[assumed]` (inferred from documentation

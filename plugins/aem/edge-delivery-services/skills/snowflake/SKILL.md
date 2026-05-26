@@ -56,7 +56,7 @@ Before invoking, confirm with the user:
 1. **Source URL** — the static page to convert. Must be reachable
    from this machine (publicly hosted or local dev server).
 2. **Target EDS repo** — owner/repo on GitHub. Must already have the
-   overlay engine wired (see `knowledge/architecture.md` §"Solution
+   overlay engine wired (see [knowledge/architecture.md](./knowledge/architecture.md) §"Solution
    shape"). For first-time setup, the substrate has to be in place;
    the skill assumes it.
 3. **DA root path** — where in the DA tree the converted doc lands
@@ -70,7 +70,7 @@ Before invoking, confirm with the user:
 
 **Slicc**: the cone receives a sprinkle event or chat trigger,
 verifies prerequisites, then executes the phases sequentially as
-described below. See `HOST-NOTES.md` for sprinkle wiring.
+described below. See [HOST-NOTES.md](./HOST-NOTES.md) for sprinkle wiring.
 
 **Claude Code**: user types `/snowflake` or the agent
 auto-invokes on description match. Either way, the agent walks
@@ -90,38 +90,38 @@ execution in this version.
 The skill ships with:
 
 ```
-SKILL.md                       ← this file (entry point)
+SKILL.md                                     ← this file (entry point)
 phases/
-  0-prereq.md                  ← substrate install / version check
-  1-capture.md                 ← phase 1 prompt
-  2-analyze.md                 ← phase 2 prompt
-  3-generate.md                ← phase 3 prompt
-  4-wire.md                    ← phase 4 prompt
-  5-roundtrip.md               ← phase 5 prompt
-  6-reflect.md                 ← phase 6 prompt
+  0-prereq.md                                ← substrate install / version check
+  1-capture.md                               ← phase 1 prompt
+  2-analyze.md                               ← phase 2 prompt
+  3-generate.md                              ← phase 3 prompt
+  4-wire.md                                  ← phase 4 prompt
+  5-roundtrip.md                             ← phase 5 prompt
+  6-reflect.md                               ← phase 6 prompt
 knowledge/
-  methodology.md               ← canonical phase rules (read by every phase)
-  architecture.md              ← overlay engine design + slot writer reference
-  eds-da-mechanics.md          ← EDS pipeline reference (overlay-runtime lore); DA admin API and HTML rules live in the da-content skill
-  learnings.md                 ← cross-project findings (5 runs distilled)
-substrate/
-  VERSION                      ← bundled substrate semver
-  MANIFEST.json                ← what install-substrate.mjs writes where
-  scripts/scripts.js           ← overlay engine
-  scripts/delayed.js           ← per-template animations loader
-  styles/styles.css            ← lifecycle visibility
+  methodology.md                             ← canonical phase rules (read by every phase)
+  architecture.md                            ← overlay engine design + slot writer reference
+  eds-da-mechanics.md                        ← EDS pipeline reference (overlay-runtime lore); DA admin API and HTML rules live in the da-content skill
+  learnings.md                               ← cross-project findings (5 runs distilled)
+assets/substrate/
+  VERSION                                    ← bundled substrate semver
+  MANIFEST.json                              ← what install-substrate.mjs writes where
+  scripts/scripts.js                         ← overlay engine
+  scripts/delayed.js                         ← per-template animations loader
+  styles/styles.css                          ← lifecycle visibility
   blocks/header/{header.js,header.css}
   blocks/footer/{footer.js,footer.css}
-  head.html                    ← minimal head
-install-substrate.mjs          ← idempotent substrate installer (used by phase 0)
+  head.html                                  ← minimal head
 scripts/
-  transform-da-to-eds.mjs      ← Node script: DA divs-with-class → drafts HTML
-  dom-equality.mjs             ← Node script: compare source vs rendered DOM
-  da-media-upload.mjs          ← Node script: PUT binaries to DA /media/<scope>/, emit content.da.live URL mapping (used by assetStrategy=da-media)
+  install-substrate.mjs                      ← idempotent substrate installer (used by phase 0)
+  transform-da-to-eds.mjs                    ← Node script: DA divs-with-class → drafts HTML
+  dom-equality.mjs                           ← Node script: compare source vs rendered DOM
+  da-media-upload.mjs                        ← Node script: PUT binaries to DA /media/<scope>/, emit content.da.live URL mapping (used by assetStrategy=da-media)
 examples/
-  README.md                    ← pointers to worked examples (closed iterations)
-HOST-NOTES.md                  ← per-host adapter notes (not loaded by agent)
-README.md                      ← human-readable docs (not loaded by agent)
+  README.md                                  ← pointers to worked examples (closed iterations)
+HOST-NOTES.md                                ← per-host adapter notes (not loaded by agent)
+README.md                                    ← human-readable docs (not loaded by agent)
 ```
 
 ### Resolving paths inside this bundle
@@ -226,36 +226,36 @@ and skip work that's already done — reruns are safe.
 
 0. **Prerequisites** — confirm (or install) the overlay substrate;
    write `.snowflake/config.json` with the installed version. Runs
-   once per repo. See `phases/0-prereq.md`.
+   once per repo. See [phases/0-prereq.md](./phases/0-prereq.md).
 
 1. **Capture** — fetch source HTML and referenced external assets;
    set up the project folder under
-   `<projectsDir>/<NNN>-<slug>/`. See `phases/1-capture.md`.
+   `<projectsDir>/<NNN>-<slug>/`. See [phases/1-capture.md](./phases/1-capture.md).
 
 2. **Analyze** — structural map of the page; identify header/footer
    boundaries, section list, slot opportunities, head-level links to
    lift, asset rewriting strategy. Produce `notes.md` and
-   `decisions.json` in the project folder. See `phases/2-analyze.md`.
+   `decisions.json` in the project folder. See [phases/2-analyze.md](./phases/2-analyze.md).
 
 3. **Generate** — produce the 5 deployable artifacts (template HTML,
    header fragment, footer fragment, page CSS, page animations JS)
    plus the DA-source body fragment. Outputs go to
-   `<projectsDir>/<NNN>-<slug>/output/`. See `phases/3-generate.md`.
+   `<projectsDir>/<NNN>-<slug>/output/`. See [phases/3-generate.md](./phases/3-generate.md).
 
 4. **Wire** — copy artifacts to the EDS-served paths (`templates/`,
    `fragments/<tpl>/`, `styles/`, `scripts/`), build the local-test
-   drafts file, run lint. See `phases/4-wire.md`.
+   drafts file, run lint. See [phases/4-wire.md](./phases/4-wire.md).
 
 5. **Round-trip** — local first (dev server + headless browser
    verification), then production (branch + push + DA PUT + preview
    API + verify on `<branch>--<repo>--<owner>.aem.page`). See
-   `phases/5-roundtrip.md`.
+   [phases/5-roundtrip.md](./phases/5-roundtrip.md).
 
 6. **Reflect** — append run findings to project notes; promote
-   cross-project learnings to `knowledge/learnings.md` (a PR to the
+   cross-project learnings to [knowledge/learnings.md](./knowledge/learnings.md) (a PR to the
    skill repo, if the host supports raising one); update methodology
    if any new rule emerged. **Do not close the iteration — that's a
-   user decision.** See `phases/6-reflect.md`.
+   user decision.** See [phases/6-reflect.md](./phases/6-reflect.md).
 
 ## Closing an iteration
 
@@ -308,13 +308,26 @@ Every phase prompt assumes this procedure; phases don't re-state it.
 2. Confirm the `da-content` skill is available (see "Skill
    dependencies" above). You don't need to read it linearly — phase
    prompts cite specific sections — but it must be loadable.
-3. `knowledge/methodology.md` (canonical phase rules — every phase
+3. [knowledge/methodology.md](./knowledge/methodology.md) (canonical phase rules — every phase
    needs this), with the override resolution above.
-4. `knowledge/architecture.md` (overlay engine and slot writer
+4. [knowledge/architecture.md](./knowledge/architecture.md) (overlay engine and slot writer
    semantics — Generate phase needs this most).
-5. `knowledge/learnings.md` (cross-project findings — Generate and
+5. [knowledge/learnings.md](./knowledge/learnings.md) (cross-project findings — Generate and
    Round-trip should at least skim this; specific entries are
    referenced by individual phase prompts).
-6. The phase prompt for the current phase.
+6. [knowledge/eds-da-mechanics.md](./knowledge/eds-da-mechanics.md) (EDS pipeline reference
+   for overlay-runtime lore; DA admin API and HTML rules live in
+   the **da-content** skill).
+7. The phase prompt for the current phase.
 
 Then start at Phase 0.
+
+## Further reading (not loaded by the agent)
+
+- [README.md](./README.md) — human-readable overview of the skill,
+  install commands, and contribution guidelines.
+- [HOST-NOTES.md](./HOST-NOTES.md) — per-host adapter notes (Slicc,
+  Claude Code, generic shell) and the forbidden cross-host primitives
+  list for maintainers.
+- [examples/README.md](./examples/README.md) — pointers to worked
+  examples from closed iterations.

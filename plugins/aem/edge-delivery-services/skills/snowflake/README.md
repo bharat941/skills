@@ -53,8 +53,8 @@ idempotent installer (`install-substrate.mjs`) that brings a vanilla
 target repo:
 
 ```bash
-node <SKILL_DIR>/install-substrate.mjs --dry-run   # inspect plan
-node <SKILL_DIR>/install-substrate.mjs             # apply
+node <SKILL_DIR>/scripts/install-substrate.mjs --dry-run   # inspect plan
+node <SKILL_DIR>/scripts/install-substrate.mjs             # apply
 ```
 
 Overwritten files are backed up to `.snowflake/.backup/<timestamp>/`.

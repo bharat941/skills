@@ -25,7 +25,7 @@
  * works regardless of where the skill bundle is mounted.
  *
  * Usage:
- *   node <SKILL_DIR>/install-substrate.mjs           [--dry-run] [--force]
+ *   node <SKILL_DIR>/scripts/install-substrate.mjs   [--dry-run] [--force]
  *
  * Flags:
  *   --dry-run   Print what would change; touch nothing.
@@ -43,8 +43,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
 
-const SKILL_DIR = dirname(fileURLToPath(import.meta.url));
-const SUBSTRATE_DIR = join(SKILL_DIR, 'substrate');
+const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
+const SKILL_DIR = dirname(SCRIPT_DIR);
+const SUBSTRATE_DIR = join(SKILL_DIR, 'assets', 'substrate');
 
 const flags = new Set(process.argv.slice(2));
 const DRY_RUN = flags.has('--dry-run');
@@ -142,7 +143,7 @@ if (markerPresent && !allFilesMatchBundle) {
   if (!FORCE) {
     console.error(`[snowflake]`);
     console.error(`[snowflake] Options:`);
-    console.error(`[snowflake]   1. Investigate the diffs (compare files in <SKILL_DIR>/substrate/ to the repo)`);
+    console.error(`[snowflake]   1. Investigate the diffs (compare files in <SKILL_DIR>/assets/substrate/ to the repo)`);
     console.error(`[snowflake]      and reconcile by hand, then write .snowflake/config.json yourself with`);
     console.error(`[snowflake]      { "substrateVersion": "${bundledVersion}" }.`);
     console.error(`[snowflake]   2. Re-run with --force to overwrite the diverging files. Originals will be`);

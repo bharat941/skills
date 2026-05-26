@@ -118,14 +118,14 @@ skill ships an idempotent installer that brings either to the
 expected overlay-substrate state:
 
 ```bash
-node <SKILL_DIR>/install-substrate.mjs [--dry-run] [--force]
+node <SKILL_DIR>/scripts/install-substrate.mjs [--dry-run] [--force]
 ```
 
 The installer is pure Node (built-ins only) and uses
-`import.meta.url` to self-locate the bundled `substrate/` directory
+`import.meta.url` to self-locate the bundled `assets/substrate/` directory
 — it works regardless of where the skill is mounted on a given host.
 
-It is driven by `<SKILL_DIR>/substrate/MANIFEST.json` (declarative)
+It is driven by `<SKILL_DIR>/assets/substrate/MANIFEST.json` (declarative)
 and stamps `.snowflake/config.json` with the installed version on
 success. Files it overwrites are backed up to
 `.snowflake/.backup/<timestamp>/`.
@@ -152,7 +152,7 @@ Phase prompts resolve knowledge with
 `.snowflake/knowledge/<file>.md` first, then bundled
 `<SKILL_DIR>/knowledge/<file>.md`. Project-specific overrides win.
 
-Defaults are set in `<SKILL_DIR>/substrate/MANIFEST.json` and can
+Defaults are set in `<SKILL_DIR>/assets/substrate/MANIFEST.json` and can
 be overridden by writing to `.snowflake/config.json` directly:
 
 ```json

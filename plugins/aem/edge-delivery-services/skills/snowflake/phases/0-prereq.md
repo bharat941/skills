@@ -24,7 +24,7 @@ if [ -f .snowflake/config.json ]; then
 fi
 ```
 
-The bundled version is in `<SKILL_DIR>/substrate/VERSION`. If the
+The bundled version is in `<SKILL_DIR>/assets/substrate/VERSION`. If the
 installed version matches, **skip the rest of this phase** — substrate
 is current.
 
@@ -36,13 +36,13 @@ doesn't match the bundled VERSION:
 1. **Surface to the user first.** This is a substrate change — it
    modifies files the user wrote (or didn't, if they're starting from
    vanilla boilerplate). Explicitly confirm before running. Show the
-   list of files that will change (from `substrate/MANIFEST.json`
+   list of files that will change (from `assets/substrate/MANIFEST.json`
    `replace` and `ignorePatches` arrays).
 
 2. **Dry-run before applying:**
 
    ```bash
-   node <SKILL_DIR>/install-substrate.mjs --dry-run
+   node <SKILL_DIR>/scripts/install-substrate.mjs --dry-run
    ```
 
    Read the output. The installer compares every bundled substrate
@@ -74,7 +74,7 @@ doesn't match the bundled VERSION:
 3. **Install:**
 
    ```bash
-   node <SKILL_DIR>/install-substrate.mjs
+   node <SKILL_DIR>/scripts/install-substrate.mjs
    # …or with --force if the drift case above is intentional
    ```
 
@@ -87,7 +87,7 @@ doesn't match the bundled VERSION:
 
 ## What gets installed
 
-See `substrate/MANIFEST.json` for the authoritative list. Summary:
+See `assets/substrate/MANIFEST.json` for the authoritative list. Summary:
 
 | File | What changes |
 |---|---|
