@@ -76,7 +76,7 @@ Starts a local import server (default port 3001) that serves the helix-importer-
 | `--open` | `AEM_OPEN` | `/tools/importer/helix-importer-ui/index.html` | Browser path to open on startup |
 | `--no-open` / `--noOpen` | `AEM_NO_OPEN` | — | Disable automatic browser open |
 | `--allow-insecure` / `--allowInsecure` | `AEM_ALLOW_INSECURE` | `true` | Allow self-signed certs on the proxied site |
-| `--ui-repo` / `--uiRepo` | `AEM_UI_REPO` | `https://www.npmjs.com/package/@adobe/aem-cli` | Custom Importer UI repo; append `#<branch>` for a non-main branch |
+| `--ui-repo` / `--uiRepo` | `AEM_UI_REPO` | helix-importer-ui repo on GitHub | Custom Importer UI repo; append `#<branch>` for a non-main branch |
 | `--skip-ui` / `--skipUI` | `AEM_SKIP_UI` | `false` | Skip downloading/installing the UI |
 | `--cache` | — | — | Cache proxied responses to a local folder |
 | `--headers-file` / `--headersFile` | — | — | JSON file with custom request headers for the proxy |

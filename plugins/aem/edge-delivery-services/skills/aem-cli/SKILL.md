@@ -40,7 +40,7 @@ installed and owns the binary. Uninstall it first (npm package scoped under `@ad
 `helix-cli`): `[verified]`
 
 ```bash
-pkg="helix-cli" && npm uninstall -g "@adobe/$pkg"
+npm uninstall -g @adobe/helix-cli
 npm install -g @adobe/aem-cli
 ```
 
@@ -119,7 +119,8 @@ See [references/command-reference.md](./references/command-reference.md) for the
 
 ### Trusted local certificate (recommended — avoids browser warnings)
 
-Install `mkcert` (`brew install mkcert` on macOS, or see mkcert docs), then:
+Install `mkcert` (`brew install mkcert` on macOS, `choco install mkcert` on Windows,
+`go install filippo.io/mkcert@latest` elsewhere), then:
 
 ```bash
 mkcert -install                                          # one-time CA install
@@ -188,7 +189,7 @@ aem import --port 3002       # different port
 | `--port` | `3001` | Import server port |
 | `--no-open` | — | Do not open the browser window |
 | `--allow-insecure` | `true` | Allow self-signed certs on the proxied site |
-| `--ui-repo <url>` | `https://www.npmjs.com/package/@adobe/aem-cli` | Custom Importer UI repo |
+| `--ui-repo <url>` | helix-importer-ui repo on GitHub | Custom Importer UI repo |
 | `--skip-ui` | `false` | Skip downloading/installing the UI |
 | `--headers-file <file>` | — | JSON file of custom headers for proxy requests |
 | `--cache <dir>` | — | Cache proxied responses to a local folder |
@@ -252,7 +253,7 @@ curl -X POST \
   "https://admin.da.live/source/<org>/<repo>/path/to/page.html"
 ```
 
-See the **da-content** skill (§7 of its platform reference) for the DA Source API contract and rate limits.
+See the **da-content** skill (`references/platform.md`, §7) for the DA Source API contract and rate limits.
 
 ---
 
@@ -277,4 +278,4 @@ See the **da-content** skill (§7 of its platform reference) for the DA Source A
   `AEM_*` env-var tables for all commands
 - Upstream docs: https://www.npmjs.com/package/@adobe/aem-cli — npm page for `@adobe/aem-cli`
   (the GitHub repo is named `helix-cli` for historical reasons)
-- Importer UI: https://www.npmjs.com/package/@adobe/aem-cli — the UI served by `aem import`
+- Importer UI: the helix-importer-ui (search npm or GitHub for `helix-importer-ui`) — served by `aem import`
