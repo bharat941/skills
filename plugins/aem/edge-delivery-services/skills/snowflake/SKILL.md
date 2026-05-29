@@ -69,11 +69,15 @@ infer it:
 ### Usage examples
 
 ```
-/snowflake                          → auto (interactive)
-/snowflake level=check              → feasibility scan only
-/snowflake level=block              → block-level, no confirmation
-/snowflake level=page               → page-level overlay
+/snowflake https://example.com/promo              → auto; infer repo, daRoot, slug
+/snowflake https://example.com/promo level=block  → block-level, infer the rest
+/snowflake level=check                            → feasibility scan (asks for URL)
+/snowflake                                        → fully interactive
 ```
+
+The **Source URL** is the leading positional input and the only required
+argument. Everything else is resolved automatically and presented in a single
+confirmation summary before any work begins.
 
 ## Skill dependencies
 
@@ -83,20 +87,77 @@ Phases 3 (Generate) and 5 (Round-trip) reference it directly.
 
 ## Prerequisites
 
-Confirm with the user before invoking:
+**Required** — the only input the skill cannot resolve on its own:
 
 1. **Source URL** — the static page to convert. Must be reachable
    (publicly hosted or local dev server).
-2. **Target EDS repo** — owner/repo on GitHub. Must already have the
-   overlay engine wired (see [knowledge/architecture.md](./knowledge/architecture.md)
+
+**Resolved automatically** — shown in the init summary for one-shot
+confirmation before any work begins:
+
+2. **Target EDS repo** — detected via `gh repo view --json nameWithOwner`,
+   falling back to parsing `git remote get-url origin`. Must already have
+   the overlay engine wired (see [knowledge/architecture.md](./knowledge/architecture.md)
    §"Solution shape"). Phase 0 installs it if absent.
-3. **DA root path** — where in the DA tree the converted doc lands
-   (e.g., `/<some-root>/<page-slug>`).
-4. **DA admin token** — Snowflake reads `$DA_TOKEN` from the environment,
-   or `~/.aem/da-token.json` (the cache **da-auth** writes). If neither
-   is set, invoke the **da-auth** skill first.
-5. **Conversion level** (optional) — if the user hasn't specified,
-   defaults to `auto`. See the Parameters section above.
+3. **DA root path** — read from `.snowflake/config.json` `daRoot` key
+   (default `/marketing`, stamped on first substrate install). Change
+   in the summary if a different path is needed for this run.
+4. **Conversion level** — inferred from phrasing (see Parameters), else
+   `auto`. Shown in summary; override inline.
+5. **Slug / template name** — derived from the source URL (kebab-case,
+   ≤30 chars). Shown in summary; override inline.
+
+**Auth check (non-blocking)** — DA token resolved from `$DA_TOKEN` →
+`~/.aem/da-token.json`. Its status appears in the init summary. Phases
+1–4 do not need it; if absent at invocation time, invoke the **da-auth**
+skill before Phase 5 (Round-trip) runs.
+
+## Initialization
+
+On every invocation the agent performs these steps **before** entering Phase 0:
+
+1. **Resolve inputs** — apply the fast-path rules from the Prerequisites
+   section above.
+
+2. **Probe substrate** —
+   ```bash
+   node <SKILL_DIR>/scripts/install-substrate.mjs --dry-run
+   ```
+   Captures the outcome (no-op / clean-install / drift / custom-code-detected).
+
+3. **Check DA token** —
+   ```bash
+   DA_TOKEN=$(node -e "
+     const fs = require('fs');
+     const p = process.env.HOME + '/.aem/da-token.json';
+     try {
+       const t = JSON.parse(fs.readFileSync(p, 'utf8'));
+       if (t.expires_at > Date.now() + 60000) process.stdout.write(t.access_token);
+     } catch {}
+   ")
+   ```
+   Non-blocking — records status for the summary only.
+
+4. **Always display the run parameters** before any phase begins. Show
+   this summary unconditionally — even when all values were provided
+   upfront or inferred without ambiguity — then proceed immediately
+   without waiting for confirmation:
+
+   ```
+   Source URL : https://example.com/promo   ← required (provided)
+   Target repo: acme/my-site                ← detected from git
+   DA root    : /marketing                  ← config default
+   Level      : auto                        ← inferred
+   Slug       : promo                       ← derived from URL
+   Substrate  : clean install — 9 files     ← (or: already current ✓)
+   DA token   : cached ✓                    ← (or: not found — needed at Phase 5)
+   ```
+
+   If the substrate outcome is **drift** or **custom-code-detected**,
+   surface the file list and pause for explicit user input before
+   proceeding — Phase 0 handles that case.
+
+5. **Proceed** — Phase 0 → 1 → … → 6 in order.
 
 ## Quick start — end-to-end example
 
@@ -106,7 +167,7 @@ conversion in compressed form. Each phase file under
 shape of the actual commands the agent emits.
 
 ```bash
-# Inputs (gathered from the user during Prerequisites)
+# Inputs (resolved during init, confirmed in the summary)
 SOURCE_URL="https://example.com/promo"
 PAGE_SLUG="promo"
 DA_ROOT="/marketing"
@@ -208,23 +269,33 @@ proceeds. Reruns are safe — phases skip work already done.
 then `<SKILL_DIR>/knowledge/<file>.md` (bundled, canonical). Project
 overrides win on conflict.
 
-## Reading order for first invocation
+## Reading order
 
+Load knowledge just-in-time — only when the phase that needs it begins.
+
+**On invocation (before Phase 0):**
 1. This file.
-2. Confirm the `da-content` skill is loadable (cited by phases 3 and 5).
-3. [knowledge/methodology.md](./knowledge/methodology.md) — canonical
+2. [knowledge/methodology.md](./knowledge/methodology.md) — canonical
    phase rules.
-4. [knowledge/architecture.md](./knowledge/architecture.md) — overlay
-   engine and slot writer semantics (Generate needs this most).
-5. [knowledge/learnings.md](./knowledge/learnings.md) — cross-project
-   findings (Generate and Round-trip should at least skim it).
-6. [knowledge/eds-da-mechanics.md](./knowledge/eds-da-mechanics.md) —
+3. Confirm the `da-content` skill is loadable (needed by phases 3 and 5).
+
+**At Phase 2 (Analyze):**
+4. [knowledge/block-level-feasibility.md](./knowledge/block-level-feasibility.md) —
+   criteria for block-level vs page-level conversion.
+
+**At Phase 3 (Generate):**
+5. [knowledge/architecture.md](./knowledge/architecture.md) — overlay
+   engine and slot writer semantics.
+6. [knowledge/block-level-conversion.md](./knowledge/block-level-conversion.md) —
+   architecture and patterns for block-level conversion.
+7. [knowledge/learnings.md](./knowledge/learnings.md) — cross-project
+   findings relevant to generation.
+
+**At Phase 5 (Round-trip):**
+8. [knowledge/eds-da-mechanics.md](./knowledge/eds-da-mechanics.md) —
    EDS pipeline overlay-runtime lore.
-7. [knowledge/block-level-feasibility.md](./knowledge/block-level-feasibility.md) —
-   criteria for block-level vs page-level conversion (Analyze phase).
-8. [knowledge/block-level-conversion.md](./knowledge/block-level-conversion.md) —
-   architecture and patterns for block-level conversion (Generate phase).
-9. The phase prompt for the current phase.
+9. [knowledge/learnings.md](./knowledge/learnings.md) — entries on media
+   handling, CORS, scroll-animation quirks (if not already loaded).
 
 Then start at Phase 0.
 

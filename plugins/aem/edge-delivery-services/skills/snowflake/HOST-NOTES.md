@@ -6,9 +6,9 @@ it's a reference for whoever installs/maintains the skill on a given
 host.
 
 The skill body (SKILL.md + phases/*.md) is deliberately host-
-agnostic: it uses only `bash`, `node` (≥22), `git`, `curl`, `jq`,
-`npm`/`npx`, `playwright-cli`, and POSIX `sed`/`grep`/`awk`. The
-notes below document the per-host adapters that wire those phases
+agnostic: it uses only `bash`, `node` (≥22), `git`, `gh` (GitHub CLI),
+`curl`, `jq`, `npm`/`npx`, `playwright-cli`, and POSIX `sed`/`grep`/`awk`.
+The notes below document the per-host adapters that wire those phases
 into the host's invocation model.
 
 ---
@@ -96,8 +96,8 @@ prompt can be retried after the user adjusts permissions.
 The skill body is bash-and-node only. Any host that gives the agent
 a bash shell can run it:
 
-1. Make sure these are on PATH: `node` (≥22), `git`, `curl`, `jq`,
-   `npm`, `playwright-cli`.
+1. Make sure these are on PATH: `node` (≥22), `git`, `gh` (GitHub CLI),
+   `curl`, `jq`, `npm`, `playwright-cli`.
 2. Place the skill bundle somewhere reachable. Make sure the
    assistant knows where (so `<SKILL_DIR>` references resolve).
 3. CD into the target EDS repo. The skill's state files and outputs
@@ -152,11 +152,11 @@ Phase prompts resolve knowledge with
 `.snowflake/knowledge/<file>.md` first, then bundled
 `<SKILL_DIR>/knowledge/<file>.md`. Project-specific overrides win.
 
-Defaults are set in `<SKILL_DIR>/assets/substrate/MANIFEST.json` and can
-be overridden by writing to `.snowflake/config.json` directly:
+Defaults live in the `defaults` block of
+`<SKILL_DIR>/assets/substrate/MANIFEST.json`:
 
 ```json
-{
+"defaults": {
   "projectsDir": ".snowflake/projects",
   "daRoot": "/marketing",
   "branchPrefix": "snowflake-",
@@ -164,6 +164,14 @@ be overridden by writing to `.snowflake/config.json` directly:
   "tagPrefix": "snowflake-"
 }
 ```
+
+The installer (`scripts/install-substrate.mjs`) stamps these into
+`.snowflake/config.json` on every install or upgrade. User-edited values
+in an existing config are preserved — the merge order is:
+`manifest.defaults` → existing config → `substrateVersion`/`installedAt`.
+
+To override a default for a specific repo, edit `.snowflake/config.json`
+directly — the installer will never clobber keys you've already set.
 
 A maintainer extending the skill should treat `.snowflake/` as the
 single source of truth for any per-repo state, NEVER write to the
@@ -225,6 +233,10 @@ When extending the skill, do NOT use:
 - Any IDE-specific bridge (VS Code commands, JetBrains actions).
 - Long-running daemons or sockets.
 - Anything that prompts via TTY (the agent may not have one).
+
+`gh` (GitHub CLI) IS allowed — it is a standard allowed primitive.
+Ensure `gh auth status` is green for the target repo's owner before
+Phase 5 (it is required for `git push` and repo-identity lookups).
 
 If a host has an obvious richer primitive (live status updates, GUI
 preview, etc.), wire it up at the host's outer layer — by reading the
