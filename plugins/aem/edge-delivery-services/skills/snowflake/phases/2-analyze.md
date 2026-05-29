@@ -149,14 +149,37 @@ Record the per-section results and derive a recommendation:
 | Most pass, 1–2 fail | `hybrid` |
 | Most fail | `page-level` |
 
+### Page complexity gate
+
+After counting sections and slots, check whether the page is too large
+for reliable page-level conversion. Page-level requires the LLM to hold
+the entire page in context at once — large pages with many sections or
+deeply nested interactive components (tabs, accordions, carousels) risk
+silent content loss from context pressure and repetitive-structure
+fatigue. Block-level processes one section at a time and does not have
+this limitation.
+
+**Thresholds** (either triggers the gate):
+- More than **8 content sections** (excluding header/footer)
+- More than **100 slottable elements** across all sections
+
+**Behavior when the gate fires:**
+
+| `level` param | Action |
+|---------------|--------|
+| `page` (the default, or inferred from neutral phrasing) | **Auto-switch to `block`.** Log in `notes.md`: "Page has N sections / M slots — exceeds page-level thresholds. Auto-switched to block-level." Record `levelParam` = `page`, `conversionLevel` = `block-level`, `complexityGate` = `triggered` in `decisions.json`. Proceed without pausing. |
+| `page` (explicitly passed by the user as `level=page`) | **Warn but proceed.** Log in `notes.md`: "Page has N sections / M slots — page-level conversion at this scale risks incomplete content extraction. Block-level is recommended. Proceeding with page-level as explicitly requested." Record `complexityGate` = `warned`. |
+| `auto` | The gate does not override `auto` — the feasibility analysis recommendation handles it. But if the analysis recommends `page-level` AND the gate fires, surface the complexity concern alongside the recommendation. |
+| `block` or `check` | Gate is irrelevant — block-level or analysis-only. No action. |
+
 ### How `level` controls what happens next
 
 | `level` param | Analysis runs? | Transition to Phase 3 |
 |---------------|----------------|----------------------|
+| `page` (default) | Yes (validation) | Proceed to Phase 3 with page-level. Subject to the complexity gate above — may auto-switch to block. Log a note if analysis shows block-level was feasible. |
 | `auto` | Yes | Present recommendation + per-section table to user. Ask to confirm or override. Proceed with confirmed level. |
 | `check` | Yes | **Stop here.** Write results to `decisions.json` and `notes.md`. Do not proceed to Phase 3. |
 | `block` | Yes (validation) | Proceed to Phase 3 with block-level. Log a warning in `notes.md` if analysis recommends otherwise. |
-| `page` | Yes (validation) | Proceed to Phase 3 with page-level. Log a note if analysis shows block-level was feasible. |
 
 ## Produce `decisions.json`
 
@@ -167,6 +190,9 @@ this directly. Suggested shape:
 {
   "levelParam": "page",
   "conversionLevel": "block-level",
+  "complexityGate": "triggered",
+  "sectionCount": 12,
+  "slottableElementCount": 147,
   "feasibility": {
     "recommendation": "block-level",
     "sections": [
@@ -272,5 +298,6 @@ Set `state.phase = "analyze"`, `state.phaseStatus = "complete"`,
 - **`level=auto`**: present the recommendation and per-section table.
   Ask the user to confirm or override. Record the confirmed level in
   `state.conversionLevel`. Then proceed to Phase 3.
-- **`level=block`** or **`level=page`**: proceed to Phase 3
-  immediately with the specified level.
+- **`level=block`**: proceed to Phase 3 immediately with block-level.
+- **`level=page`**: proceed to Phase 3 with page-level, unless the
+  complexity gate auto-switched to block (see above).
