@@ -5,11 +5,13 @@ environments. It is **not** loaded by the agent at invocation time —
 it's a reference for whoever installs/maintains the skill on a given
 host.
 
-The skill body (SKILL.md + phases/*.md) is deliberately host-
-agnostic: it uses only `bash`, `node` (≥22), `git`, `gh` (GitHub CLI),
-`curl`, `jq`, `npm`/`npx`, `playwright-cli`, and POSIX `sed`/`grep`/`awk`.
-The notes below document the per-host adapters that wire those phases
-into the host's invocation model.
+The skill body (SKILL.md + phases/*.md) is deliberately host-agnostic.
+It uses `bash`, `node` (≥22), `git`, `gh` (GitHub CLI), `curl`, `jq`,
+`npm`/`npx`, and POSIX `sed`/`grep`/`awk`. Browser interactions are
+expressed as **intent-level instructions** ("open this URL in a browser",
+"evaluate this JavaScript", "take a screenshot") — the skill never calls
+a specific browser tool directly. The notes below describe how each host
+fulfils those intents.
 
 ---
 
@@ -36,8 +38,9 @@ that path.
 spawned in this version. Future versions that fan out at Generate
 should be cone-orchestrated (scoops cannot create scoops in Slicc).
 
-**Browser:** `playwright-cli` is pre-installed in Slicc cones. Use
-`--tab <id>` per the Slicc stateless-tab convention.
+**Browser:** Use `playwright-cli` (pre-installed in Slicc cones) to
+fulfil browser intents — open URLs, evaluate JS, take screenshots.
+Use `--tab <id>` per the Slicc stateless-tab convention.
 
 **Progress reporting (optional):** if the host wants live UI
 updates, a wrapper script can read the project's `state.json`
@@ -74,9 +77,15 @@ parallelism, Claude Code's Agent tool with `subagent_type` and
 `isolation: "worktree"` is the natural fit. For now, all phases run
 in the main agent's context.
 
-**Browser:** the agent must have `playwright-cli` available on the
-`bash` PATH. Don't use `mcp__playwright__*` tools — those are
-Claude-Code-only and break host portability.
+**Browser:** Use whatever browser tool is available in the environment.
+Good options, in preference order:
+- `cmux-browser` skill — if running inside a cmux terminal, use its
+  embedded browser (non-intrusive, no external window).
+- `playwright-cli` — if available on the bash PATH.
+- Any other browser primitive the host provides.
+
+Do not use `mcp__playwright__*` tools — those are Claude-Code-only
+and break host portability.
 
 **Auto-memory:** the skill notes in `phases/6-reflect.md` step 6.5
 that hosts with persistent memory should record user-feedback rules.
@@ -97,7 +106,8 @@ The skill body is bash-and-node only. Any host that gives the agent
 a bash shell can run it:
 
 1. Make sure these are on PATH: `node` (≥22), `git`, `gh` (GitHub CLI),
-   `curl`, `jq`, `npm`, `playwright-cli`.
+   `curl`, `jq`, `npm`. A browser tool (`playwright-cli` or equivalent)
+   must be available for Phase 5 browser intents.
 2. Place the skill bundle somewhere reachable. Make sure the
    assistant knows where (so `<SKILL_DIR>` references resolve).
 3. CD into the target EDS repo. The skill's state files and outputs
@@ -233,6 +243,10 @@ When extending the skill, do NOT use:
 - Any IDE-specific bridge (VS Code commands, JetBrains actions).
 - Long-running daemons or sockets.
 - Anything that prompts via TTY (the agent may not have one).
+- Specific browser tool invocations (`playwright-cli tab-new`,
+  `playwright-cli evaluate`, etc.) in the skill body — use intent-level
+  prose instead ("open URL in a browser", "evaluate this JS", "take a
+  screenshot"). The host adapter (this file) maps intents to tools.
 
 `gh` (GitHub CLI) IS allowed — it is a standard allowed primitive.
 Ensure `gh auth status` is green for the target repo's owner before

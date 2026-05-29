@@ -39,27 +39,23 @@ for i in $(seq 1 15); do
 done
 ```
 
-Load the page in `playwright-cli`:
+Open the following URL in a browser and wait for animations to settle (~2 s):
 
-```bash
+```
 PAGE="http://localhost:3000/drafts/${TEMPLATE_NAME}-${PAGE_SLUG}.html"
-TAB=$(playwright-cli tab-new "$PAGE" | grep -oE 'tab [a-z0-9-]+' | awk '{print $2}')
-sleep 2  # give Lenis/IntersectionObservers a moment
 ```
 
-Verify with `playwright-cli evaluate`:
+Evaluate this JavaScript in the browser and report the result:
 
-```bash
-playwright-cli evaluate --tab "$TAB" '
-  ({
-    overlayApplied: document.querySelector("main")?.dataset?.overlay,
-    sectionCount: document.querySelectorAll("main section[class]").length,
-    sectionClasses: [...document.querySelectorAll("main section[class]")]
-      .map(s => s.className.split(" ")[0]),
-    consoleErrors: (window.__errors || []).length,
-    bodyAppearClass: document.body.classList.contains("appear")
-  })
-'
+```js
+({
+  overlayApplied: document.querySelector("main")?.dataset?.overlay,
+  sectionCount: document.querySelectorAll("main section[class]").length,
+  sectionClasses: [...document.querySelectorAll("main section[class]")]
+    .map(s => s.className.split(" ")[0]),
+  consoleErrors: (window.__errors || []).length,
+  bodyAppearClass: document.body.classList.contains("appear")
+})
 ```
 
 Expect:
@@ -81,16 +77,12 @@ elements are `opacity:0`. Capture per-section:
 ```bash
 PROJ="${PROJECTS_DIR}/${NNN}-${SLUG}"
 mkdir -p "$PROJ/diff"
-
-for class in $SECTION_CLASSES; do
-  playwright-cli evaluate --tab "$TAB" "
-    document.querySelector('.$class')?.scrollIntoView({block:'start'});
-  "
-  sleep 1  # let animations settle
-  playwright-cli screenshot --tab "$TAB" \
-    --output "$PROJ/diff/local-$class.jpg" --type jpeg --quality 90
-done
 ```
+
+For each class in `$SECTION_CLASSES`:
+1. Scroll that section into view: `document.querySelector('.$class')?.scrollIntoView({block:'start'})`
+2. Wait for animations to settle (~1 s)
+3. Take a screenshot and save it to `$PROJ/diff/local-$class.jpg`
 
 ### Stop the dev server
 
@@ -285,23 +277,21 @@ flight — wait a few more seconds and retry, or use the
 
 ### 5.2.5 — Load production preview
 
-```bash
+Open the following URL in a browser and wait for the overlay engine to apply (~3 s):
+
+```
 PAGE="$PROD_BASE/${DA_ROOT}/${PAGE_SLUG}"
-TAB=$(playwright-cli tab-new "$PAGE" | grep -oE 'tab [a-z0-9-]+' | awk '{print $2}')
-sleep 3
 ```
 
-Verify (same shape as local):
+Evaluate this JavaScript in the browser and report the result:
 
-```bash
-playwright-cli evaluate --tab "$TAB" '
-  ({
-    overlayApplied: document.querySelector("main")?.dataset?.overlay,
-    sectionCount: document.querySelectorAll("main section[class]").length,
-    storyBg: document.querySelector(".story-card__photo, [style*=\"background-image\"]")?.style?.backgroundImage,
-    consoleErrors: (window.__errors || []).length,
-  })
-'
+```js
+({
+  overlayApplied: document.querySelector("main")?.dataset?.overlay,
+  sectionCount: document.querySelectorAll("main section[class]").length,
+  storyBg: document.querySelector(".story-card__photo, [style*=\"background-image\"]")?.style?.backgroundImage,
+  consoleErrors: (window.__errors || []).length,
+})
 ```
 
 Expect:

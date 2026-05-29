@@ -181,8 +181,8 @@ node "<SKILL_DIR>/scripts/install-substrate.mjs"
 
 # Phase 1 — capture: fetch source + assets into the project folder
 mkdir -p "$PROJECT/input"
-playwright-cli tab-new "$SOURCE_URL"
-playwright-cli html > "$PROJECT/input/${PAGE_SLUG}.html"
+curl -fsS "$SOURCE_URL" -o "$PROJECT/input/index.html"
+# For JS-rendered pages, use a browser to get the fully rendered HTML instead
 
 # Phase 2 — analyze: produce decisions.json (sections, slots, asset
 # strategy, head-links, conversionLevel). Includes block-level
