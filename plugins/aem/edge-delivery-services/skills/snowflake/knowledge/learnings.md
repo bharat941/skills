@@ -741,7 +741,7 @@ Static pages often use CSS-driven photos rather than `<img>` tags
 `style="background-image:url(…)"`. None are authorable through a
 slot writer that only knows `<img>`/`<picture>`/`<a>`.
 
-**Substrate addition** in `scripts/scripts.js writeSlot()`: when the
+**Substrate addition** in `scripts/overlay-engine.js writeSlot()`: when the
 target element has a truthy `el.style.backgroundImage`, treat it as
 a background-image slot. The DA cell carries an `<img>`; the engine
 extracts the `src` and writes
@@ -890,7 +890,7 @@ extracted inline `<style>` won't resolve. The browser falls back to
 system-ui, which is visually similar to many design fonts but
 distinctly not the same.
 
-**Substrate fix.** `scripts/scripts.js` `applyTemplateOverlay` lifts
+**Substrate fix.** `scripts/overlay-engine.js` `applyTemplateOverlay` lifts
 any top-level `<link>` elements from the template file into
 `document.head` (deduping by href+rel). Templates self-describe
 their head-level resource needs.

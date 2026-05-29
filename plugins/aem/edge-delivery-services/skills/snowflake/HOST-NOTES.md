@@ -144,6 +144,13 @@ Phase 0 of the skill (see `phases/0-prereq.md`) drives this
 installer. Subsequent invocations see the matching version in
 `.snowflake/config.json` and skip Phase 0 silently.
 
+The installer performs three kinds of change driven by MANIFEST.json:
+`replace` (wholesale file copy, with backup), `ignorePatches`/`gitignore`
+(idempotent line merges), and `inject` (anchored, idempotent code insertion).
+`scripts.js` is the sole `inject` target — the overlay engine lives in the
+wholesale-replaced `scripts/overlay-engine.js`, and `scripts.js` receives only
+a small import + `loadEager` guard so upstream boilerplate evolution is kept.
+
 ## The `.snowflake/` directory (all hosts)
 
 All per-repo state, project artifacts, and project-specific

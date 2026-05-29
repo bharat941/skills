@@ -22,14 +22,14 @@ as ES modules from `<head>`. `aem.js` defines the framework (RUM,
 decorate*, loadFragment, etc.); `scripts.js` calls `loadPage()` which
 runs `loadEager → loadLazy → loadDelayed`.
 
-### loadEager (scripts/scripts.js:133)
+### loadEager (scripts/scripts.js)
 **[verified]** Runs synchronously on page load. In the boilerplate:
 - Sets `html.lang`
 - `decorateTemplateAndTheme()` (reads `<meta>` template / theme classes)
 - `decorateMain(main)`:
   - `decorateIcons` (replaces `span.icon` with `<img>`)
   - `buildAutoBlocks` (auto-injects hero block, processes fragment
-    links — `scripts/scripts.js:50-75`)
+    links — `scripts/scripts.js`)
   - `decorateSections` (`aem.js:457`) — wraps section children, applies
     section metadata as CSS classes, sets `display:none` on each section
   - `decorateBlocks` (`aem.js:585`) — calls `decorateBlock` on every
@@ -45,7 +45,7 @@ runs `loadEager → loadLazy → loadDelayed`.
 `decorateTemplateAndTheme` and `decorateMain` — we can take over the
 DOM there, before sections are wrapped and hidden.
 
-### loadLazy (scripts/scripts.js:157)
+### loadLazy (scripts/scripts.js)
 **[verified]** Loads `<header>` and `<footer>` blocks (which themselves
 load `/nav` and `/footer` fragments via `loadFragment`), then loads
 remaining sections, then `lazy-styles.css` and fonts.

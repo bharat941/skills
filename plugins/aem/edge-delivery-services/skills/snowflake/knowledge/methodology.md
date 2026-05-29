@@ -290,7 +290,8 @@ runs' work is untouched.
   ```
 
 - `head.html` does NOT change. `styles/styles.css` does NOT change.
-  `scripts/scripts.js` and `scripts/delayed.js` and the
+  `scripts/scripts.js` (carries the overlay hook — the engine itself is in
+  `scripts/overlay-engine.js`) and `scripts/delayed.js` and the
   `blocks/{header,footer}/*` decorators are already template-keyed —
   no edits needed.
 

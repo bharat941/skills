@@ -42,9 +42,13 @@ skills/snowflake/
 ## Prerequisites
 
 The target EDS repo must have the **overlay substrate** in place:
-`scripts/scripts.js` with `applyTemplateOverlay`, the `writeSlot`
-slot writers, the `decorateMain` skip path for overlay pages, and
-the `blocks/header/header.js` / `blocks/footer/footer.js` fetch
+`scripts/overlay-engine.js` with `applyTemplateOverlay`, the `writeSlot`
+slot writers, and related template/slot logic. `scripts/scripts.js` is
+Adobe's standard boilerplate lifecycle file (loadEager/loadLazy/etc.) and
+receives only a small injected hook — an import of `overlay-engine.js` and
+an overlay guard at the top of `loadEager` that early-returns for overlay
+pages, skipping EDS decoration entirely. Also required: the
+`blocks/header/header.js` / `blocks/footer/footer.js` fetch
 decorators. See `knowledge/architecture.md` for the design.
 
 **The skill installs this for you.** `phases/0-prereq.md` drives an

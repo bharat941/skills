@@ -12,7 +12,7 @@ decision criteria); this document covers the implementation.
 | Header/footer | Static fragments fetched by block decorators | Same — static fragments fetched by block decorators |
 | DA content | Slot-keyed rows (`name \| value`) | Standard EDS block tables (positional rows) |
 | CSS | One file: `styles/<template>.css` | Global tokens in `styles/styles.css` + per-block CSS in `blocks/<name>/<name>.css` |
-| Runtime engine | Overlay engine in `scripts/scripts.js` reads slots, fetches template, merges at runtime | Standard EDS decoration: `decorateSections` → `decorateBlocks` → each block's `decorate()` runs |
+| Runtime engine | Overlay engine in `scripts/overlay-engine.js` reads slots, fetches template, merges at runtime | Standard EDS decoration: `decorateSections` → `decorateBlocks` → each block's `decorate()` runs |
 | Substrate | Overlay substrate required (slot writer, template loader) | Standard EDS boilerplate — no substrate needed |
 
 ## Output layout

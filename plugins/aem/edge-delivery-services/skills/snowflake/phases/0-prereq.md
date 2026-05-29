@@ -7,10 +7,10 @@ skill see `.snowflake/config.json` and skip this phase silently.
 ## Why this phase exists
 
 The skill's overlay pattern relies on substrate changes to the EDS
-boilerplate (engine in `scripts/scripts.js`, lifecycle CSS, header/
-footer block decorators, etc.). Without them, none of the later
-phases work. Phase 0 detects whether the substrate is installed and
-installs it if not.
+boilerplate (overlay engine in `scripts/overlay-engine.js`, lifecycle
+CSS, header/footer block decorators, etc.). Without them, none of the
+later phases work. Phase 0 detects whether the substrate is installed
+and installs it if not.
 
 ## Check first
 
@@ -37,7 +37,7 @@ Act based on which case was found.
 
 ### Fresh install (no snowflake substrate present)
 
-The marker (`applyTemplateOverlay`) is absent — the repo has no snowflake
+The marker (the `overlay-engine.js` import in `scripts/scripts.js`) is absent — the repo has no snowflake
 substrate yet. This is the common case: a vanilla `aem-boilerplate` clone
 whose stock files are exactly what the skill replaces. The init summary
 already disclosed the file count, and every replaced file is backed up to
@@ -83,7 +83,8 @@ See `assets/substrate/MANIFEST.json` for the authoritative list. Summary:
 
 | File | What changes |
 |---|---|
-| `scripts/scripts.js` | New overlay engine: `applyTemplateOverlay`, `writeSlot` (5 cases), template-name resolution, eager/lazy/delayed branches |
+| `scripts/overlay-engine.js` | New snowflake-owned module: overlay engine (`applyTemplateOverlay`, `writeSlot`, slot mapping, template resolution). Replaced wholesale. |
+| `scripts/scripts.js` | **Not replaced** — hooked in place: one `import` + one `loadEager` guard injected idempotently. Upstream boilerplate changes are preserved. If the installer can't find the anchor, it prints the snippet to add manually. |
 | `scripts/delayed.js` | HEAD-probes per-template animation engine before loading CDN deps |
 | `styles/styles.css` | Lifecycle visibility CSS with direct-child selectors |
 | `blocks/header/header.js` | Fetches static fragment instead of parsing DA-shape markup |
@@ -94,6 +95,9 @@ See `assets/substrate/MANIFEST.json` for the authoritative list. Summary:
 | `.eslintignore` | Patterns added (idempotent merge) |
 | `.stylelintignore` | Patterns added (idempotent merge) |
 | `.gitignore` | Patterns added (in-progress run state excluded) |
+
+`scripts.js` is the only file snowflake hooks rather than replaces, so that
+Adobe's ongoing boilerplate improvements to it survive an install.
 
 ## After install
 
