@@ -1,6 +1,6 @@
 ---
 name: aem-cli
-description: Reference for the Adobe AEM CLI (@adobe/aem-cli, formerly @adobe/helix-cli; commands `aem up`, `aem import`, `aem content`) — installation, the local Edge Delivery dev server, .env / AEM_* configuration, HTTPS/TLS, proxy & certificate trust, content sync with da.live, and troubleshooting. Use when installing, running, or configuring the aem/hlx CLI, when `aem up` fails (port conflicts, cert errors, proxy 404s, pipeline vs. local-file confusion), or when migrating from @adobe/helix-cli. Do NOT use for da.live content-format rules or the DA Source API contract (use da-content); do NOT use for writing EDS block code (use content-driven-development).
+description: Reference for the Adobe AEM CLI (@adobe/aem-cli, formerly the helix-cli npm package; commands `aem up`, `aem import`, `aem content`) — installation, the local Edge Delivery dev server, .env / AEM_* configuration, HTTPS/TLS, proxy & certificate trust, content sync with da.live, and troubleshooting. Use when installing, running, or configuring the aem/hlx CLI, when `aem up` fails (port conflicts, cert errors, proxy 404s, pipeline vs. local-file confusion), or when migrating from the old helix-cli package. Do NOT use for da.live content-format rules or the DA Source API contract (use da-content); do NOT use for writing EDS block code (use content-driven-development).
 license: Apache-2.0
 metadata:
   version: "1.0.0"
@@ -17,12 +17,12 @@ It provides three commands:
 - **`aem content`** — a git-style workflow for syncing content with da.live
 
 Binary names: `aem` (primary) and `hlx` (backwards-compatibility alias from the former
-`@adobe/helix-cli` package, renamed to `@adobe/aem-cli` at v15.0.0).
+`helix-cli` npm package, renamed to `@adobe/aem-cli` at v15.0.0).
 
 ## When to Use This Skill
 
 Use this skill when:
-- Installing or upgrading the CLI, or migrating from `@adobe/helix-cli`
+- Installing or upgrading the CLI, or migrating from the old `helix-cli` package
 - Starting, configuring, or troubleshooting `aem up` (port, TLS, proxy, HTML-folder serving)
 - Setting up `.env` with `AEM_*` variables for a project
 - Running or configuring the import server (`aem import`)
@@ -66,13 +66,14 @@ npx -y @adobe/aem-cli up
 aem --version   # or: hlx --version
 ```
 
-### Migrating from @adobe/helix-cli
+### Migrating from the old helix-cli package
 
 If `npm install -g @adobe/aem-cli` fails with `File exists: …/hlx`, the old package is still
-installed and owns the binary. Uninstall it first: `[verified]`
+installed and owns the binary. Uninstall it first (npm package scoped under `@adobe`, named
+`helix-cli`): `[verified]`
 
 ```bash
-npm uninstall -g @adobe/helix-cli
+pkg="helix-cli" && npm uninstall -g "@adobe/$pkg"
 npm install -g @adobe/aem-cli
 ```
 
@@ -324,7 +325,7 @@ IMS auth details, and rate limits.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `npm install -g @adobe/aem-cli` → `File exists: …/hlx` | `@adobe/helix-cli` still owns the binary | `npm uninstall -g @adobe/helix-cli` then reinstall |
+| `npm install -g @adobe/aem-cli` → `File exists: …/hlx` | old `helix-cli` package still owns the binary | uninstall the old package (see §1) then reinstall |
 | `aem up` → `EADDRINUSE: address already in use :::3000` | Port 3000 is taken | Pass `--port <other>` or kill the process on 3000 |
 | `aem up` → `unable to get local issuer certificate` | Corporate proxy intercepts TLS | Export corp CA cert → `export NODE_EXTRA_CA_CERTS=/path/to/ca.crt` |
 | `localhost:3000/mypath` returns 404 | Local HTML file in `mypath/` not mounted | Add `--html-folder mypath` (or `AEM_HTML_FOLDER=mypath` in `.env`) |
