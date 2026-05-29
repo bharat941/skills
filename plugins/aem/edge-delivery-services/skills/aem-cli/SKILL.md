@@ -119,7 +119,7 @@ See [references/command-reference.md](./references/command-reference.md) for the
 
 ### Trusted local certificate (recommended — avoids browser warnings)
 
-Install [`mkcert`](https://github.com/FiloSottile/mkcert), then:
+Install `mkcert` (https://github.com/FiloSottile/mkcert), then:
 
 ```bash
 mkcert -install                                          # one-time CA install
