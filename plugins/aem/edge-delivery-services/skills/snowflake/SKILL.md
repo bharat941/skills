@@ -153,9 +153,11 @@ On every invocation the agent performs these steps **before** entering Phase 0:
    DA token   : cached ✓                    ← (or: not found — needed at Phase 5)
    ```
 
-   If the substrate outcome is **drift** or **custom-code-detected**,
-   surface the file list and pause for explicit user input before
-   proceeding — Phase 0 handles that case.
+   Proceed without pausing for the common case (fresh install — no
+   snowflake substrate yet; replaced files are backed up). Only pause
+   for **drift** (a prior snowflake substrate that diverged), where
+   overwriting could lose intentional customization — Phase 0 handles
+   that case.
 
 5. **Proceed** — Phase 0 → 1 → … → 6 in order.
 

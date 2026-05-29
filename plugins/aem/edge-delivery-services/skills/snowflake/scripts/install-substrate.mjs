@@ -154,33 +154,24 @@ if (markerPresent && !allFilesMatchBundle) {
 }
 
 if (!markerPresent) {
-  // Distinguish "vanilla boilerplate" from "user has custom code".
-  // If any of the manifest.replace destination files exist with
-  // unique content (not matching bundled, not matching empty), the
-  // user likely has their own work in those files. Warn before
-  // overwriting; backups happen either way.
-  const customizedFiles = [];
+  // No snowflake substrate present (marker absent). Replacing the
+  // boilerplate files IS the install — a vanilla aem-boilerplate clone
+  // always has non-empty stock files here that differ from the bundled
+  // substrate. Originals are backed up unconditionally (step 4), so this
+  // is reversible. Report which pre-existing non-empty files will be
+  // replaced so the caller can surface them, but don't block: the run
+  // summary already disclosed the count and the backup is the safety net.
+  const preexisting = [];
   for (const entry of manifest.replace) {
     const installed = readMaybe(join(REPO_ROOT, entry.dst));
     const bundled = readMaybe(join(SUBSTRATE_DIR, entry.src));
     if (installed !== null && installed !== bundled && installed.trim().length > 0) {
-      // File exists, isn't ours, isn't empty
-      customizedFiles.push(entry.dst);
+      preexisting.push(entry.dst);
     }
   }
-  if (customizedFiles.length > 0 && !FORCE) {
-    console.error(`[snowflake] no substrate marker found, but ${customizedFiles.length} file(s) targeted for replacement exist with custom content:`);
-    customizedFiles.forEach((f) => console.error(`[snowflake]   - ${f}`));
-    console.error(`[snowflake]`);
-    console.error(`[snowflake] The installer would overwrite these files. Originals will be`);
-    console.error(`[snowflake] backed up to .snowflake/.backup/<timestamp>/, but please verify`);
-    console.error(`[snowflake] you don't have important work in them.`);
-    console.error(`[snowflake]`);
-    console.error(`[snowflake] Re-run with --force to proceed.`);
-    process.exit(2);
-  }
-  if (customizedFiles.length > 0 && FORCE) {
-    warn(`overwriting ${customizedFiles.length} customized file(s); originals backed up`);
+  if (preexisting.length > 0) {
+    log(`replacing ${preexisting.length} pre-existing file(s) (originals backed up to .snowflake/.backup/<timestamp>/):`);
+    preexisting.forEach((f) => log(`  - ${f}`));
   } else {
     log(`substrate not detected — fresh install (vanilla or minimal boilerplate)`);
   }
