@@ -19,34 +19,6 @@ It provides three commands:
 Binary names: `aem` (primary) and `hlx` (backwards-compatibility alias from the former
 `helix-cli` npm package, renamed to `@adobe/aem-cli` at v15.0.0).
 
-## When to Use This Skill
-
-Use this skill when:
-- Installing or upgrading the CLI, or migrating from the old `helix-cli` package
-- Starting, configuring, or troubleshooting `aem up` (port, TLS, proxy, HTML-folder serving)
-- Setting up `.env` with `AEM_*` variables for a project
-- Running or configuring the import server (`aem import`)
-- Syncing content with da.live via `aem content`
-- Diagnosing CLI errors (cert failures, port conflicts, proxy 404s, binary push no-ops)
-
-**Do NOT use this skill when:**
-- You need da.live content-format rules, the DA Source API contract, or media-handling behaviour —
-  use the **da-content** skill instead
-- You need to write or review EDS block code — use **content-driven-development**
-- You are running content import transformation scripts — use **page-import** or
-  **generate-import-html**
-
-## Related Skills
-
-- **da-content** — DA + EDS content rules: block HTML format, metadata, media, DA Source API.
-  The authoritative reference for `aem content push` limitations and the byte-faithful upload
-  alternative.
-- **content-driven-development** — orchestrates the CDD workflow; shows the standard `aem up`
-  invocation in context.
-- **create-site** — site bootstrapping; uses `aem up` for the final local-dev step.
-- **preview-import** — import preview workflow; explains the `--html-folder` flag in detail.
-- **page-import** — full EDS content-import orchestration using the Importer UI.
-
 ---
 
 ## 1. Install
