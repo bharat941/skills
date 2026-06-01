@@ -16,6 +16,40 @@ Categories to look for as the list grows:
 
 ---
 
+## 2026-05-29 — Link slots with inline decorative elements (SVGs, icons) must use the span-wrapper pattern
+
+**Surfaced on:** photoshop-features (run 010) — 7 CTA links with SVG chevrons.
+
+When an `<a>` element contains both authorable text AND decorative
+non-authorable content (inline SVG icons, glyph spans, pseudo-element
+triggers), do NOT put `data-slot` on the `<a>`. The link writer replaces
+`innerHTML`, destroying the decorative content.
+
+**Pattern to detect during Analyze (Phase 2):**
+
+Any `<a>` that is a slot candidate AND contains:
+- `<svg>` child elements
+- `<img>` child elements (decorative icons, not the primary content)
+- Text nodes mixed with non-text siblings
+
+**Fix:** Wrap only the text portion in `<span data-slot="...">`, leaving
+the decorative elements as siblings inside the `<a>`. The `href` stays
+static in the template (not authorable). If `href` authoring is also
+needed, use a separate attribute-level mechanism (not currently supported
+by the slot writer).
+
+**Scope:** This applies to ALL slot writer types that replace innerHTML,
+not just links. Any element where `writeSlot()` would overwrite children
+that include decorative template chrome is at risk. The link case is the
+most common because CTAs frequently pair text with arrow/chevron icons.
+
+**The general rule:** Before placing `data-slot` on ANY element, inspect
+its children. If the element contains non-authorable siblings of the
+authorable text (SVGs, decorative images, icon fonts), wrap only the
+authorable portion and leave the rest as template chrome.
+
+---
+
 ## 2026-05-20 — AEM boilerplate's default `styles/fonts.css` contaminates overlay pages
 
 **Surfaced on:** ups-gb refresh (run 017) — visible font rendering divergence.
@@ -741,7 +775,7 @@ Static pages often use CSS-driven photos rather than `<img>` tags
 `style="background-image:url(…)"`. None are authorable through a
 slot writer that only knows `<img>`/`<picture>`/`<a>`.
 
-**Substrate addition** in `scripts/scripts.js writeSlot()`: when the
+**Substrate addition** in `scripts/overlay-engine.js writeSlot()`: when the
 target element has a truthy `el.style.backgroundImage`, treat it as
 a background-image slot. The DA cell carries an `<img>`; the engine
 extracts the `src` and writes
@@ -890,7 +924,7 @@ extracted inline `<style>` won't resolve. The browser falls back to
 system-ui, which is visually similar to many design fonts but
 distinctly not the same.
 
-**Substrate fix.** `scripts/scripts.js` `applyTemplateOverlay` lifts
+**Substrate fix.** `scripts/overlay-engine.js` `applyTemplateOverlay` lifts
 any top-level `<link>` elements from the template file into
 `document.head` (deduping by href+rel). Templates self-describe
 their head-level resource needs.

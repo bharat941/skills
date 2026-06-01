@@ -7,10 +7,10 @@ skill see `.snowflake/config.json` and skip this phase silently.
 ## Why this phase exists
 
 The skill's overlay pattern relies on substrate changes to the EDS
-boilerplate (engine in `scripts/scripts.js`, lifecycle CSS, header/
-footer block decorators, etc.). Without them, none of the later
-phases work. Phase 0 detects whether the substrate is installed and
-installs it if not.
+boilerplate (overlay engine in `scripts/overlay-engine.js`, lifecycle
+CSS, header/footer block decorators, etc.). Without them, none of the
+later phases work. Phase 0 detects whether the substrate is installed
+and installs it if not.
 
 ## Check first
 
@@ -31,59 +31,51 @@ is current.
 ## Install (or upgrade)
 
 If `.snowflake/config.json` is absent or its `substrateVersion`
-doesn't match the bundled VERSION:
+doesn't match the bundled VERSION, the dry-run during initialization
+(see SKILL.md "Initialization") will have reported one of two outcomes.
+Act based on which case was found.
 
-1. **Surface to the user first.** This is a substrate change — it
-   modifies files the user wrote (or didn't, if they're starting from
-   vanilla boilerplate). Explicitly confirm before running. Show the
-   list of files that will change (from `assets/substrate/MANIFEST.json`
-   `replace` and `ignorePatches` arrays).
+### Fresh install (no snowflake substrate present)
 
-2. **Dry-run before applying:**
+The marker (the `overlay-engine.js` import in `scripts/scripts.js`) is absent — the repo has no snowflake
+substrate yet. This is the common case: a vanilla `aem-boilerplate` clone
+whose stock files are exactly what the skill replaces. The init summary
+already disclosed the file count, and every replaced file is backed up to
+`.snowflake/.backup/<timestamp>/`, so this is safe and reversible.
 
-   ```bash
-   node <SKILL_DIR>/scripts/install-substrate.mjs --dry-run
-   ```
+Run the installer directly — no pause needed:
 
-   Read the output. The installer compares every bundled substrate
-   file byte-for-byte against the target repo. There are four
-   outcomes:
-   - **No-op** — all bundled files already exist byte-identical in
-     the repo at the bundled version. Substrate is current; phase 0
-     is done.
-   - **Fresh install (clean)** — none of the targeted files exist,
-     or all are empty. Vanilla EDS boilerplate. Installer proceeds.
-   - **Fresh install (custom code detected)** — marker absent but
-     one or more targeted files exist with non-empty custom content.
-     The user likely has their own work there (e.g. a hand-rolled
-     overlay engine that doesn't use `applyTemplateOverlay`). The
-     installer refuses without `--force` and lists the affected
-     files. With `--force`, the originals are backed up and replaced.
-   - **Drift** — substrate is partially present (marker found) but
-     one or more files differ from the bundled version. Installer
-     refuses without `--force` and lists the diverging files. Common
-     causes: a hand-customized substrate, an older version installed
-     before snowflake existed, an interrupted install.
+```bash
+node <SKILL_DIR>/scripts/install-substrate.mjs
+```
 
-   For drift or custom-code cases: investigate the named files first.
-   If the divergence is intentional (the repo's substrate is ahead
-   of the bundled one, or the custom code is the user's own engine),
-   don't `--force`. If the divergence is unintended (you want the
-   bundled version), `--force` is safe; originals get backed up.
+The installer logs each pre-existing file it replaces. If that list
+surprises you (e.g. it names a hand-rolled overlay engine you wrote
+rather than stock boilerplate), stop and restore from the backup — but
+the default is to proceed.
 
-3. **Install:**
+### Drift (a prior snowflake substrate that diverged)
 
-   ```bash
-   node <SKILL_DIR>/scripts/install-substrate.mjs
-   # …or with --force if the drift case above is intentional
-   ```
+The marker IS present but one or more files differ from the bundled
+version — a customized substrate, an older version, or an interrupted
+install. Here overwriting could lose intentional customization, so the
+installer refuses without `--force`. Surface the drifted files and the
+version mismatch, and let the user decide:
 
-   Idempotent: re-running is safe. Files are backed up to
-   `.snowflake/.backup/<timestamp>/` before being replaced.
+> The installed substrate differs from the bundled v`<VERSION>`.
+> Drifted files: `<list from dry-run output>`
+>
+> Options:
+> 1. If the divergence is intentional (your substrate is ahead of the
+>    bundled one, or you customized it), keep it as-is and skip Phase 0.
+> 2. If the divergence is unintended, I can overwrite with `--force`
+>    (originals backed up).
 
-4. **Confirm `.snowflake/config.json` was written** with the bundled
-   version stamped in. This is how subsequent invocations know to
-   skip Phase 0.
+Run with `--force` only after the user confirms:
+
+```bash
+node <SKILL_DIR>/scripts/install-substrate.mjs --force
+```
 
 ## What gets installed
 
@@ -91,7 +83,8 @@ See `assets/substrate/MANIFEST.json` for the authoritative list. Summary:
 
 | File | What changes |
 |---|---|
-| `scripts/scripts.js` | New overlay engine: `applyTemplateOverlay`, `writeSlot` (5 cases), template-name resolution, eager/lazy/delayed branches |
+| `scripts/overlay-engine.js` | New snowflake-owned module: overlay engine (`applyTemplateOverlay`, `writeSlot`, slot mapping, template resolution). Replaced wholesale. |
+| `scripts/scripts.js` | **Not replaced** — hooked in place: one `import` + one `loadEager` guard injected idempotently. Upstream boilerplate changes are preserved. If the installer can't find the anchor, it prints the snippet to add manually. |
 | `scripts/delayed.js` | HEAD-probes per-template animation engine before loading CDN deps |
 | `styles/styles.css` | Lifecycle visibility CSS with direct-child selectors |
 | `blocks/header/header.js` | Fetches static fragment instead of parsing DA-shape markup |
@@ -103,13 +96,20 @@ See `assets/substrate/MANIFEST.json` for the authoritative list. Summary:
 | `.stylelintignore` | Patterns added (idempotent merge) |
 | `.gitignore` | Patterns added (in-progress run state excluded) |
 
+`scripts.js` is the only file snowflake hooks rather than replaces, so that
+Adobe's ongoing boilerplate improvements to it survive an install.
+
 ## After install
 
-Phase 0 completes. The `.snowflake/` directory is now seeded:
+Confirm `.snowflake/config.json` was written with the bundled version
+stamped in. The installer also writes the default config keys
+(`projectsDir`, `daRoot`, `branchPrefix`, `trunkBranch`, `tagPrefix`)
+on a fresh install — user-edited values from an existing config are
+preserved. The `.snowflake/` directory is now seeded:
 
 ```
 .snowflake/
-├── config.json                ← substrateVersion stamped
+├── config.json                ← substrateVersion + default keys
 └── .backup/<timestamp>/       ← originals of files we replaced
 ```
 

@@ -79,7 +79,9 @@ styles/*.css
 - `head.html` — does NOT reference the per-template CSS. The overlay
   engine loads it dynamically.
 - `styles/styles.css` — boilerplate global styles, unchanged.
-- `scripts/scripts.js` — the overlay engine substrate, unchanged.
+- `scripts/overlay-engine.js` — the overlay engine, unchanged.
+- `scripts/scripts.js` — the EDS lifecycle file (carries only the injected
+  hook: the `overlay-engine.js` import + loadEager guard), unchanged.
 - `scripts/delayed.js` — animation engine HEAD-probe lives here,
   unchanged.
 - `blocks/header/*`, `blocks/footer/*` — already template-keyed,

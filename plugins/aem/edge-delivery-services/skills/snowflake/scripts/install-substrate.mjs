@@ -34,7 +34,7 @@
  * Exit codes:
  *   0   Success (installed, no-op, or dry-run completed cleanly)
  *   1   Target repo not detected (no .git, no package.json, etc.)
- *   2   Substrate is already installed at a different version (use --force)
+ *   2   Cannot proceed without --force (substrate drift), or an inject anchor was missing/ambiguous
  *   3   Filesystem error during install
  */
 
@@ -89,10 +89,8 @@ log(`bundled substrate version: ${bundledVersion}`);
 // Falls back to the marker-comment check if file reads fail.
 // ---------------------------------------------------------------------------
 
-import { readFileSync as _readSync } from 'node:fs';
-
 function readMaybe(path) {
-  try { return _readSync(path, 'utf8'); } catch { return null; }
+  try { return readFileSync(path, 'utf8'); } catch { return null; }
 }
 
 const markerFilePath = join(REPO_ROOT, manifest.marker.file);
@@ -112,6 +110,11 @@ for (const entry of manifest.replace) {
   }
 }
 
+const injectComplete = markerPresent && (manifest.inject ?? []).every((target) => {
+  const content = readMaybe(join(REPO_ROOT, target.file));
+  return content !== null && target.edits.every((e) => content.includes(e.skipIf));
+});
+
 const configPath = join(REPO_ROOT, '.snowflake', 'config.json');
 let installedVersion = null;
 if (existsSync(configPath)) {
@@ -124,8 +127,8 @@ if (existsSync(configPath)) {
 }
 
 // Decision tree
-if (markerPresent && allFilesMatchBundle) {
-  log(`substrate v${bundledVersion} already installed (byte-identical) — no-op`);
+if (markerPresent && allFilesMatchBundle && injectComplete) {
+  log(`substrate v${bundledVersion} already installed — no-op`);
   process.exit(0);
 }
 
@@ -154,33 +157,24 @@ if (markerPresent && !allFilesMatchBundle) {
 }
 
 if (!markerPresent) {
-  // Distinguish "vanilla boilerplate" from "user has custom code".
-  // If any of the manifest.replace destination files exist with
-  // unique content (not matching bundled, not matching empty), the
-  // user likely has their own work in those files. Warn before
-  // overwriting; backups happen either way.
-  const customizedFiles = [];
+  // No snowflake substrate present (marker absent). Replacing the
+  // boilerplate files IS the install — a vanilla aem-boilerplate clone
+  // always has non-empty stock files here that differ from the bundled
+  // substrate. Originals are backed up unconditionally (step 4), so this
+  // is reversible. Report which pre-existing non-empty files will be
+  // replaced so the caller can surface them, but don't block: the run
+  // summary already disclosed the count and the backup is the safety net.
+  const preexisting = [];
   for (const entry of manifest.replace) {
     const installed = readMaybe(join(REPO_ROOT, entry.dst));
     const bundled = readMaybe(join(SUBSTRATE_DIR, entry.src));
     if (installed !== null && installed !== bundled && installed.trim().length > 0) {
-      // File exists, isn't ours, isn't empty
-      customizedFiles.push(entry.dst);
+      preexisting.push(entry.dst);
     }
   }
-  if (customizedFiles.length > 0 && !FORCE) {
-    console.error(`[snowflake] no substrate marker found, but ${customizedFiles.length} file(s) targeted for replacement exist with custom content:`);
-    customizedFiles.forEach((f) => console.error(`[snowflake]   - ${f}`));
-    console.error(`[snowflake]`);
-    console.error(`[snowflake] The installer would overwrite these files. Originals will be`);
-    console.error(`[snowflake] backed up to .snowflake/.backup/<timestamp>/, but please verify`);
-    console.error(`[snowflake] you don't have important work in them.`);
-    console.error(`[snowflake]`);
-    console.error(`[snowflake] Re-run with --force to proceed.`);
-    process.exit(2);
-  }
-  if (customizedFiles.length > 0 && FORCE) {
-    warn(`overwriting ${customizedFiles.length} customized file(s); originals backed up`);
+  if (preexisting.length > 0) {
+    log(`replacing ${preexisting.length} pre-existing file(s) (originals backed up to .snowflake/.backup/<timestamp>/):`);
+    preexisting.forEach((f) => log(`  - ${f}`));
   } else {
     log(`substrate not detected — fresh install (vanilla or minimal boilerplate)`);
   }
@@ -265,21 +259,72 @@ if (manifest.gitignore) {
 }
 
 // ---------------------------------------------------------------------------
-// 7. Write .snowflake/config.json with installed version
+// 6b. Apply anchored, idempotent code injections (manifest.inject)
+// ---------------------------------------------------------------------------
+
+function applyInject() {
+  for (const target of manifest.inject ?? []) {
+    const path = join(REPO_ROOT, target.file);
+    let content = readMaybe(path);
+    if (content === null) die(`inject target missing: ${target.file}`, 3);
+    let changed = false;
+    for (const edit of target.edits) {
+      if (content.includes(edit.skipIf)) continue; // already applied — idempotent
+      const idx = content.indexOf(edit.anchor);
+      if (idx === -1) {
+        console.error(`[snowflake] could not find the anchor for "${edit.id}" in ${target.file}.`);
+        console.error(`[snowflake] Your boilerplate may have changed. Apply this manually,`);
+        console.error(`[snowflake] immediately AFTER this anchor: ${JSON.stringify(edit.anchor)}`);
+        console.error(`[snowflake] ---`);
+        console.error(edit.insert);
+        console.error(`[snowflake] ---`);
+        process.exit(2);
+      }
+      if (content.indexOf(edit.anchor, idx + 1) !== -1) {
+        die(`anchor for "${edit.id}" is ambiguous in ${target.file} (multiple matches)`, 2);
+      }
+      const at = idx + edit.anchor.length;
+      if (DRY_RUN) {
+        log(`would inject "${edit.id}" into ${target.file}`);
+        content = content.slice(0, at) + '\n' + edit.insert + content.slice(at);
+        continue;
+      }
+      content = content.slice(0, at) + '\n' + edit.insert + content.slice(at);
+      changed = true;
+      log(`injected "${edit.id}" into ${target.file}`);
+    }
+    if (changed && !DRY_RUN) {
+      backupOne(target.file);
+      writeFileSync(path, content);
+    }
+  }
+}
+
+applyInject();
+
+// ---------------------------------------------------------------------------
+// 7. Write .snowflake/config.json with installed version + defaults
+//
+// Merge order (later wins):
+//   manifest.defaults  ← stamped on fresh install so config always has them
+//   existing config    ← user edits survive upgrades
+//   configOut          ← substrateVersion + installedAt always refresh
 // ---------------------------------------------------------------------------
 
 const snowflakeDir = join(REPO_ROOT, '.snowflake');
+const defaults = manifest.defaults ?? {};
+const existingConfig = existsSync(configPath)
+  ? JSON.parse(readFileSync(configPath, 'utf8'))
+  : {};
 const configOut = {
   substrateVersion: bundledVersion,
   installedAt: new Date().toISOString(),
 };
+const merged = { ...defaults, ...existingConfig, ...configOut };
 if (DRY_RUN) {
-  log(`would write .snowflake/config.json: ${JSON.stringify(configOut)}`);
+  log(`would write .snowflake/config.json: ${JSON.stringify(merged, null, 2)}`);
 } else {
   mkdirSync(snowflakeDir, { recursive: true });
-  const merged = existsSync(configPath)
-    ? { ...JSON.parse(readFileSync(configPath, 'utf8')), ...configOut }
-    : configOut;
   writeFileSync(configPath, JSON.stringify(merged, null, 2) + '\n');
   log(`wrote .snowflake/config.json`);
 }

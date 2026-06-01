@@ -1,15 +1,21 @@
 {
-  "substrateVersion": "1.0.5",
+  "substrateVersion": "1.1.0",
+  "defaults": {
+    "projectsDir": ".snowflake/projects",
+    "branchPrefix": "snowflake-",
+    "trunkBranch": "main",
+    "tagPrefix": "snowflake-"
+  },
   "marker": {
     "file": "scripts/scripts.js",
-    "needle": "function applyTemplateOverlay",
-    "_comment": "Tied to a function name in the engine, not a comment — more durable across substrate refactors. Renaming applyTemplateOverlay is a breaking change anyway."
+    "needle": "overlay-engine.js",
+    "_comment": "Presence of the overlay-engine import proves both that the engine module is installed and that scripts.js is hooked. Renaming overlay-engine.js is a breaking change anyway."
   },
   "replace": [
     {
-      "src": "scripts/scripts.js",
-      "dst": "scripts/scripts.js",
-      "purpose": "Overlay engine: applyTemplateOverlay, writeSlot (5 cases), template-name resolution, loadEager/loadLazy/loadDelayed branches."
+      "src": "scripts/overlay-engine.js",
+      "dst": "scripts/overlay-engine.js",
+      "purpose": "Static-to-EDS overlay engine (readBlockSlots, writeSlot, applySlotsToTemplate, resolveTemplateName, applyTemplateOverlay). Snowflake-owned module imported by scripts.js."
     },
     {
       "src": "scripts/delayed.js",
@@ -50,6 +56,25 @@
       "src": "head.html",
       "dst": "head.html",
       "purpose": "Minimal head: CSP, viewport, aem.js + scripts.js + styles.css. No per-template stylesheet; the overlay engine loads /styles/<template>.css dynamically once the template name resolves."
+    }
+  ],
+  "inject": [
+    {
+      "file": "scripts/scripts.js",
+      "edits": [
+        {
+          "id": "overlay-import",
+          "anchor": "} from './aem.js';",
+          "insert": "import { applyTemplateOverlay } from './overlay-engine.js';",
+          "skipIf": "overlay-engine.js"
+        },
+        {
+          "id": "overlay-eager-hook",
+          "anchor": "  decorateTemplateAndTheme();\n  const main = doc.querySelector('main');",
+          "insert": "  if (main && await applyTemplateOverlay(main)) {\n    document.body.classList.add('appear');\n    return;\n  }",
+          "skipIf": "applyTemplateOverlay(main)"
+        }
+      ]
     }
   ],
   "ignorePatches": [

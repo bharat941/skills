@@ -63,7 +63,8 @@ one EDS repo without colliding.
          - blocks/header/header.js reads main.dataset.overlay,
            fetches /fragments/<template>/header.html
          - blocks/footer/footer.js — same for footer
-         - main.dataset.overlay set → skip standard loadSections
+         - loadSections(main) runs unconditionally (harmless no-op
+           on overlay pages — see note below)
                        │
                        ▼
        loadDelayed:
@@ -75,6 +76,19 @@ one EDS repo without colliding.
                        ▼
        Final rendered DOM == original static page DOM ✅
 ```
+
+## Why `loadLazy` needs no overlay guard for `loadSections`
+
+`loadSections(element)` in `aem.js` queries `element.querySelectorAll('div.section')`.
+The overlay template (`/templates/<template>.html`) contains the original static page's
+`<main>` markup — plain design elements (`<section>`, `<header>`, etc.), **not** EDS
+wrapper `<div class="section">` elements. Therefore `loadSections(main)` finds zero
+matching nodes and returns immediately: it is a harmless no-op on overlay pages.
+
+The old woven `scripts.js` wrapped this call in `if (!main.dataset.overlay) { ... }` as
+a defensive guard, but the guard is unnecessary. The new hook-based approach deliberately
+omits it: `loadEager` injects the overlay logic and sets the sentinel, while `loadLazy`
+calls `loadSections(main)` unconditionally — with no ill effect on overlay pages.
 
 ## Path conventions
 

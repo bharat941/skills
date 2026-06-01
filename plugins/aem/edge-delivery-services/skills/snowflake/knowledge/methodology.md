@@ -51,9 +51,11 @@ becomes template, what becomes slots.
   inside it) is a candidate block. Use LLM segmentation if the
   source doesn't already mark sections; use semantic tags as ground
   truth if it does.
-- **Slot identification.** Within each block, identify:
-  - Visible text in headings, paragraphs, button labels, link text
-    → text slot.
+- **Slot identification.** Within each block, identify slots from ALL
+  DOM elements regardless of CSS visibility — hidden tab panels,
+  collapsed accordions, inactive carousel slides all contain authorable
+  content that must be extracted:
+  - Text in headings, paragraphs, button labels, link text → text slot.
   - `<img>` / `<picture>` → image slot.
   - `<a>` with text and href → link slot (carries both).
   - Decorative `aria-hidden` icons, hard-coded glyphs → NOT slots,
@@ -290,7 +292,8 @@ runs' work is untouched.
   ```
 
 - `head.html` does NOT change. `styles/styles.css` does NOT change.
-  `scripts/scripts.js` and `scripts/delayed.js` and the
+  `scripts/scripts.js` (carries the overlay hook — the engine itself is in
+  `scripts/overlay-engine.js`) and `scripts/delayed.js` and the
   `blocks/{header,footer}/*` decorators are already template-keyed —
   no edits needed.
 

@@ -110,6 +110,15 @@ in `decisions.json["sections"]`:
      replaces the URL at runtime.
    - For `link` slots, only apply if the `<a>` has NO nested
      `[data-slot]` descendants. Container-vs-children rule.
+   - **Span-wrapper slots**: when `decisions.json` marks a slot with
+     `"mixedContent": true`, do NOT place `data-slot` on the element
+     itself (its `innerHTML` replacement would destroy decorative
+     children like SVGs and icons). Instead, wrap only the authorable
+     text portion in `<span data-slot="name">text</span>`, leaving
+     decorative siblings (SVGs, icon images) outside the wrapper as
+     static template chrome. In the DA doc, emit the value as plain
+     text (not a link). See learnings entry "link slots with inline
+     decorative elements".
 4. Skip elements listed in `decisions.json["strip"]` — they don't
    appear in the template.
 5. Mark placeholder elements with `data-slot-skip="placeholder"`
@@ -284,6 +293,25 @@ grep -oE 'class="[^"]*"' "$PROJ/output/templates/"*.html \
         echo "WARN: section first-class '$cls' appears as CSS selector — verify no layout collision"
       fi
     done || echo "OK: no first-class CSS collisions detected"
+
+# 7) No slot whose element contains non-authorable children
+#    (SVGs, decorative images that writeSlot innerHTML would destroy).
+#    DOM-based check — more reliable than regex for nested structures.
+node -e '
+  const fs = require("fs");
+  const html = fs.readFileSync(process.argv[1], "utf8");
+  const { JSDOM } = require("jsdom");
+  const dom = new JSDOM(html);
+  const doc = dom.window.document;
+  const bad = [];
+  doc.querySelectorAll("[data-slot]").forEach((el) => {
+    const deco = el.querySelectorAll("svg, img[aria-hidden], img[role=presentation]");
+    if (deco.length) bad.push(el.getAttribute("data-slot") + " contains <" + deco[0].tagName.toLowerCase() + ">");
+  });
+  if (bad.length) { bad.forEach((b) => console.error("WARN: " + b + " — use span-wrapper")); process.exit(1); }
+' "$PROJ/output/templates/${TEMPLATE_NAME}.html" \
+  && echo "OK: no mixed-content slots" \
+  || echo "FAIL: slots with decorative children found — see learnings: span-wrapper pattern"
 ```
 
 ## Update state and finish (page-level)
@@ -374,6 +402,14 @@ Write `blocks/header/header.css` and `blocks/footer/footer.css`
 with the header/footer CSS rules extracted from the source.
 
 ### B.5 — Create content blocks
+
+Each block is fully independent — its own JS, CSS, and content model
+with no shared state or cross-block dependencies. **Blocks can be
+generated in parallel.** If the host environment supports dispatching
+independent work units concurrently (subagents, worker threads, scoops,
+etc.), use that capability here — it is safe and significantly faster
+for pages with many sections. Sequential generation is equally correct
+if parallelism is not available.
 
 For each content section in `decisions.json.feasibility.sections[]`
 where `level === "block"`:
