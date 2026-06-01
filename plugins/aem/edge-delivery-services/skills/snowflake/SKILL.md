@@ -239,7 +239,7 @@ proceeds. Reruns are safe — phases skip work already done.
    list, slot opportunities, head-level links to lift, asset strategy.
    **Also runs the block-level feasibility assessment** — see
    [knowledge/block-level-feasibility.md](./knowledge/block-level-feasibility.md).
-   Includes a **page complexity gate**: pages with >80 sections or >1000
+   Includes a **page complexity gate**: pages with >8 sections or >100
    slottable elements auto-switch from page-level to block-level to
    avoid incomplete content extraction (see phases/2-analyze.md).
    Produces `notes.md` + `decisions.json` (including `conversionLevel`).

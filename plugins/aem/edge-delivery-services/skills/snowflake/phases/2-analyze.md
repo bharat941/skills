@@ -167,8 +167,8 @@ fatigue. Block-level processes one section at a time and does not have
 this limitation.
 
 **Thresholds** (either triggers the gate):
-- More than **80 content sections** (excluding header/footer)
-- More than **1000 slottable elements** across all sections
+- More than **8 content sections** (excluding header/footer)
+- More than **100 slottable elements** across all sections
 
 **Behavior when the gate fires:**
 
