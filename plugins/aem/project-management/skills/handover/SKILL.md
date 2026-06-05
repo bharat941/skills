@@ -169,13 +169,14 @@ Replace `{ORG_NAME}` with the actual organization name, `{CONTENT_SOURCE}` with 
 #### 1.6.1 Check for Existing Auth Token
 
 ```bash
-AUTH_TOKEN=$(cat .claude-plugin/project-config.json 2>/dev/null | node -e "
-  const d = require('fs').readFileSync(0,'utf8');
+AUTH_TOKEN=$(node -e "
+  const fs = require('fs');
   try {
-    const c = JSON.parse(d);
-    const now = Math.floor(Date.now()/1000);
-    if (c.authToken && c.authTokenExpiry > now + 60) process.stdout.write(c.authToken);
-  } catch(e) {}
+    const t = JSON.parse(fs.readFileSync(process.env.HOME + '/.aem/ims-token.json', 'utf8'));
+    if (t.authToken && t.authTokenExpiry > Math.floor(Date.now()/1000) + 60) {
+      process.stdout.write(t.authToken);
+    }
+  } catch (e) {}
 ")
 
 if [ -n "$AUTH_TOKEN" ]; then
@@ -197,7 +198,7 @@ This will:
 1. Read `authProvider` from `.claude-plugin/project-config.json` to determine identity provider
 2. Open a browser at `https://admin.hlx.page/auth/{provider}` (Microsoft, Google, or Adobe)
 3. Capture the `auth_token` cookie after login completes
-4. Save token to `.claude-plugin/project-config.json` (project-level)
+4. Save token to `~/.aem/ims-token.json` (user-level, shared across projects)
 5. Auto-close the browser when complete
 
 **Why authenticate in orchestrator:** By authenticating once here, all sub-skills running in parallel can use the saved token without each prompting for login separately.
@@ -207,9 +208,12 @@ This will:
 **AFTER authentication succeeds, verify the org name by hitting the Config Service.**
 
 ```bash
-AUTH_TOKEN=$(cat .claude-plugin/project-config.json | node -e "
-  const d = require('fs').readFileSync(0,'utf8');
-  process.stdout.write(JSON.parse(d).authToken || '');
+AUTH_TOKEN=$(node -e "
+  const fs = require('fs');
+  try {
+    const t = JSON.parse(fs.readFileSync(process.env.HOME + '/.aem/ims-token.json', 'utf8'));
+    process.stdout.write(t.authToken || '');
+  } catch (e) {}
 ")
 ORG=$(cat .claude-plugin/project-config.json | node -e "
   const d = require('fs').readFileSync(0,'utf8');
@@ -264,17 +268,17 @@ You'll see progress updates as each guide moves through its phases."
 // All three in ONE message - runs in parallel with full permissions
 Agent({
   description: "Generate authoring guide",
-  prompt: "You are generating an authoring guide for an AEM Edge Delivery Services project at {PROJECT_ROOT}. Read the skill instructions at {PLUGIN_ROOT}/skills/handover-author/SKILL.md and follow them to generate the guide. The project config is at .claude-plugin/project-config.json (org, authToken, allGuides are already set — skip Phase 0 and authentication). Start from Phase 1. For PDF conversion, read {PLUGIN_ROOT}/skills/whitepaper/SKILL.md and follow its instructions. Do NOT use the Skill tool — execute all steps directly with Bash, Read, and Write tools."
+  prompt: "You are generating an authoring guide for an AEM Edge Delivery Services project at {PROJECT_ROOT}. Read the skill instructions at {PLUGIN_ROOT}/skills/handover-author/SKILL.md and follow them to generate the guide. The project config is at .claude-plugin/project-config.json (org, allGuides are already set — skip Phase 0 and authentication). Auth token is at ~/.aem/ims-token.json. Start from Phase 1. For PDF conversion, read {PLUGIN_ROOT}/skills/whitepaper/SKILL.md and follow its instructions. Do NOT use the Skill tool — execute all steps directly with Bash, Read, and Write tools."
 })
 
 Agent({
   description: "Generate developer guide",
-  prompt: "You are generating a developer guide for an AEM Edge Delivery Services project at {PROJECT_ROOT}. Read the skill instructions at {PLUGIN_ROOT}/skills/handover-developer/SKILL.md and follow them to generate the guide. The project config is at .claude-plugin/project-config.json (org, authToken, allGuides are already set — skip Phase 0 and authentication). Start from Phase 1. For PDF conversion, read {PLUGIN_ROOT}/skills/whitepaper/SKILL.md and follow its instructions. Do NOT use the Skill tool — execute all steps directly with Bash, Read, and Write tools."
+  prompt: "You are generating a developer guide for an AEM Edge Delivery Services project at {PROJECT_ROOT}. Read the skill instructions at {PLUGIN_ROOT}/skills/handover-developer/SKILL.md and follow them to generate the guide. The project config is at .claude-plugin/project-config.json (org, allGuides are already set — skip Phase 0 and authentication). Auth token is at ~/.aem/ims-token.json. Start from Phase 1. For PDF conversion, read {PLUGIN_ROOT}/skills/whitepaper/SKILL.md and follow its instructions. Do NOT use the Skill tool — execute all steps directly with Bash, Read, and Write tools."
 })
 
 Agent({
   description: "Generate admin guide",
-  prompt: "You are generating an admin guide for an AEM Edge Delivery Services project at {PROJECT_ROOT}. Read the skill instructions at {PLUGIN_ROOT}/skills/handover-admin/SKILL.md and follow them to generate the guide. The project config is at .claude-plugin/project-config.json (org, authToken, allGuides are already set — skip Phase 0 and authentication). Start from Phase 1. For PDF conversion, read {PLUGIN_ROOT}/skills/whitepaper/SKILL.md and follow its instructions. Do NOT use the Skill tool — execute all steps directly with Bash, Read, and Write tools."
+  prompt: "You are generating an admin guide for an AEM Edge Delivery Services project at {PROJECT_ROOT}. Read the skill instructions at {PLUGIN_ROOT}/skills/handover-admin/SKILL.md and follow them to generate the guide. The project config is at .claude-plugin/project-config.json (org, allGuides are already set — skip Phase 0 and authentication). Auth token is at ~/.aem/ims-token.json. Start from Phase 1. For PDF conversion, read {PLUGIN_ROOT}/skills/whitepaper/SKILL.md and follow its instructions. Do NOT use the Skill tool — execute all steps directly with Bash, Read, and Write tools."
 })
 ```
 
