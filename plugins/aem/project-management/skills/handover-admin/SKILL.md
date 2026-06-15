@@ -4,7 +4,7 @@ description: Generate comprehensive admin documentation for AEM Edge Delivery Se
 license: Apache-2.0
 allowed-tools: Read, Write, Edit, Bash, AskUserQuestion, Skill
 metadata:
-  version: "1.2.0"
+  version: "1.0.0"
 ---
 
 # Project Handover - Admin Guide
