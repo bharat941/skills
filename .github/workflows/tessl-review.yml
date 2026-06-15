@@ -55,10 +55,36 @@ jobs:
               echo "Changed skills: $DIRS"
             fi
           else
-            # Push to main: review all skills
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-            echo "dirs=" >> "$GITHUB_OUTPUT"
-            echo "Push to main — will review all skills."
+            # Push to main: only review skills changed in this push
+            CHANGED_FILES=$(git diff --name-only HEAD~1...HEAD)
+
+            ALL_SKILL_DIRS=$(find plugins -name SKILL.md -exec dirname {} \; | sort)
+
+            DIRS=""
+            for changed_file in $CHANGED_FILES; do
+              for skill_dir in $ALL_SKILL_DIRS; do
+                case "$changed_file" in
+                  "$skill_dir"/*)
+                    case " $DIRS " in
+                      *" $skill_dir "*) ;;
+                      *) DIRS="$DIRS $skill_dir" ;;
+                    esac
+                    break
+                    ;;
+                esac
+              done
+            done
+
+            DIRS=$(echo "$DIRS" | xargs)
+
+            if [ -z "$DIRS" ]; then
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              echo "Push to main — no skill files changed."
+            else
+              echo "skip=false" >> "$GITHUB_OUTPUT"
+              echo "dirs=$DIRS" >> "$GITHUB_OUTPUT"
+              echo "Push to main — changed skills: $DIRS"
+            fi
           fi
 
       - name: Post skip summary
@@ -124,8 +150,8 @@ jobs:
 
           TOTAL=$((PASS + FAIL))
 
-          # Fail if no skills were reviewed (push to main only)
-          if [ "$TOTAL" -eq 0 ] && [ "${{ github.event_name }}" != "pull_request" ]; then
+          # Fail if no skills were reviewed but some were expected
+          if [ "$TOTAL" -eq 0 ] && [ -n "$SKILL_DIRS_INPUT" ]; then
             echo "::error::No skills were reviewed — expected at least one"
             exit 1
           fi
