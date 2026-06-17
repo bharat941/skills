@@ -1,9 +1,7 @@
 ---
 name: deploy
 description: Convert per-page styled HTML prototypes (stardust under stardust/prototypes/**, or claude-design / Mobirise / Relume / Lovable / v0 / Figma-derived pages, or JSX prototypes pre-rendered to HTML, often under samples/) into Edge Delivery Services (EDS / AEM) blocks and content pages, then deploy via DA. Each prototype <section> becomes one EDS block; the prototype's per-section CSS becomes that block's CSS scoped under the block class. Use when the user wants to lift styled per-page HTML prototypes into a working EDS site under blocks/ and content/.
-references:
-  - da-deploy-protocol.md
-  - IMPROVEMENTS.md
+license: Apache-2.0
 ---
 
 # stardust:deploy — prototypes → EDS/AEM
@@ -772,3 +770,8 @@ A block that builds its own layout/view wrapper (common for interactive blocks t
 ## When you finish
 
 Update `stardust/eds-conversion-log.md` (or create one) with: final block inventory, decisions locked, anti-patterns avoided this run, anything site-specific the next person should know. The log is the running history of "why does this look the way it does."
+
+## References
+
+- `da-deploy-protocol.md` — the curl-based DA Source API deploy contract (auth, source PUT, preview/publish, asset-before-preview ordering).
+- `IMPROVEMENTS.md` — running log of friction/gaps and the numbered findings (#NN) that the `stardust:diff` `eds` profile cites.
