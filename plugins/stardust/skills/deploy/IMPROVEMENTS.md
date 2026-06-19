@@ -11,6 +11,38 @@ Status legend: 🔴 blocker / bug · 🟠 missing guidance · 🟡 nice-to-have 
 
 ---
 
+## Findings (wasatch-back deploy — `stardust:deploy`)
+
+### #81 🔴 Late static-header fragment shifts the first section → CLS — reserve the header height ✅
+**Where:** Wasatch Back Sodaworks conversion (full-bleed hero *below* an in-flow
+sticky header). PSI mobile flagged **CLS 0.143**, culprit `div.hero`.
+**Cause:** `postlcp.js` injects `fragments/header.html` AFTER first paint. The
+`<header>` started at height 0, so the hero rendered at `y=0`, then jumped down
+by the header's full height (~118px mobile) the moment the fragment landed. The
+shift is attributed to the hero block, and it is **independent of fonts** — a
+delayed-woff2 CLS probe still showed 0.1285 from `div.hero` after the body/display
+fonts were metric-matched, because the cause is the header *box appearing*, not a
+glyph swap.
+**Repro:** Playwright `PerformanceObserver({type:'layout-shift'})` with
+`page.route('**/*.woff2', …)` delaying fonts ~1.8s (and the postlcp fragment fetch
+naturally lands post-paint even on localhost). A fast localhost load hides it.
+**Fix applied:** reserve the header height on the **bare `<header>`** in
+`styles/styles.css` (applies before the fragment loads), responsive `min-height`
+matching the fragment per breakpoint + the chrome background so the small
+reserve-vs-actual delta is invisible on a uniform ground. Also extended the
+burger breakpoint (640→767px) so the inline nav can't wrap to a 2nd row at
+641–767px, keeping the reserved height deterministic. Plus metric-matched the
+above-the-fold display faces (Lilita One hero `<h1>`, Bebas Neue) with dedicated
+`*-fallback` `@font-face` families (Arial-based `size-adjust`, NOT reusing the
+body's renamed `"Arial"` face) to zero any residual swap shift. **Result: CLS
+0.13 → 0.0017** at 412px.
+**Implemented in SKILL.md:** Step 3 Foundation (header-reservation block + probe
+note), Step 4 #12 (metric-match above-fold display faces), per-page checklist.
+The footer needs no reservation (below the fold; late injection shifts nothing
+above it).
+
+---
+
 ## Run log
 
 ### test-1 — Wheeler CAT (`samples/Wheelercat`)
@@ -312,6 +344,15 @@ So `block.querySelectorAll('p')` (and `[...].filter(p => !p.querySelector('a'))`
 2. Local-QA / Checklist assertion: after decorate, assert EVERY authored text field is present (eyebrow AND subhead AND lede AND tag AND body), not just block heights > 0 and heading/CTA/image counts.
 3. content-diff catches this ONLY when run against the live/preview build (or the pipeline-simulating harness) — a content-diff against the raw-`<p>` harness shows the text present on both sides and misses the drop. Run the structural diff against the decorated LIVE url.
 **Implemented:** SKILL.md per-page checklist entry — read plain-text fields by CELL/`textContent`, verify against the decorated live/preview render. Guard 1 (a `<p>`-stripping mode in `build-harness.mjs`) is a recommended follow-up, not yet coded.
+
+### 80. 🟠 Proprietary brand fonts were dropped to Arial (silent brand divergence) + condensed faces need a condensed fallback
+**Context:** CardValet (Fiserv brand) conversion, `paolomoz/stardust-deploy-test-2`. Prototype names proprietary faces — **PP Formula** (Pangram Pangram, a *narrow* display face) + **Univers for Fiserv** (Monotype) — and ships them as `.otf` under `assets/fonts/`.
+**Symptom:** stakeholder immediately noticed the EDS headings "looked different." Width-probe vs prototype: every metric (size/weight/line-height/letter-spacing/transform) matched EXACTLY, but the rendered FACE was Arial — PP Formula H1 string measured **839px** in the proto vs **975px** (Arial) in EDS (~16% wider, different letterforms).
+**Root cause (two faults):**
+1. The old skill guidance said proprietary → "keep CDN / accept Arial / document the CLS trade-off." For a brand-faithful/presales conversion that silent degrade reads as broken.
+2. Even the fallback was wrong-class: PP Formula is *condensed*; the stack's final fallback was plain `arial` (a normal-width grotesque) — a width-class mismatch on top of the missing face.
+**Fix (policy change):** **self-host EVERY brand face, proprietary included**, for fidelity — convert the prototype's `.otf`/`.ttf` to latin woff2 with fontTools (`f.flavor='woff2'`) and declare `@font-face` in `styles.css`. Because proprietary fonts carry a redistribution obligation, raise a **licensing alert in three places** (styles.css banner + `styles/fonts/LICENSING.md` + conversion log) + the user hand-off, with a documented remove-and-fall-back path; do not publish to `aem.live` until the license is confirmed. AND fix classification to include WIDTH: condensed faces fall back to `"Arial Narrow"` / a self-hosted free condensed analog, never plain Arial.
+**Implemented:** SKILL.md Step 4 principle 2 (self-host proprietary + 3-place alert), principle 4 (width is part of classification), anti-pattern 10 closing line, and two per-page checklist entries. User preference captured: prefer fidelity + loud licensing alert over a silent generic fallback.
 
 **Implemented (#40–78):** #40 → blank guard + Step 4; #41 → Step 5/7; #42 → Step 8; #43 → load guard + Step 10 harness rewrite; #44 → anti-pattern + Step 10 grep gate; #45 → Step 10 justified-flag rule; #46 → build-harness.mjs; #47/#49/#59 → visual-diff count/colour advisories; #48/#50/#51/#52/#53/#55/#56/#57 → Step 8 decoration contract; #54 → Step 10 whole-page; #58 → anti-pattern 1b; #75 → da-deploy-protocol asset-before-preview + about:error gate; #76 → Step 8 pre-heading-eyebrow buffering; #77 → Step 4 width-probe font verification + self-host the intended fallback; #78 → content-diff.mjs structural content+type probe (Step 10) + visual-diff font-probe fix, factored into diff-profiles.mjs (eds|generic) + the stardust-diff skill. (Tooling: convert.workflow.js arg-parse/fail-fast + title/desc plain-prose + leak gate; .eslintignore excludes vendored runtime; dev-server guard in iter-setup.)
 
