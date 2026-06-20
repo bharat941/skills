@@ -23,9 +23,9 @@ This skill is **orchestration**: BPA data, CAM/MCP, **one pattern per session**,
 | **Just a few files** | *"Migrate **scheduler** in `core/.../MyJob.java`"* | Manual flow: no BPA required |
 | **OSGi → Cloud Manager** | *"**Scan my config files and create Cloud Manager environment secrets or variables.**"* | Agent **auto-reads** [references/osgi-cfg-json-cloud-manager.md](references/osgi-cfg-json-cloud-manager.md) (full Adobe-aligned rules inlined there); no BPA pattern id |
 | **HTL lint warnings** | *"Fix **htlLint** issues in `ui.apps`"* | Proactive discovery via `rg` → fix per reference module |
-| **InputStream usage** [BETA] | *"Fix **inputStreamUsage** findings using `./path/to/bpa.csv`"* — covers `java.io.InputStream` BPA subtype | InputStream → `Binary` + Sling Job offload per [{best-practices}/references/input-stream-usage.md]({best-practices}/references/input-stream-usage.md); validates with `mvn` and `aemanalyser` |
-| **Guava cache dependency** [BETA] | *"Fix **guavaCache** findings using `./path/to/bpa.csv`"* — covers `com.google.common.cache` BPA subtype | Guava cache → Caffeine swap (pom + imports + API) per [{best-practices}/references/guava-cache.md]({best-practices}/references/guava-cache.md); validates with `mvn` |
-| **Custom content under /libs** [BETA] | *"Fix **libsCustomContent** findings using `./path/to/bpa.csv`"* — covers `custom.content.libs` BPA subtype | Relocate to `/apps` overlay or `/apps/<namespace>` per [{best-practices}/references/libs-custom-content.md]({best-practices}/references/libs-custom-content.md); updates `filter.xml` + `sling:resourceType` references |
+| **InputStream usage** | *"Fix **inputStreamUsage** findings using `./path/to/bpa.csv`"* — covers `java.io.InputStream` BPA subtype | InputStream → `Binary` + Sling Job offload per [{best-practices}/references/input-stream-usage.md]({best-practices}/references/input-stream-usage.md); validates with `mvn` and `aemanalyser`; generates JUnit test |
+| **Guava cache dependency** | *"Fix **guavaCache** findings using `./path/to/bpa.csv`"* — covers `com.google.common.cache` BPA subtype | Guava cache → Caffeine swap (pom + imports + API) per [{best-practices}/references/guava-cache.md]({best-practices}/references/guava-cache.md); validates with `mvn`; generates JUnit test |
+| **Custom content under /libs** | *"Fix **libsCustomContent** findings using `./path/to/bpa.csv`"* — covers `custom.content.libs` BPA subtype | Relocate to `/apps` overlay or `/apps/<namespace>` per [{best-practices}/references/libs-custom-content.md]({best-practices}/references/libs-custom-content.md); updates `filter.xml` + `sling:resourceType` references; validates with `mvn` |
 
 **Starter prompts (copy-paste):**
 
@@ -133,6 +133,9 @@ when known). Do not pass an unconfirmed project name string. **Full tool schemas
 - *"Fix scheduler"* → collection → MCP → ask for CSV
 - *"Migrate `core/.../Foo.java`"* → manual flow
 - *"Fix htlLint in ui.apps"* → proactive discovery flow
+- *"Fix inputStream findings"* → MCP fetch (if project known) → else ask for CSV or named files
+- *"Fix guava cache issues"* → MCP fetch (if project known) → else ask for CSV or named files
+- *"Fix /libs content"* → MCP fetch (if project known) → else ask for CSV or named files
 
 ### Calling the helper
 

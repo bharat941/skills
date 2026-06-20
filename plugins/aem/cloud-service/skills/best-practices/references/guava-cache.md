@@ -12,7 +12,7 @@ Covers BPA findings flagged on bundles that depend on `com.google.common.cache.*
 - Caffeine is the recommended high-performance JVM cache successor (same author as Guava cache) and is the library Adobe ships and supports in CS.
 - Caffeine's API is intentionally near-identical to Guava's `CacheBuilder`, so the migration is mechanical.
 
-> **Subtype string note:** the BPA CSV column `subtype` carries `com.google.common.cache` for these findings. If your BPA report uses a different subtype, update [`bpa-local-parser.js`](../../migration/scripts/bpa-local-parser.js) and [`unified-collection-reader.js`](../../migration/scripts/unified-collection-reader.js).
+> **Subtype string note:** the BPA CSV column `subtype` carries `custom.guava.cache` for these findings. If your BPA report uses a different subtype, update [`bpa-local-parser.js`](../../migration/scripts/bpa-local-parser.js) and [`unified-collection-reader.js`](../../migration/scripts/unified-collection-reader.js).
 
 ---
 
@@ -167,6 +167,66 @@ RemovalListener<String, User> rl = (key, value, cause) ->
 - [ ] `Caffeine` is on the bundle's `pom.xml` with `<scope>provided</scope>` matching the AEM CS SDK BOM version.
 - [ ] `mvn clean install` passes; **aemanalyser** reports no `com.google.common.cache` API leaks.
 - [ ] Unit tests covering cache behaviour (load, expiry, eviction) still pass.
+
+---
+
+## Test generation
+
+After applying the Guava → Caffeine swap, generate a JUnit test to confirm cache behaviour is preserved.
+
+### Test template — Caffeine cache (C1–C3)
+
+```java
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import org.junit.Before;
+import org.junit.Test;
+
+public class PageCacheServiceTest {
+
+    private PageCacheService service;
+
+    @Before
+    public void setUp() {
+        service = new PageCacheService();
+        service.activate(java.util.Collections.emptyMap());
+    }
+
+    @Test
+    public void shouldReturnNullForUnknownKey() {
+        // Caffeine cache.getIfPresent returns null for missing entries
+        assertNull(service.getCachedTitle("/content/wknd/unknown"));
+    }
+
+    @Test
+    public void shouldComputeAndCacheTitle() {
+        String title = service.getPageTitle("/content/wknd/about");
+        assertNotNull(title);
+        // Second call should return same result from cache
+        assertEquals(title, service.getPageTitle("/content/wknd/about"));
+    }
+
+    @Test
+    public void shouldInvalidateEntry() {
+        service.getPageTitle("/content/wknd/about");
+        service.invalidate("/content/wknd/about");
+        // After invalidation, getIfPresent must return null
+        assertNull(service.getCachedTitle("/content/wknd/about"));
+    }
+}
+```
+
+**Key assertions to include:**
+- `getIfPresent` returns `null` for unknown keys (Caffeine behaviour matches Guava)
+- `cache.get(key, Function)` returns a computed value and caches it
+- `invalidate(key)` removes the entry
+- `LoadingCache.get(key)` does not throw checked exceptions (Caffeine vs Guava `getUnchecked`)
+
+**Naming convention:** test class lives under `src/test/java/…` with suffix `Test`. One test class per production class changed.
 
 ---
 

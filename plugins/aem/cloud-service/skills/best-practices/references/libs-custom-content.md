@@ -15,7 +15,7 @@ Unlike the Java-class patterns in this skill, the `identifier` on these findings
 - The pre-Cloud Service "overlay under /apps" pattern is the supported way to extend Adobe-shipped behavior. Customer content goes under `/apps/<your-namespace>/...` and overlays Adobe equivalents path-for-path.
 - Some legacy AEM 6.x projects installed shared libraries (clientlibs, components, configurations) directly under `/libs/<not-Adobe>` as a shortcut. That shortcut no longer works on CS.
 
-> **Subtype string note:** the BPA CSV column `subtype` carries `custom.content.libs` for these findings (best-practices/migration scripts wire to that exact string). If your BPA report uses a different subtype, update [`bpa-local-parser.js`](../../migration/scripts/bpa-local-parser.js) and [`unified-collection-reader.js`](../../migration/scripts/unified-collection-reader.js).
+> **Subtype string note:** the LOCP pattern has a **null subtype** — the BPA CSV `type` column carries `possible.libs.custom.content`. Scripts filter by `type` instead of `subtype` for this pattern. If your BPA report uses a different type value, update [`bpa-local-parser.js`](../../migration/scripts/bpa-local-parser.js) and [`unified-collection-reader.js`](../../migration/scripts/unified-collection-reader.js).
 
 ---
 
@@ -122,6 +122,32 @@ For all three relocation steps to land in the right Maven module, the project's 
 - [ ] Clientlib `categories` / `dependencies` resolve (no missing-category warnings in the AEM SDK log).
 - [ ] `mvn clean install` passes; **aemanalyser** reports no `/libs/<custom>` findings.
 - [ ] After deploying to a local AEM SDK quickstart, the affected components render correctly (overlay case: same look-and-feel as before; relocated case: the page that used the resource still renders).
+
+---
+
+## Test generation
+
+`libsCustomContent` is a repository structure fix, not a Java code change — there is no JUnit test to generate. Instead, validate with these checks after applying the fix:
+
+**Automated validation:**
+```bash
+# 1. No /libs/<custom> filters remain
+grep -r 'filter root="/libs/' ui.apps/src/main/content/META-INF/vault/filter.xml
+# → must return zero hits for your custom namespace
+
+# 2. No jcr_root/libs/<custom> directories remain
+find ui.apps/src/main/content/jcr_root/libs -mindepth 1 -maxdepth 2 -type d 2>/dev/null
+# → must be empty or only contain Adobe-reserved namespaces
+
+# 3. sling:resourceType references updated
+grep -r 'sling:resourceType.*"/libs/<old-path>' ui.apps/src ui.content/src --include='*.xml'
+# → must return zero hits
+
+# 4. Build passes
+mvn clean install -pl ui.apps
+```
+
+**Manual smoke test:** Deploy to local AEM SDK quickstart and open the affected page/component — confirm it renders identically to before the move.
 
 ---
 

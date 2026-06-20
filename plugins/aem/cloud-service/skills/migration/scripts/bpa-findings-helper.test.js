@@ -18,6 +18,10 @@ function tempDir() {
 const MANY_CSV = path.join(__dirname, 'fixtures', 'many-scheduler-bpa.csv');
 const MANY_CSV_TOTAL = 12; // classes in many-scheduler-bpa.csv
 
+const INPUTSTREAM_CSV = path.join(__dirname, 'fixtures', 'minimal-inputstream-bpa.csv');
+const GUAVA_CSV = path.join(__dirname, 'fixtures', 'minimal-guavacache-bpa.csv');
+const LIBS_CSV = path.join(__dirname, 'fixtures', 'minimal-libscustom-bpa.csv');
+
 test('getBpaFindings with no CSV, collection, or MCP returns no-source', async () => {
   const dir = tempDir();
   const result = await getBpaFindings('scheduler', { collectionsDir: dir });
@@ -390,4 +394,85 @@ test('MCP path: second session reuses the cache across processes (no fetch)', as
   assert.equal(r.success, true);
   assert.equal(r.source, 'mcp-server');
   assert.equal(r.paging.offset, 5);
+});
+
+// ─────────────────────────────────────────────────────────────
+// Beta patterns: inputStreamUsage, guavaCache, libsCustomContent
+// Same flow as scheduler — BPA CSV → parse → targets
+// ─────────────────────────────────────────────────────────────
+
+test('getBpaFindings ingests inputStreamUsage CSV and returns correct targets', async () => {
+  const dir = tempDir();
+  const result = await getBpaFindings('inputStreamUsage', {
+    collectionsDir: dir,
+    bpaFilePath: INPUTSTREAM_CSV
+  });
+  assert.equal(result.success, true);
+  assert.equal(result.source, 'bpa-file');
+  assert.ok(Array.isArray(result.targets));
+  assert.ok(result.targets.length >= 1);
+  assert.ok(
+    result.targets.some(
+      (t) => t.pattern === 'inputStreamUsage' && t.className.includes('UploadServlet')
+    )
+  );
+});
+
+test('getBpaFindings ingests guavaCache CSV and returns correct targets', async () => {
+  const dir = tempDir();
+  const result = await getBpaFindings('guavaCache', {
+    collectionsDir: dir,
+    bpaFilePath: GUAVA_CSV
+  });
+  assert.equal(result.success, true);
+  assert.equal(result.source, 'bpa-file');
+  assert.ok(Array.isArray(result.targets));
+  assert.ok(result.targets.length >= 1);
+  assert.ok(
+    result.targets.some(
+      (t) => t.pattern === 'guavaCache' && t.className.includes('UserCacheService')
+    )
+  );
+});
+
+test('getBpaFindings ingests libsCustomContent CSV and returns correct targets', async () => {
+  const dir = tempDir();
+  const result = await getBpaFindings('libsCustomContent', {
+    collectionsDir: dir,
+    bpaFilePath: LIBS_CSV
+  });
+  assert.equal(result.success, true);
+  assert.equal(result.source, 'bpa-file');
+  assert.ok(Array.isArray(result.targets));
+  assert.ok(result.targets.length >= 1);
+  assert.ok(
+    result.targets.some(
+      (t) => t.pattern === 'libsCustomContent' && t.className.includes('/libs/')
+    )
+  );
+});
+
+test('getBpaFindings uses mcpFetcher for inputStreamUsage when projectId is set', async () => {
+  const dir = tempDir();
+  const mcpFetcher = async () => ({
+    success: true,
+    targets: [
+      {
+        pattern: 'inputStreamUsage',
+        className: 'com.example.servlets.UploadServlet',
+        identifier: 'java.io.InputStream',
+        issue: 'Uses java.io.InputStream in deprecated JCR/DAM API'
+      }
+    ]
+  });
+  const result = await getBpaFindings('inputStreamUsage', {
+    collectionsDir: dir,
+    projectId: 'proj-wall2',
+    mcpFetcher
+  });
+  assert.equal(result.success, true);
+  assert.equal(result.source, 'mcp-server');
+  assert.equal(result.targets.length, 1);
+  assert.equal(result.targets[0].className, 'com.example.servlets.UploadServlet');
+  assert.equal(result.targets[0].pattern, 'inputStreamUsage');
 });

@@ -18,7 +18,7 @@ Covers BPA findings flagged on Java code that passes `java.io.InputStream` to AE
 4. **Synchronous binary I/O on the request thread** — long-running stream copies block Sling request threads. CS request budgets are stricter; binary work belongs in Sling Jobs or Asset Compute.
 5. **Custom Asset upload pipelines** — code that builds DAM assets by streaming bytes into `AssetManager` bypasses the Cloud Service binary-upload pipeline (chunked direct-to-storage uploads). Use the supported upload APIs or let Asset Compute do the work.
 
-> **Subtype string note:** the BPA CSV column `subtype` carries `java.io.InputStream` for these findings (best-practices/migration scripts wire to that exact string). If your BPA report uses a different subtype, update [`bpa-local-parser.js`](../../migration/scripts/bpa-local-parser.js) and [`unified-collection-reader.js`](../../migration/scripts/unified-collection-reader.js) accordingly.
+> **Subtype string note:** the BPA CSV column `subtype` carries `java.io.inputstream` for these findings (best-practices/migration scripts wire to that exact string). If your BPA report uses a different subtype, update [`bpa-local-parser.js`](../../migration/scripts/bpa-local-parser.js) and [`unified-collection-reader.js`](../../migration/scripts/unified-collection-reader.js) accordingly.
 
 ---
 
@@ -167,6 +167,90 @@ If the legacy code transforms the bytes mid-stream, use a `FilterInputStream` or
 - [ ] DAM ingest paths longer than a few KB run inside a `JobConsumer`, not on the request thread.
 - [ ] `mvn clean install` passes; **aemanalyser** reports no new InputStream-related advisories.
 - [ ] Manual test: upload a >100 MB file through the changed path and observe pod heap (`/system/console/memoryusage` locally, or container metrics on CS) — no spike beyond steady-state.
+
+---
+
+## Test generation
+
+After applying the transformation steps, generate a JUnit 5 test class for the changed file. Follow these rules:
+
+- Use **AemContext** (`com.adobe.cq.testing.junit5.AemContextExtension`) for JCR/Sling context.
+- Mock `AssetManager`, `ValueFactory`, `Property`, and `Binary` with Mockito.
+- One `@Test` method per transformation step applied (I1, I2, I3, I4, I5).
+- Verify: no real `InputStream` leaks — assert `Binary.dispose()` is called via `Mockito.verify`.
+- Verify: `Binary` is set on the property, not the raw stream.
+
+### Test template — I1 (JCR write via Binary)
+
+```java
+import static org.mockito.Mockito.*;
+
+import java.io.ByteArrayInputStream;
+import java.io.InputStream;
+
+import javax.jcr.Binary;
+import javax.jcr.Node;
+import javax.jcr.Session;
+import javax.jcr.ValueFactory;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+@ExtendWith(MockitoExtension.class)
+class AssetUploadServletTest {
+
+    @Mock private Session session;
+    @Mock private ValueFactory valueFactory;
+    @Mock private Binary binary;
+    @Mock private Node node;
+
+    @BeforeEach
+    void setUp() throws Exception {
+        when(session.getValueFactory()).thenReturn(valueFactory);
+        when(valueFactory.createBinary(any(InputStream.class))).thenReturn(binary);
+        when(node.getSession()).thenReturn(session);
+    }
+
+    @Test
+    void shouldWritePropertyViaBinaryNotInputStream() throws Exception {
+        // arrange
+        InputStream inputStream = new ByteArrayInputStream("test".getBytes());
+
+        // act — call the migrated method under test
+        // e.g. servlet.writeToNode(node, inputStream);
+
+        // assert: Binary used, not raw InputStream
+        verify(valueFactory).createBinary(any(InputStream.class));
+        verify(node).setProperty(anyString(), eq(binary));
+        // assert: Binary disposed after use
+        verify(binary).dispose();
+    }
+}
+```
+
+### Test template — I3 (DAM write with try-with-resources)
+
+```java
+@Test
+void shouldWrapInputStreamInTryWithResources() throws Exception {
+    // arrange
+    AssetManager assetManager = mock(AssetManager.class);
+    InputStream inputStream = spy(new ByteArrayInputStream("content".getBytes()));
+
+    // act — call the migrated upload method
+    // e.g. servlet.uploadAsset(assetManager, "/content/dam/test.jpg", inputStream, "image/jpeg");
+
+    // assert: assetManager.createAsset called with the stream
+    verify(assetManager).createAsset(eq("/content/dam/test.jpg"), any(InputStream.class), eq("image/jpeg"), eq(true));
+    // assert: stream is closed after the call (try-with-resources guarantees this)
+    verify(inputStream).close();
+}
+```
+
+**Naming convention:** test class lives next to the production class under `src/test/java/…` with suffix `Test`. One test class per production class changed.
 
 ---
 

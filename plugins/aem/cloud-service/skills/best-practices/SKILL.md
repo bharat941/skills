@@ -36,9 +36,9 @@ Each supported pattern has a dedicated module under `references/` relative to th
 | Event listener (JCR observation) | `eventListener` | `references/event-migration.md` | Ready |
 | Event handler (OSGi Event Admin) | `eventHandler` | `references/event-migration.md` | Ready |
 | Asset Manager | `assetApi` | `references/asset-manager.md` | Ready |
-| `java.io.InputStream` usage | `inputStreamUsage` | `references/input-stream-usage.md` | Beta |
-| Guava cache dependency | `guavaCache` | `references/guava-cache.md` | Beta |
-| Custom content under `/libs` | `libsCustomContent` | `references/libs-custom-content.md` | Beta |
+| `java.io.InputStream` usage | `inputStreamUsage` | `references/input-stream-usage.md` | Ready |
+| Guava cache dependency | `guavaCache` | `references/guava-cache.md` | Ready |
+| Custom content under `/libs` | `libsCustomContent` | `references/libs-custom-content.md` | Ready |
 | Felix SCR → OSGi DS | — | `references/scr-to-osgi-ds.md` | Ready |
 | ResourceResolver + SLF4J | — | `references/resource-resolver-logging.md` | Ready |
 | HTL: `data-sly-test` redundant constant | — (HTL lint) | `references/data-sly-test-redundant-constant.md` | Ready |
