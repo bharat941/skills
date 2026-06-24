@@ -37,8 +37,8 @@ Adding a pattern: add a row here, then build the expert skill from
 | [`replication`](../replication/SKILL.md) | migrate CQ `Replicator` / Sling Replication Agent to the Sling Distribution API (`Distributor` + `SimpleDistributionRequest`) | high | ready | analyzer | guided |
 | [`event-migration`](../event-migration/SKILL.md) | migrate OSGi `EventHandler` with inline business logic (replication / workflow / custom topics) to lightweight `EventHandler` + `JobConsumer` split, with `TopologyEventListener` for leader-only execution | high | ready | analyzer | guided |
 | [`asset-manager`](../asset-manager/SKILL.md) | migrate DAM `AssetManager` create/upload via Direct Binary Access (`@adobe/aem-upload`) and delete via in-JVM `resolver.delete()` + `commit()` or HTTP Assets API; removes `createAssetForBinary` / `getAssetForBinary` / `removeAssetForBinary` (not available on CS) | high | ready | analyzer | guided |
-| `outbound-call-timeouts` | add connect/read timeouts to outbound HTTP / `URLConnection` calls | high | planned | - | - |
-| `unbounded-query` | bound QueryBuilder / JCR / SQL2 queries (`p.limit=-1` → limit + pagination) | high | planned | - | - |
+| [`outbound-call-timeouts`](../outbound-call-timeouts/SKILL.md) | add connect/read/socket timeouts to outbound HTTP client construction (Apache HttpClient, OkHttp, JDK HttpClient) | high | ready | analyzer | mechanical |
+| [`unbounded-query`](../unbounded-query/SKILL.md) | bound or escalate an explicitly-unbounded query (`p.limit=-1` predicate / `setLimit(-1)`) — safe-cap where provable, else flag for pagination | high | ready | analyzer | guided |
 | `unclosed-resources` | close `ResourceResolver` / `Session` / streams via try-with-resources | high | planned | - | - |
 | `thread-lock-contention` | replace coarse `synchronized` / synchronized collections on shared state with concurrent types | high | planned | - | - |
 | `heavy-model-init` | move heavy work (I/O, queries) out of `@PostConstruct` / Sling Model init | medium | planned | - | - |

@@ -55,6 +55,8 @@ Route the request to one expert skill. Two pattern families share this skill:
 |---|---|
 | "update aem sdk", "upgrade mockito", stale `<version>` or `${property}` in pom | [`outdated-dependencies/`](outdated-dependencies/SKILL.md) |
 | "fix @Inject", "modernize Sling Models", `javax.inject.Inject` on `@Model` fields | [`inject-in-sling-model/`](inject-in-sling-model/SKILL.md) |
+| "add HTTP timeouts", "outbound/external call has no timeout", `HttpClient` / `HttpClients` / `OkHttpClient` built without a timeout | [`outbound-call-timeouts/`](outbound-call-timeouts/SKILL.md) |
+| "bound my query", "unbounded query", "query causing OOM", `p.limit=-1`, `setLimit(-1)` | [`unbounded-query/`](unbounded-query/SKILL.md) |
 
 **Architectural migration patterns** (guided remediation — full before/after, troubleshooting, modern alternatives; invoked directly or via `migration` for BPA/CAM-driven discovery):
 
@@ -118,6 +120,7 @@ Full rationale: [`references/shared-principles.md`](references/shared-principles
 
 Local static detection and remediation only — no external services, no network, no live AEM instance. Issues that require runtime or live-repository state, telemetry, or history across runs are out of scope for this skill.
 Detection requires a local JDK (Java 11+); there is no remote or LLM-scan fallback in this version.
+A large apply (e.g. an `@Inject` migration across 100+ files) is processed in **resumable batches**: the run checkpoints each file to `.autofix/last-run.json` and pauses at a per-pass cap, so it survives context limits — reply **apply `<pattern>`** to continue (see [`references/git-workflow.md`](references/git-workflow.md)).
 
 ## Adding a new pattern
 

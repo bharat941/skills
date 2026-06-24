@@ -63,7 +63,19 @@ After all field transforms are computed for a file — and before writing the fi
    - `javax.inject.Named` — if no `@Named` remains
    - `org.apache.sling.models.annotations.Optional` — if no `@Optional` remains (field-level)
 
-Alphabetize new imports within the existing import-block convention used by the file (most AEM projects order by package; maintain what's there).
+**Edit imports one line at a time — never as a contiguous block.** Each `import …;` statement is a
+unique line; anchor every add/remove on that single line. Do **not** match or rewrite a multi-line
+"import block": real files interleave unrelated imports (e.g. `org.slf4j.Logger` sitting between the
+`javax.inject` and `injectorspecific` groups), so a block-shaped anchor is not unique and the surgical
+edit fails or misfires.
+
+- **Remove:** delete the exact line `import javax.inject.Inject;` (and the other unused lines) by that
+  full line — one removal per import.
+- **Add:** insert each new `import …;` as its own line — one insertion per import.
+
+Place each new import to best-effort match the file's existing ordering convention (most AEM projects
+order by package), but the placement is advisory — correctness never depends on imports being grouped
+or contiguous. Tolerate interleaved unrelated imports.
 
 ## Unlocatable cases (skip-file policy)
 
@@ -201,6 +213,9 @@ Concretely, per field site:
 Then, once all field sites in the file are rewritten:
 
 5. Do **not** modify the class-level `@Model(...)` for `@Optional`; the optional field carries `injectionStrategy = InjectionStrategy.OPTIONAL` on its own annotation instead.
-6. Update the imports block: remove unused imports from the "Remove" list; add required imports from the "Add" list, alphabetized within the existing grouping convention.
+6. Update the imports **per individual line** (see Import management): remove each unused import by its
+   exact full `import …;` line and insert each required import as its own line. Do not anchor on a
+   multi-line import block — interleaved unrelated imports (e.g. `Logger`) make a block anchor
+   non-unique and the edit fails.
 
 If at any point the transform for a field does not cleanly fit (e.g. the annotation block contains an unexpected companion, or the annotation/field block does not match the form described above — single-line annotations on consecutive lines ending at the field declaration), trigger skip-file for the whole file — per policy.
