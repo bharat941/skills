@@ -4,7 +4,7 @@ description: Generate project handover documentation for AEM Edge Delivery Servi
 license: Apache-2.0
 allowed-tools: Read, Write, Edit, Bash, AskUserQuestion, Skill, Agent
 metadata:
-  version: "1.1.0"
+  version: "1.0.0"
 ---
 
 # Project Handover Documentation
