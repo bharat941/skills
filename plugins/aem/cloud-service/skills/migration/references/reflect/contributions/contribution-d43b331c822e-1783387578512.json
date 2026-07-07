@@ -1,0 +1,152 @@
+{
+  "kind": "migration-flywheel-contribution",
+  "schemaVersion": "2.0",
+  "submittedAt": "2026-07-07T01:26:18.512Z",
+  "contributor": {
+    "githubUser": "bharat941"
+  },
+  "mainBranch": "before-migration",
+  "migratedBranch": "after-migration",
+  "sitePath": "/content/freestyle/us/en/home",
+  "baseInstance": "http://localhost:4502/content/freestyle/us/en/home.html",
+  "targetInstance": "http://localhost:4503/content/freestyle/us/en/home.html",
+  "commitMessage": "Migrate site to AEMaaCS: static->editable templates + component-rewrite rules\n\nSkills: template-modernization",
+  "skillsUsed": [
+    "template-modernization"
+  ],
+  "findings": {
+    "schemaVersion": "2.0",
+    "jobId": "d43b331c822e",
+    "generatedAt": "2026-07-07T01:18:39.013Z",
+    "baseBranch": "before-migration",
+    "targetBranch": "after-migration",
+    "sitePath": "/content/freestyle/us/en/home",
+    "baseInstance": "http://localhost:4502/content/freestyle/us/en/home.html",
+    "targetInstance": "http://localhost:4503/content/freestyle/us/en/home.html",
+    "commitMessage": "Migrate site to AEMaaCS: static->editable templates + component-rewrite rules\n\nSkills: template-modernization",
+    "skillsUsed": [
+      "template-modernization"
+    ],
+    "verdict": "CONVERSIONS_INCOMPLETE",
+    "conformanceScore": 0.7,
+    "conversions": [
+      {
+        "id": "static-to-editable",
+        "title": "Static templates converted to editable templates",
+        "category": "C2",
+        "rubric": "reflect/rubric.md#C2",
+        "validationRule": "template-modernization-validation.md §1.x",
+        "skill": "template-modernization",
+        "status": "pass",
+        "score": 1,
+        "summary": "Static templates under /apps became editable templates under /conf (cq:Template + cq:templateType).",
+        "evidence": [
+          {
+            "ref": "migrated",
+            "path": "/conf/freestyle/settings/wcm/templates/SiteRoot",
+            "note": "editable template (cq:Template, cq:templateType=/conf/.../template-types/page)"
+          },
+          {
+            "ref": "migrated",
+            "path": "/conf/freestyle/settings/wcm/templates/Generic",
+            "note": "editable template (cq:Template)"
+          },
+          {
+            "ref": "migrated",
+            "path": "/conf/freestyle/settings/wcm/templates/Country",
+            "note": "editable template (cq:Template)"
+          },
+          {
+            "ref": "migrated",
+            "path": "/conf/freestyle/settings/wcm/templates/Language",
+            "note": "editable template (cq:Template)"
+          }
+        ]
+      },
+      {
+        "id": "copy-children",
+        "title": "Component-rewrite rules preserve child content (cq:copyChildren)",
+        "category": "C1",
+        "rubric": "reflect/rubric.md#C1",
+        "validationRule": "template-modernization-validation.md §3.1",
+        "skill": "template-modernization",
+        "status": "pass",
+        "score": 1,
+        "summary": "Component-rewrite rule carries cq:copyChildren=\"{Boolean}true\" so nested parsys children are preserved.",
+        "evidence": [
+          {
+            "ref": "migrated",
+            "path": "/apps/freestyle/modernization/component-rewrite-rules/parsys-to-container.xml",
+            "note": "replacement container has cq:copyChildren=\"{Boolean}true\""
+          }
+        ]
+      },
+      {
+        "id": "content-uses-editable-template",
+        "title": "Content pages re-pointed from static to editable templates",
+        "category": "C3",
+        "rubric": "reflect/rubric.md#C3",
+        "validationRule": "template-modernization-validation.md §4.2",
+        "skill": "template-modernization",
+        "status": "fail",
+        "score": 0.1,
+        "summary": "Content page still references the legacy static template (cq:template=/apps/freestyle/templates/content/Generic) and legacy iparsys/parsys — it was not re-pointed to the new editable template.",
+        "evidence": [
+          {
+            "ref": "migrated",
+            "path": "/content/freestyle/us/en/home/jcr:content",
+            "note": "cq:template still points at /apps/.../templates/content/Generic (static)"
+          },
+          {
+            "ref": "migrated",
+            "path": "/content/freestyle/us/en/home/jcr:content/pageContent",
+            "note": "still uses foundation/components/parsys (legacy)"
+          }
+        ]
+      },
+      {
+        "id": "lui-to-coral3",
+        "title": "Legacy-UI (Classic/Coral2) dialogs converted to Coral3",
+        "category": "C6",
+        "rubric": "reflect/rubric.md#C6",
+        "validationRule": "legacy-ui dialog conversion",
+        "skill": "legacy-ui",
+        "status": "na",
+        "score": null,
+        "summary": "No Classic/Coral2 dialogs in scope for this migration (templates + structure rewrite only).",
+        "evidence": []
+      }
+    ],
+    "rendering": {
+      "reachable": false,
+      "unreachableReason": "instance unreachable",
+      "renderingParity": {
+        "score": 0,
+        "htmlSimilarityRatio": 0,
+        "htmlIdentical": false,
+        "statusMatch": false,
+        "contentTypeMatch": false,
+        "addedLineCount": 0,
+        "removedLineCount": 0
+      },
+      "metrics": {
+        "left": {
+          "reachable": true,
+          "httpStatus": 302,
+          "contentType": "",
+          "contentLengthBytes": 0,
+          "responseTimeMs": 10
+        },
+        "right": {
+          "reachable": false,
+          "error": ""
+        },
+        "statusMatch": false,
+        "contentTypeMatch": false
+      },
+      "headers": null,
+      "html": null
+    }
+  },
+  "note": null
+}
