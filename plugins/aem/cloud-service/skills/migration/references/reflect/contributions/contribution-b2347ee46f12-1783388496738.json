@@ -1,0 +1,184 @@
+{
+  "kind": "migration-flywheel-contribution",
+  "schemaVersion": "2.0",
+  "submittedAt": "2026-07-07T01:41:36.738Z",
+  "contributor": {
+    "githubUser": "bharat941"
+  },
+  "mainBranch": "before-migration",
+  "migratedBranch": "after-migration",
+  "sitePath": "/content/cocacolaconsumer/us/en/home",
+  "baseInstance": "http://localhost:4502/content/cocacolaconsumer/us/en/home.html",
+  "targetInstance": "http://localhost:4503/content/cocacolaconsumer/us/en/home.html",
+  "commitMessage": "Migrate site to AEMaaCS: static->editable templates + component-rewrite rules\n\nSkills: template-modernization",
+  "skillsUsed": [
+    "template-modernization"
+  ],
+  "skillGaps": [
+    {
+      "id": "D-6",
+      "severity": "severe",
+      "title": "Template thumbnail.png migration is undocumented",
+      "detail": "The static template dir contains thumbnail.png alongside .content.xml. The skill's editable-template file list is 4 files and never mentions thumbnails, so the thumbnail is lost on migration.",
+      "fix": "Add a rule: copy thumbnail.png to /conf/<appId>/settings/wcm/templates/<tpl>/thumbnail.png and add it to the vault filter. PNG-only, filename must be thumbnail.png.",
+      "targetFile": "references/editable-template-creation.md",
+      "section": "Thumbnail migration"
+    },
+    {
+      "id": "D-8",
+      "severity": "severe",
+      "title": "No 'no editable zone' classification for root-only templates",
+      "detail": "SiteRoot's page component states 'Components are not allowed on this page', but the skill unconditionally emits an editable responsivegrid (editable=\"{Boolean}true\"), exposing an author zone that should be locked.",
+      "fix": "Add a classification: when the source page component has no cq:include/data-sly-resource editable area, emit a LOCKED <root> in structure/ (no editable=\"{Boolean}true\") and an empty initial/.",
+      "targetFile": "references/template-modernization-context.md",
+      "section": "Step 5 — classification: no editable zone"
+    }
+  ],
+  "findings": {
+    "schemaVersion": "2.0",
+    "jobId": "b2347ee46f12",
+    "generatedAt": "2026-07-07T01:36:36.670Z",
+    "baseBranch": "before-migration",
+    "targetBranch": "after-migration",
+    "sitePath": "/content/cocacolaconsumer/us/en/home",
+    "baseInstance": "http://localhost:4502/content/cocacolaconsumer/us/en/home.html",
+    "targetInstance": "http://localhost:4503/content/cocacolaconsumer/us/en/home.html",
+    "commitMessage": "Migrate site to AEMaaCS: static->editable templates + component-rewrite rules\n\nSkills: template-modernization",
+    "skillsUsed": [
+      "template-modernization"
+    ],
+    "skillGaps": [
+      {
+        "id": "D-6",
+        "severity": "severe",
+        "title": "Template thumbnail.png migration is undocumented",
+        "detail": "The static template dir contains thumbnail.png alongside .content.xml. The skill's editable-template file list is 4 files and never mentions thumbnails, so the thumbnail is lost on migration.",
+        "fix": "Add a rule: copy thumbnail.png to /conf/<appId>/settings/wcm/templates/<tpl>/thumbnail.png and add it to the vault filter. PNG-only, filename must be thumbnail.png.",
+        "targetFile": "references/editable-template-creation.md",
+        "section": "Thumbnail migration"
+      },
+      {
+        "id": "D-8",
+        "severity": "severe",
+        "title": "No 'no editable zone' classification for root-only templates",
+        "detail": "SiteRoot's page component states 'Components are not allowed on this page', but the skill unconditionally emits an editable responsivegrid (editable=\"{Boolean}true\"), exposing an author zone that should be locked.",
+        "fix": "Add a classification: when the source page component has no cq:include/data-sly-resource editable area, emit a LOCKED <root> in structure/ (no editable=\"{Boolean}true\") and an empty initial/.",
+        "targetFile": "references/template-modernization-context.md",
+        "section": "Step 5 — classification: no editable zone"
+      }
+    ],
+    "verdict": "CONVERSIONS_INCOMPLETE",
+    "conformanceScore": 0.3333,
+    "conversions": [
+      {
+        "id": "static-to-editable",
+        "title": "Static templates converted to editable templates",
+        "category": "C2",
+        "rubric": "reflect/rubric.md#C2",
+        "validationRule": "template-modernization-validation.md §1.x",
+        "skill": "template-modernization",
+        "status": "pass",
+        "score": 1,
+        "summary": "Static templates under /apps became editable templates under /conf (cq:Template + cq:templateType).",
+        "evidence": [
+          {
+            "ref": "migrated",
+            "path": "/conf/freestyle/settings/wcm/templates/SiteRoot",
+            "note": "editable template (cq:Template, cq:templateType=/conf/.../template-types/page)"
+          }
+        ]
+      },
+      {
+        "id": "copy-children",
+        "title": "Component-rewrite rules preserve child content (cq:copyChildren)",
+        "category": "C1",
+        "rubric": "reflect/rubric.md#C1",
+        "validationRule": "template-modernization-validation.md §3.1",
+        "skill": "template-modernization",
+        "status": "na",
+        "score": null,
+        "summary": "Not declared for this branch — no artifact of this kind in scope.",
+        "evidence": []
+      },
+      {
+        "id": "editable-template-locked-zone",
+        "title": "Root-only templates emit a locked structure (no editable zone)",
+        "category": "C4",
+        "rubric": "reflect/rubric.md#C4",
+        "validationRule": "template-modernization-context.md step 5 (classification)",
+        "skill": "template-modernization",
+        "status": "fail",
+        "score": 0,
+        "summary": "SiteRoot is a root-only template ('Components are not allowed on this page') but the skill emitted an editable responsivegrid (editable=\"{Boolean}true\") — it exposes an author zone that should be locked. Skill gap D-8: no 'no editable zone' classification.",
+        "evidence": [
+          {
+            "ref": "migrated",
+            "path": "/conf/freestyle/settings/wcm/templates/SiteRoot/structure/jcr:content/root",
+            "note": "responsivegrid editable=\"{Boolean}true\" wrongly emitted for a root-only template"
+          }
+        ]
+      },
+      {
+        "id": "template-thumbnail-migrated",
+        "title": "Template thumbnail.png migrated to /conf",
+        "category": "C7",
+        "rubric": "reflect/rubric.md#C7",
+        "validationRule": "editable-template-creation.md (thumbnail handling)",
+        "skill": "template-modernization",
+        "status": "fail",
+        "score": 0,
+        "summary": "thumbnail.png (4.9 KB) alongside the static template was not migrated to /conf/.../templates/SiteRoot/thumbnail.png. Skill gap D-6: reference files never mention thumbnails.",
+        "evidence": [
+          {
+            "ref": "baseline",
+            "path": "/apps/freestyle/templates/SiteRoot/thumbnail.png",
+            "note": "present in source, not carried over"
+          }
+        ]
+      },
+      {
+        "id": "lui-to-coral3",
+        "title": "Legacy-UI (Classic/Coral2) dialogs converted to Coral3",
+        "category": "C6",
+        "rubric": "reflect/rubric.md#C6",
+        "validationRule": "legacy-ui dialog conversion",
+        "skill": "legacy-ui",
+        "status": "na",
+        "score": null,
+        "summary": "Not declared for this branch — no artifact of this kind in scope.",
+        "evidence": []
+      }
+    ],
+    "rendering": {
+      "reachable": false,
+      "unreachableReason": "instance unreachable",
+      "renderingParity": {
+        "score": 0,
+        "htmlSimilarityRatio": 0,
+        "htmlIdentical": false,
+        "statusMatch": false,
+        "contentTypeMatch": false,
+        "addedLineCount": 0,
+        "removedLineCount": 0
+      },
+      "metrics": {
+        "left": {
+          "reachable": true,
+          "httpStatus": 302,
+          "contentType": "",
+          "contentLengthBytes": 0,
+          "responseTimeMs": 24
+        },
+        "right": {
+          "reachable": false,
+          "error": ""
+        },
+        "statusMatch": false,
+        "contentTypeMatch": false
+      },
+      "headers": null,
+      "html": null
+    }
+  },
+  "note": null
+}
