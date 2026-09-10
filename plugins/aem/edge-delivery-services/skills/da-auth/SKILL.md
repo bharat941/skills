@@ -3,7 +3,7 @@ name: da-auth
 description: "Use this when another step needs to call the admin.da.live API, for example before pushing HTML content, listing documents, or triggering a DA preview, and you do not already have a valid DA_TOKEN in scope from an earlier step in the same session. Covers obtaining a valid Adobe IMS access token for the DA (Document Authoring) API."
 license: Apache-2.0
 metadata:
-  version: "1.1.0"
+  version: "1.0.0"
 ---
 
 # DA Authentication
