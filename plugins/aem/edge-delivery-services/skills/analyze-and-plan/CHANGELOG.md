@@ -1,3 +1,10 @@
+# 1.0.0 (2026-09-10)
+
+
+### Bug Fixes
+
+* **aem-eds:** align references/ with spec and silence orphan warnings ([b48cf80](https://github.com/bharat941/skills/commit/b48cf802a0974eccfa74fa85898113d66f29f64d))
+
 ## [2.0.1](https://github.com/adobe/skills/compare/analyze-and-plan-v2.0.0...analyze-and-plan-v2.0.1) (2026-07-06)
 
 # [2.0.0](https://github.com/adobe/skills/compare/analyze-and-plan-v1.1.0...analyze-and-plan-v2.0.0) (2026-05-14)
