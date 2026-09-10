@@ -3,7 +3,7 @@ name: slicc-handoff
 description: "Use this when the user asks to continue work in the SLICC browser agent or to install a skill into SLICC, for example \"handoff to slicc\", \"move to the browser\", \"test in the browser\", \"install this skill in slicc\", or \"upskill slicc with this repo\". Covers handing off the current task to the SLICC browser agent and installing a new skill into SLICC from a GitHub repo."
 license: Apache-2.0
 metadata:
-  version: "1.0.1"
+  version: "1.0.0"
 ---
 
 # SLICC Handoff
