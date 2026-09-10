@@ -1,20 +1,17 @@
 'use strict';
 
 /**
- * build.js — wraps `mvn clean package` for an RV project.
+ * build.js — wraps `mvn clean package -DskipTests` for an RV project.
  *
  * Input : { projectDir }
  * Output: { ok, artifactPath, log, elapsedMs }
  *
- * Requires Java 11 on PATH (or JAVA_HOME). The RV bundle-plugin pom sets
- * source/target=11; a Java 21 default JDK targeting 11 bytecode also works,
- * but users can force Java 11 via RV_JAVA_HOME.
+ * Uses whatever `java` / JAVA_HOME the customer has. Set RV_JAVA_HOME to pin
+ * a specific JDK for RV builds without touching JAVA_HOME globally.
  */
 const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-
-const DEFAULT_JAVA_11 = '/Library/Java/JavaVirtualMachines/adoptopenjdk-11.jdk/Contents/Home';
 
 function build({ projectDir }) {
   const t0 = Date.now();
@@ -23,11 +20,11 @@ function build({ projectDir }) {
   }
   const env = { ...process.env };
   if (process.env.RV_JAVA_HOME) env.JAVA_HOME = process.env.RV_JAVA_HOME;
-  else if (!env.JAVA_HOME && fs.existsSync(DEFAULT_JAVA_11)) env.JAVA_HOME = DEFAULT_JAVA_11;
 
   let log;
   try {
-    log = execFileSync('mvn', ['-q', '-B', 'clean', 'package'],
+    // RV verifies runtime contract on the SDK, not customer test correctness.
+    log = execFileSync('mvn', ['-q', '-B', '-DskipTests', 'clean', 'package'],
       { cwd: projectDir, env, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
   } catch (e) {
     return { ok: false, log: (e.stdout || '') + (e.stderr || e.message), elapsedMs: Date.now() - t0 };
@@ -40,3 +37,4 @@ function build({ projectDir }) {
 }
 
 module.exports = { build };
+

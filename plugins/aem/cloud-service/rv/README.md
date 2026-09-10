@@ -1,54 +1,43 @@
 # RV — Render & Validate
 
-Verification layer for the AEM Cloud Service migration skills. After a skill
-applies a pattern change, RV proves the result is **Cloud-Service correct** and
-turns failures into permanent regression tests.
+Verification layer for the AEM Cloud Service migration skills. Two commands, one
+job: prove a migrated pattern actually works on a real Cloud SDK.
 
-> Status: **prototype / reference implementation.** Proven end-to-end on the
-> `scheduler` pattern against a real AEM Cloud Service SDK. Other patterns and
-> full harness automation are not yet built.
+> Status: **Phase 2.** Both commands land, scheduler pattern proven end-to-end
+> against the AEM Cloud SDK 2026.8+.
 
-## Two gates per pattern
-
-1. **Source gate** (offline, no instance) — proves the migrated code is correct:
-   `invariants/scheduler-source.js` checks SCR→DS, `scheduler.expression`,
-   `scheduler.concurrent:Boolean`, `scheduler.runOn=SINGLE|LEADER`.
-2. **Runtime gate** (needs a Cloud SDK) — proves it actually works:
-   `invariants/scheduler.js` checks the component is active and *fires*.
-
-## The loop
-
-```
-skill migrates code → verify → outcome record → (fail?) → auto-generated eval fixture
-```
-
-## Run it
+## Two-step flow
 
 ```bash
-# source gate — before vs after the skill (instant, no instance)
-node verify.js scheduler example/SimpleScheduledTask.legacy.java     # FAIL + writes eval fixture
-node verify.js scheduler example/SimpleScheduledTask.migrated.java   # PASS
+# 1. Once per session — boot the SDK (or attach if it's already up).
+rv-init                                            # auto-discovers everything
 
-# leadership dashboard (real data: runs verify.js + reads the live Cloud SDK on 4602)
-cd ui && node server.js      # http://localhost:4700
+# 2. Per pattern — verify one fix, from your customer module dir.
+cd my/customer/module
+rv-check scheduler                                 # auto-resolves finding + project-id
 ```
 
-## Files
+`rv-init` writes `~/.rv/setup.json` (machine-global). `rv-check` reads that plus
+`<cwd>/.rv/context.json` for the finding and project id (written by the analyze /
+migration skill).
 
-| File | Role |
-|---|---|
-| `verify.js` | one-command loop: source gate → outcome → fixture |
-| `runner.js` | orchestrator (static gate + runtime invariant → outcome record) |
-| `invariants/scheduler-source.js` | offline source contract check |
-| `invariants/scheduler.js` | runtime firing check (via `probe.js`) |
-| `probe.js` / `mock-probe.js` | live AEM client / offline simulator |
-| `static-gate.js` | compile · AEM Analyser · detector→0 (degrades to skipped) |
-| `fixture.js` | failure → `evals/<name>/{task.md,criteria.json}` |
-| `ui/server.js` | dependency-free dashboard (port 4700) |
-| `example/` | WKND legacy vs skill-migrated scheduler |
+## rv-init options
 
-## Verified against a real Cloud SDK
+| Flag | Default | Notes |
+|---|---|---|
+| `--sdk <url>` | `http://localhost:<port>` | If reachable, attach without booting |
+| `--sdk-home <path>` | `RV_SDK_HOME` env var | Required only when booting — must contain `aem-sdk-quickstart-*.jar` and `license.properties` |
+| `--port <n>` | `4602` | Only used when booting |
 
-The `scheduler` migration was built into an OSGi bundle and deployed to an AEM
-Cloud Service SDK: component registered **active** as OSGi DS with
-`runOn=LEADER`, and fired on schedule (confirmed via OSGi console + instance log).
+Preflight (boot mode only): Java ≥ 11, port free, license file present. Fails
+fast with an actionable message on any check.
+
+Boot mode writes `.rv/sdk.pid` so the caller can stop the SDK later
+(`kill $(cat .rv/sdk.pid)`). Boot logs land in `.rv/logs/`.
+
+## Files that ship with the plugin
+
+- `rv-init.js` — SDK spin-up / attach.
+- `rv-check.js` — per-pattern verification: build → deploy → runtime check → MCP emit.
+- `build.js`, `deploy.js` — reusable modules used by `rv-check`.
+- `failure-classes.js` — frozen failure taxonomy shared with the MCP tool.

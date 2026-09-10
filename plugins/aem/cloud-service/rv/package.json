@@ -6,5 +6,9 @@
   "description": "RV — Render & Validate: verification layer for AEM Cloud Service migration skills",
   "engines": {
     "node": ">=18.0.0"
+  },
+  "bin": {
+    "rv-init": "./rv-init.js",
+    "rv-check": "./rv-check.js"
   }
 }

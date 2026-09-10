@@ -1,19 +1,18 @@
+#!/usr/bin/env node
 'use strict';
 
 /**
- * rv-check — the CUSTOMER-facing RV entry point.
+ * rv-check — verify one migrated pattern on the customer's local Cloud SDK.
  *
- *   node rv-check.js <pattern> --project <customerBundleDir> --sdk <url> [--sdk-home <path>]
+ *   rv-check <pattern>                       (all flags auto-resolved)
+ *   rv-check <pattern> --finding <id> --project-id <pid> --project <dir>
  *
- * Verifies a customer's own migrated bundle on their AEM Cloud SDK. Auto-
- * detects the migrated class from the built jar's OSGi DS descriptors — no
- * hard-coded WKND names.
+ * Auto-resolves from state on disk:
+ *   ~/.rv/setup.json          — sdkUrl, user, password (written by `rv init`)
+ *   <cwd>/.rv/context.json    — projectId, pendingFindings (written by analyze)
+ *   <cwd>/pom.xml             — used as project root when --project omitted
  *
- *   1. build the customer's project (mvn clean package)
- *   2. inspect the jar to discover the migrated class (pattern-specific signature)
- *   3. deploy rv-probes (once) + the customer's bundle to their SDK
- *   4. call the rv-probes endpoint with the discovered class → runtime verdict
- *
+ * Pipeline: build → discover class → deploy → verify → emit outcome via MCP.
  * Exits 0 pass, 1 fail. Never modifies customer code.
  */
 if (typeof fetch !== 'function' || typeof FormData !== 'function' || typeof Blob !== 'function') {
@@ -26,141 +25,136 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { build } = require('./build.js');
 const { deploy } = require('./deploy.js');
-const { runTests } = require('./run-tests.js');
+const { FAILURE_CLASSES } = require('./failure-classes.js');
 
-const PROBES_BUNDLE = path.join(__dirname, 'rv-probes/target/rv-probes-1.0.0.jar');
-const PROBES_BSN = 'com.adobe.aem.rv.probes';
-
-// pattern -> { discover(jarPath) -> {…customer-specific…}, verify({sdkUrl, auth, discovered}) -> outcome }
+// Each pattern entry defines how to find its migrated class in a built jar
+// (`discover`) and how to check the runtime contract on the SDK (`verify`).
 const PATTERNS = {
   scheduler: {
     describe: 'Sling Scheduler (Cloud Service contract)',
-    discover: (jar) => {
-      // find the DS descriptor that declares scheduler.expression
+    discover: (jar, args) => {
+      // If the caller pinned a class, take it verbatim.
+      if (args && args.fqcn) return { fqcn: args.fqcn };
+      // Otherwise match any DS descriptor with scheduler.expression. Prefer the
+      // one that ALSO declares scheduler.runOn (the migrated one).
+      const candidates = [];
       for (const [fname, xml] of jarDsDescriptors(jar)) {
-        if (/property\s+name="scheduler\.expression"/.test(xml)) {
-          const nm = xml.match(/name="([^"]+)"/);
-          return { fqcn: nm ? nm[1] : path.basename(fname, '.xml') };
-        }
+        if (!/property\s+name="scheduler\.expression"/.test(xml)) continue;
+        const nm = xml.match(/<scr:component[^>]*name="([^"]+)"/) || xml.match(/name="([^"]+)"/);
+        const hasRunOn = /property\s+name="scheduler\.runOn"/.test(xml);
+        candidates.push({ fqcn: nm ? nm[1] : path.basename(fname, '.xml'), hasRunOn });
       }
-      return null;
+      if (candidates.length === 0) return null;
+      const migrated = candidates.find((c) => c.hasRunOn);
+      if (!migrated && candidates.length > 1) {
+        console.log(`  note: ${candidates.length} scheduler classes in jar, none declare scheduler.runOn; picking ${candidates[0].fqcn} — pass --fqcn to override`);
+      }
+      return { fqcn: (migrated || candidates[0]).fqcn };
     },
-    async verify({ sdkUrl, auth, discovered }) {
-      const r = await getJson(`${sdkUrl}/bin/rv/probe/scheduler?pid=${encodeURIComponent(discovered.fqcn)}`, auth);
-      if (!r.registered) return { result: 'fail', failure_class: 'runtime.not_registered', evidence: `${discovered.fqcn} not registered as OSGi DS component`, checks: r };
-      if (!r.active)     return { result: 'fail', failure_class: 'runtime.not_active', evidence: 'component present but not active', checks: r };
-      const p = r.properties || {};
+    async verify({ sdkUrl, auth, bundleBSN, discovered }) {
+      const fqcn = discovered.fqcn;
+
+      // 1. bundle state
+      const bundleJson = await getJson(`${sdkUrl}/system/console/bundles/${enc(bundleBSN)}.json`, auth).catch(() => null);
+      const bundle = bundleJson && bundleJson.data && bundleJson.data[0];
+      const bundle_state = bundle ? bundle.state : 'Unknown';
+      if (!bundle) {
+        return { result: 'fail', failure_class: FAILURE_CLASSES.BUNDLE_NOT_INSTALLED, bundle_state, component_state: 'Unknown', evidence: `bundle ${bundleBSN} not found on SDK` };
+      }
+      if (bundle_state !== 'Active') {
+        return { result: 'fail', failure_class: FAILURE_CLASSES.BUNDLE_NOT_ACTIVE, bundle_state, component_state: 'Unknown', evidence: `bundle state=${bundle_state}` };
+      }
+
+      // 2. component state + properties
+      const compJson = await getJson(`${sdkUrl}/system/console/components/${enc(fqcn)}.json`, auth).catch(() => null);
+      const comp = compJson && compJson.data && compJson.data[0];
+      if (!comp) {
+        return { result: 'fail', failure_class: FAILURE_CLASSES.COMPONENT_UNSATISFIED, bundle_state, component_state: 'Unknown', evidence: `component ${fqcn} not registered as OSGi DS` };
+      }
+      const component_state = String(comp.state || 'Unknown').toLowerCase();
+      const unsatisfied = (comp.unsatisfiedReferences || []).map((r) => r.name || r);
+
+      if (component_state !== 'active') {
+        const failure_class = unsatisfied.length > 0 ? FAILURE_CLASSES.COMPONENT_UNSATISFIED : FAILURE_CLASSES.ACTIVATION_ERROR;
+        return {
+          result: 'fail',
+          failure_class,
+          bundle_state,
+          component_state: capitalize(component_state),
+          unsatisfied_references: unsatisfied,
+          activation_error: comp.error || comp.activationException || null,
+          evidence: `component_state=${component_state}${unsatisfied.length ? ' refs=' + unsatisfied.join(',') : ''}`,
+        };
+      }
+
+      // 3. Cloud Service contract on properties
+      const props = extractProps(comp);
       const contract = {
-        has_expression: !!p['scheduler.expression'],
-        concurrent_boolean: p['scheduler.concurrent'] === 'false' || p['scheduler.concurrent'] === 'true',
-        runOn_scoped: p['scheduler.runOn'] === 'SINGLE' || p['scheduler.runOn'] === 'LEADER',
+        has_expression: !!props['scheduler.expression'],
+        concurrent_boolean: props['scheduler.concurrent'] === 'false' || props['scheduler.concurrent'] === 'true' || props['scheduler.concurrent'] === false || props['scheduler.concurrent'] === true,
+        runOn_scoped: props['scheduler.runOn'] === 'SINGLE' || props['scheduler.runOn'] === 'LEADER',
       };
       const contractOk = contract.has_expression && contract.concurrent_boolean && contract.runOn_scoped;
-      return {
-        result: contractOk ? 'pass' : 'fail',
-        failure_class: contractOk ? null : 'runtime.contract_mismatch',
-        checks: { registered: true, active: true, ...contract, properties: p },
-      };
-    },
-  },
-  'asset-manager': {
-    describe: 'Asset Manager (Path B: resolver.delete + commit)',
-    discover: (jar) => {
-      // Find a DS component that's a service, not a servlet/scheduler/event handler:
-      // customer's asset service class. The user can override with --fqcn.
-      const cand = [];
-      for (const [, xml] of jarDsDescriptors(jar)) {
-        if (/property\s+name="sling\.servlet\.paths"/.test(xml)) continue;
-        if (/property\s+name="scheduler\.expression"/.test(xml)) continue;
-        if (/property\s+name="event\.topics"/.test(xml)) continue;
-        if (/property\s+name="job\.topics"/.test(xml)) continue;
-        const nm = xml.match(/<scr:component[^>]*name="([^"]+)"/);
-        if (nm) cand.push(nm[1]);
+
+      if (!contractOk) {
+        return {
+          result: 'fail',
+          failure_class: FAILURE_CLASSES.CONTRACT_MISMATCH,
+          bundle_state,
+          component_state: 'Active',
+          checks: { ...contract, properties: props },
+          evidence: `contract mismatch: ${JSON.stringify(contract)}`,
+        };
       }
-      return cand[0] ? { fqcn: cand[0] } : null;
-    },
-    async verify({ sdkUrl, auth, discovered, opts }) {
-      const fqcn = opts.fqcn || discovered.fqcn;
-      const method = opts.method || 'deleteAsset';
-      const testPath = `/content/rvcheck-asset-${Date.now()}`;
-      // create a test node so we can prove it disappears
-      await httpPost(`${sdkUrl}${testPath}`, auth, { 'jcr:primaryType': 'nt:unstructured' });
-      const r = await getJson(`${sdkUrl}/bin/rv/probe/asset-delete?fqcn=${enc(fqcn)}&method=${enc(method)}&path=${enc(testPath)}`, auth);
-      const checks = { fqcn, method, testPath, ...r };
-      if (!r.invoked)       return { result: 'fail', failure_class: 'runtime.service_not_registered', evidence: r.error || 'invoke failed', checks };
-      if (!r.existed_before) return { result: 'fail', failure_class: 'runtime.setup_failed', evidence: 'test node was not created', checks };
-      if (!r.gone_after)     return { result: 'fail', failure_class: 'runtime.node_not_deleted', evidence: 'resolver.delete()+commit() did not remove the node', checks };
-      return { result: 'pass', failure_class: null, checks };
-    },
-  },
-  'event-migration': {
-    describe: 'OSGi EventHandler → Sling Job offload',
-    discover: (jar) => {
-      // Find a DS component that declares event.topics — customer's handler.
-      for (const [, xml] of jarDsDescriptors(jar)) {
-        if (!/property\s+name="event\.topics"/.test(xml)) continue;
-        const nm = xml.match(/<scr:component[^>]*name="([^"]+)"/);
-        const topicM = xml.match(/property\s+name="event\.topics"[^>]*value="([^"]+)"/);
-        if (nm && topicM) return { fqcn: nm[1], topic: topicM[1] };
-      }
-      return null;
-    },
-    async verify({ sdkUrl, auth, discovered }) {
-      // 1. handler is active as an EventHandler on the declared topic
-      const cmp = await getJson(`${sdkUrl}/bin/rv/probe/scheduler?pid=${enc(discovered.fqcn)}`, auth); // reuse: same DS state endpoint
-      const handlerActive = cmp.registered && cmp.active;
-      // 2. fire an event on the customer's topic
-      const id = 'rvc-' + Date.now();
-      const fireRes = await getJson(`${sdkUrl}/bin/rv/probe/fire-event?topic=${enc(discovered.topic)}&id=${enc(id)}`, auth);
-      // 3. handler survived (still active — didn't blow up on the event)
-      await sleep(1500);
-      const cmp2 = await getJson(`${sdkUrl}/bin/rv/probe/scheduler?pid=${enc(discovered.fqcn)}`, auth);
-      const survives = cmp2.registered && cmp2.active;
-      const checks = { fqcn: discovered.fqcn, topic: discovered.topic, handler_active: handlerActive, event_fired: !!fireRes.fired, handler_still_active_after: survives };
-      const ok = handlerActive && fireRes.fired && survives;
+
       return {
-        result: ok ? 'pass' : 'fail',
-        failure_class: !handlerActive ? 'runtime.handler_not_active' : !fireRes.fired ? 'runtime.event_fire_failed' : !survives ? 'runtime.handler_died' : null,
-        checks,
+        result: 'pass',
+        bundle_state,
+        component_state: 'Active',
+        checks: { ...contract, properties: props },
       };
-    },
-  },
-  replication: {
-    describe: 'Sling Distribution API (replaces CQ Replicator)',
-    discover: (jar) => {
-      // Confirm the customer bundle actually uses the Distribution API (imports it).
-      const { execFileSync } = require('child_process');
-      const mf = execFileSync('unzip', ['-p', jar, 'META-INF/MANIFEST.MF'], { encoding: 'utf8' }).replace(/\r?\n /g, '');
-      const importsDistribution = /Import-Package:[\s\S]*org\.apache\.sling\.distribution/.test(mf);
-      const importsLegacy = /Import-Package:[\s\S]*com\.day\.cq\.replication/.test(mf);
-      if (importsLegacy) return null; // legacy — source gate would have caught this too
-      return { uses_distribution_api: importsDistribution };
-    },
-    async verify({ sdkUrl, auth, discovered }) {
-      const path = `/content/rvcheck-repl-${Date.now()}`;
-      await httpPost(`${sdkUrl}${path}`, auth, { 'jcr:primaryType': 'nt:unstructured' });
-      const r = await getJson(`${sdkUrl}/bin/rv/probe/distribute?path=${enc(path)}`, auth);
-      const checks = { imports_distribution_api: !!discovered.uses_distribution_api, ...r };
-      if (!r.api_present) return { result: 'fail', failure_class: 'runtime.distributor_absent', evidence: 'Distributor service not present on the SDK', checks };
-      if (!r.invoked)     return { result: 'fail', failure_class: 'runtime.invoke_failed', evidence: r.error || 'distribute() threw', checks };
-      // Delivery to publish depends on publish-tier being configured; on an author-only
-      // SDK we assert only that the migrated code runs. That's the honest boundary.
-      return { result: 'pass', failure_class: null, checks };
     },
   },
 };
 
+// Wall-clock start of this run, captured in main(), used for started_at on
+// every outcome so run duration is honest.
+let RUN_STARTED_AT = null;
+
 async function main() {
+  RUN_STARTED_AT = new Date().toISOString();
   const args = parseArgs(process.argv.slice(2));
   const pat = PATTERNS[args.pattern];
   if (!pat) fatal(`unknown pattern: ${args.pattern}\nsupported: ${Object.keys(PATTERNS).join(', ')}`);
-  if (pat.placeholder) fatal(`${args.pattern} customer-mode probe is next — start with 'scheduler' (proven).`);
-  if (!args.project && !args.jar) fatal('either --project <customerBundleDir> or --jar <path/to/bundle.jar> is required');
-  if (!args.sdk) fatal('--sdk <url> is required');
 
-  const sdkUrl = args.sdk.replace(/\/$/, '');
-  const user = args.user || 'admin';
-  const password = args.password || 'admin';
+  const setup = readSetup();
+  const context = readContext();
+
+  // Auto-resolve required flags from analyze context if not given.
+  if (!args.finding) {
+    const match = (context.pendingFindings || []).find((f) => f.pattern === args.pattern);
+    if (match) { args.finding = match.id; console.log(`(auto) finding    = ${args.finding}`); }
+    else fatal(`--finding not provided and no pending ${args.pattern} finding in .rv/context.json — run analyze first, or pass --finding <id>`);
+  }
+  if (!args['project-id']) {
+    if (context.projectId) { args['project-id'] = context.projectId; console.log(`(auto) project-id = ${args['project-id']}`); }
+    else fatal('--project-id not provided and no projectId in .rv/context.json — run analyze first, or pass --project-id <id>');
+  }
+  // Default --project to CWD if it looks like a Maven project.
+  if (!args.project && !args.jar) {
+    if (fs.existsSync(path.join(process.cwd(), 'pom.xml'))) {
+      args.project = process.cwd();
+      console.log(`(auto) project    = ${args.project}`);
+    } else {
+      fatal('no --project or --jar and current directory has no pom.xml — cd into your project or pass --project <dir>');
+    }
+  }
+
+  if (!args.sdk && !setup.sdkUrl) fatal('no SDK — run `rv-init` first, or pass --sdk <url>');
+
+  const sdkUrl = (args.sdk || setup.sdkUrl).replace(/\/$/, '');
+  const user = args.user || setup.user || 'admin';
+  const password = args.password || setup.password || 'admin';
   const auth = 'Basic ' + Buffer.from(`${user}:${password}`).toString('base64');
 
   console.log(`\n=== rv-check · ${args.pattern} ===`);
@@ -171,78 +165,41 @@ async function main() {
   // 1. build (unless a pre-built jar was supplied)
   let artifactPath;
   if (args.jar) {
-    if (!fs.existsSync(args.jar)) return finish({ result: 'fail', failure_class: 'input.jar_missing', evidence: `no file at ${args.jar}` });
+    if (!fs.existsSync(args.jar)) return finish({ result: 'fail', failure_class: FAILURE_CLASSES.INPUT_JAR_MISSING, verification_level: 'source-only', evidence: `no file at ${args.jar}` }, null, args);
     artifactPath = args.jar;
     console.log(`▸ skip build (using --jar)\n  ok (${path.basename(artifactPath)})\n`);
   } else {
     step('build customer project');
     const b = build({ projectDir: args.project });
-    if (!b.ok) return finish({ result: 'fail', failure_class: 'build.failed', evidence: b.log });
+    if (!b.ok) return finish({ result: 'fail', failure_class: FAILURE_CLASSES.BUILD_FAILED, verification_level: 'source-only', evidence: b.log }, null, args);
     artifactPath = b.artifactPath;
     console.log(`  ok (${path.basename(artifactPath)}, ${b.elapsedMs}ms)\n`);
   }
 
   // 2. auto-discover
   step('discover migrated class');
-  const discovered = pat.discover(artifactPath);
-  if (!discovered) return finish({ result: 'fail', failure_class: 'discovery.no_pattern_match',
-    evidence: `no DS component in ${artifactPath} matches the ${args.pattern} signature` });
+  const discovered = pat.discover(artifactPath, args);
+  if (!discovered) return finish({ result: 'fail', failure_class: FAILURE_CLASSES.DISCOVERY_NO_MATCH, verification_level: 'source-only',
+    evidence: `no DS component in ${artifactPath} matches the ${args.pattern} signature` }, null, args);
   console.log(`  ok → ${JSON.stringify(discovered)}\n`);
 
-  // 3. ensure rv-probes is on the SDK
-  step('deploy rv-probes (if needed)');
-  const probesOk = await ensureProbes(sdkUrl, auth);
-  if (!probesOk.ok) return finish({ result: 'fail', failure_class: 'probes.deploy_failed', evidence: probesOk.log });
-  console.log(`  ok (rv-probes: ${probesOk.state})\n`);
-
-  // 4. deploy the customer bundle
+  // 3. deploy the customer bundle (— anything from here on touched the SDK, so verification_level = runtime)
   step('deploy customer bundle');
   const d = await deploy({ artifactPath, sdkUrl, user, password });
-  if (!d.ok) return finish({ result: 'fail', failure_class: 'deploy.failed', evidence: `${d.log} state=${d.state}` });
+  if (!d.ok) return finish({ result: 'fail', failure_class: FAILURE_CLASSES.DEPLOY_FAILED, verification_level: 'runtime', evidence: `${d.log} state=${d.state}` }, null, args);
   console.log(`  ok (bundle ${d.bundleId} · ${d.symbolicName})\n`);
   await sleep(3000); // let DS settle
 
-  // 5. runtime verify via probe
+  // 4. runtime verify (bundle_state + component_state + contract)
   step('runtime verify');
-  const opts = { fqcn: args.fqcn, method: args.method };
-  const outcome = await pat.verify({ sdkUrl, auth, discovered, opts });
-  console.log(`  ${outcome.result === 'pass' ? 'ok' : 'FAIL'} — ${JSON.stringify(outcome.checks)}\n`);
+  const outcome = await pat.verify({ sdkUrl, auth, bundleBSN: d.symbolicName, discovered });
+  outcome.verification_level = 'runtime';
+  console.log(`  ${outcome.result === 'pass' ? 'ok' : 'FAIL'} — bundle=${outcome.bundle_state} component=${outcome.component_state}${outcome.evidence ? '  ' + outcome.evidence : ''}\n`);
 
-  // 6. customer's own tests (optional, --tests). Runs `mvn verify` in the
-  //    project dir with the SDK URL wired into every common IT property. If
-  //    business functionality was working before and their tests pass now,
-  //    the migration preserved it.
-  let tests = null;
-  if (args.tests !== undefined && args.project) {
-    step('customer tests (mvn verify → SDK)');
-    const t = runTests({ projectDir: args.project, sdkUrl, user, password });
-    tests = { ok: t.ok, summary: t.summary, elapsedMs: t.elapsedMs };
-    const s = t.summary || {};
-    const line = s.note ? s.note : `tests=${s.tests} failures=${s.failures} errors=${s.errors} skipped=${s.skipped}`;
-    console.log(`  ${t.ok ? 'ok' : 'FAIL'} — ${line} (${t.elapsedMs}ms)\n`);
-    // A failure in customer tests degrades the overall verdict.
-    if (!t.ok && outcome.result === 'pass') {
-      outcome.result = 'fail';
-      outcome.failure_class = outcome.failure_class || 'tests.failed';
-      outcome.evidence = outcome.evidence || 'customer tests failed against the migrated bundle on the SDK';
-    }
-  } else if (args.tests !== undefined && !args.project) {
-    console.log(`▸ customer tests\n  skipped — needs --project (not --jar) to run mvn verify\n`);
-  }
-
-  return finish(outcome, { discovered, tests });
+  return finish(outcome, { discovered }, args);
 }
 
 // ---- helpers ----
-async function ensureProbes(sdkUrl, auth) {
-  const st = await getJson(`${sdkUrl}/system/console/bundles/${PROBES_BSN}.json`, auth).catch(() => null);
-  const already = st && st.data && st.data[0] && st.data[0].state === 'Active';
-  if (already) return { ok: true, state: 'Active (already deployed)' };
-  if (!fs.existsSync(PROBES_BUNDLE)) return { ok: false, log: `rv-probes bundle not built — run \`mvn package\` under rv-probes/` };
-  const d = await deploy({ artifactPath: PROBES_BUNDLE, sdkUrl });
-  return d.ok ? { ok: true, state: 'Active (just deployed)' } : { ok: false, log: d.log };
-}
-
 function jarDsDescriptors(jarPath) {
   // read all OSGI-INF/*.xml entries via `unzip -p`
   const listing = execFileSync('unzip', ['-l', jarPath], { encoding: 'utf8' });
@@ -260,31 +217,121 @@ async function getJson(url, auth) {
   return res.json();
 }
 
-async function httpPost(url, auth, formFields) {
-  const form = new FormData();
-  for (const [k, v] of Object.entries(formFields)) form.append(k, String(v));
-  const res = await fetch(url, { method: 'POST', headers: { Authorization: auth }, body: form });
-  return res.status;
-}
-
 const enc = encodeURIComponent;
+
+function capitalize(s) { return s ? s[0].toUpperCase() + s.slice(1) : s; }
+
+// Felix components.json returns props as [{key, value}, ...] with a nested
+// "Properties" entry whose value is an array of "k = v" strings — that's where
+// the OSGi DS component properties actually live.
+function extractProps(component) {
+  const props = component.props || component.properties || [];
+  const propsEntry = Array.isArray(props) ? props.find((p) => p && p.key === 'Properties') : null;
+  const rawList = propsEntry && Array.isArray(propsEntry.value) ? propsEntry.value : [];
+  const out = {};
+  for (const line of rawList) {
+    if (typeof line !== 'string') continue;
+    const eq = line.indexOf(' = ');
+    if (eq < 0) continue;
+    out[line.slice(0, eq).trim()] = line.slice(eq + 3).trim();
+  }
+  return out;
+}
 
 function step(name) { console.log(`▸ ${name}`); }
 function fatal(msg) { console.error(msg); process.exit(2); }
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-function finish(outcome, extra) {
-  const record = { run_id: 'rvc-' + Date.now(), ...outcome, ...(extra || {}), finished_at: new Date().toISOString() };
+
+function finish(outcome, extra, args) {
+  const record = {
+    run_id: outcome.run_id || 'rvc-' + Date.now(),
+    started_at: outcome.started_at || RUN_STARTED_AT || new Date().toISOString(),
+    ...outcome,
+    ...(extra || {}),
+    finished_at: outcome.finished_at || new Date().toISOString(),
+  };
   console.log('=== outcome ===');
   console.log(JSON.stringify(record, null, 2));
+
+  // Emit the MCP payload as a delimited block. The calling agent (skill) reads
+  // this block and invokes the `report-rv-outcome` MCP tool with it — rv-check
+  // does not speak MCP itself.
+  if (args && args.finding && args['project-id']) {
+    const payload = buildMcpPayload(record, args);
+    console.log('\n=== report-rv-outcome payload ===');
+    console.log(JSON.stringify(payload));
+    console.log('=== end payload ===');
+  }
+
   process.exit(record.result === 'pass' ? 0 : 1);
 }
+
+// ---- setup.json (from rv-init) — machine-global at ~/.rv/, falls back to CWD ----
+function readSetup() {
+  const candidates = [
+    path.join(process.env.HOME || '', '.rv', 'setup.json'),
+    path.join(process.cwd(), '.rv', 'setup.json'),
+  ];
+  for (const p of candidates) {
+    if (p && fs.existsSync(p)) {
+      try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { /* try next */ }
+    }
+  }
+  return {};
+}
+
+// ---- context.json (written by the analyze / migration skill) ----
+// Shape: { projectId: string, pendingFindings: [{ id, pattern }] }
+function readContext() {
+  const ctxPath = path.join(process.cwd(), '.rv', 'context.json');
+  if (!fs.existsSync(ctxPath)) return {};
+  try { return JSON.parse(fs.readFileSync(ctxPath, 'utf8')); } catch { return {}; }
+}
+
+// ---- MCP telemetry ----
+const EVIDENCE_MAX = 2048;
+
+function buildMcpPayload(outcome, args) {
+  const base = {
+    run_id: outcome.run_id,
+    finding_id: args.finding,
+    project_id: args['project-id'],
+    skill_pattern: args.pattern,
+    skill_version: args['skill-version'] || '1.0',
+    result: outcome.result,
+    verification_level: outcome.verification_level,
+    started_at: outcome.started_at,
+    finished_at: outcome.finished_at,
+  };
+  if (outcome.result !== 'fail') return stripEmpty({ ...base, skill_decisions: outcome.skill_decisions });
+  return stripEmpty({
+    ...base,
+    failure_class: outcome.failure_class || FAILURE_CLASSES.UNKNOWN,
+    bundle_state: outcome.bundle_state,
+    component_state: outcome.component_state,
+    unsatisfied_references: outcome.unsatisfied_references,
+    activation_error: outcome.activation_error,
+    evidence: truncate(outcome.evidence, EVIDENCE_MAX),
+    skill_decisions: outcome.skill_decisions,
+  });
+}
+
+function truncate(s, max) {
+  if (typeof s !== 'string' || s.length <= max) return s;
+  return s.slice(0, max - 1) + '…';
+}
+
+// Strip both undefined and null so optional Zod string fields stay unset
+// rather than being sent as null (which Zod's .optional() rejects).
+function stripEmpty(obj) {
+  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined && v !== null));
+}
+
 function parseArgs(argv) {
   const out = { pattern: argv[0] };
-  const bools = new Set(['tests']);
   for (let i = 1; i < argv.length; i++) {
     if (!argv[i].startsWith('--')) continue;
     const k = argv[i].replace(/^--/, '');
-    if (bools.has(k)) { out[k] = true; continue; }
     out[k] = argv[++i];
   }
   return out;
