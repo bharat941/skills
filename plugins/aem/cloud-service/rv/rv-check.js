@@ -115,6 +115,208 @@ const PATTERNS = {
       };
     },
   },
+
+  'asset-manager': {
+    describe: 'AssetManager → ResourceResolver (Cloud Service asset ops)',
+    discover: (jar, args) => {
+      // Legacy code imports com.day.cq.dam.api.AssetManager. Migrated code
+      // uses ResourceResolver.delete/adaptTo(Asset.class) via the resolver
+      // factory. Discovery = the bundle-level manifest check + any DS
+      // component with `sling.resource.type` or a service that references
+      // ResourceResolverFactory. If the caller pinned a class, take it.
+      if (args && args.fqcn) return { fqcn: args.fqcn };
+      for (const [fname, xml] of jarDsDescriptors(jar)) {
+        if (!/reference\s+[^>]*interface="org\.apache\.sling\.api\.resource\.ResourceResolverFactory"/.test(xml)) continue;
+        const nm = xml.match(/<scr:component[^>]*name="([^"]+)"/) || xml.match(/name="([^"]+)"/);
+        if (nm) return { fqcn: nm[1] };
+      }
+      return null;
+    },
+    async verify({ sdkUrl, auth, bundleBSN, discovered }) {
+      const bundleJson = await getJson(`${sdkUrl}/system/console/bundles/${enc(bundleBSN)}.json`, auth).catch(() => null);
+      const bundle = bundleJson && bundleJson.data && bundleJson.data[0];
+      if (!bundle) return { result: 'fail', failure_class: FAILURE_CLASSES.BUNDLE_NOT_INSTALLED, bundle_state: 'Unknown', component_state: 'Unknown', evidence: `bundle ${bundleBSN} not on SDK` };
+      if (bundle.state !== 'Active') return { result: 'fail', failure_class: FAILURE_CLASSES.BUNDLE_NOT_ACTIVE, bundle_state: bundle.state, component_state: 'Unknown', evidence: `bundle state=${bundle.state}` };
+
+      // Legacy DAM API imports would show in Import-Package on the manifest.
+      // Felix's bundle detail includes the manifest headers.
+      const imports = String(bundle.props?.find?.((p) => p?.key === 'Imported Packages')?.value || bundleJson?.data?.[0]?.props?.find?.((p) => p?.key === 'Imported Packages')?.value || '');
+      const importsLegacyDam = /com\.day\.cq\.dam\.api\.AssetManager/.test(imports);
+
+      const compJson = await getJson(`${sdkUrl}/system/console/components/${enc(discovered.fqcn)}.json`, auth).catch(() => null);
+      const comp = compJson && compJson.data && compJson.data[0];
+      const compState = comp ? String(comp.state || 'Unknown').toLowerCase() : 'unknown';
+      const unsatisfied = comp ? (comp.unsatisfiedReferences || []).map((r) => r.name || r) : [];
+
+      if (!comp) return { result: 'fail', failure_class: FAILURE_CLASSES.COMPONENT_UNSATISFIED, bundle_state: 'Active', component_state: 'Unknown', evidence: `component ${discovered.fqcn} not registered as OSGi DS` };
+      if (compState !== 'active') {
+        return {
+          result: 'fail',
+          failure_class: unsatisfied.length ? FAILURE_CLASSES.COMPONENT_UNSATISFIED : FAILURE_CLASSES.ACTIVATION_ERROR,
+          bundle_state: 'Active', component_state: capitalize(compState),
+          unsatisfied_references: unsatisfied,
+          activation_error: comp.error || comp.activationException || null,
+          evidence: `component_state=${compState}`,
+        };
+      }
+
+      if (importsLegacyDam) {
+        return {
+          result: 'fail',
+          failure_class: FAILURE_CLASSES.CONTRACT_MISMATCH,
+          bundle_state: 'Active', component_state: 'Active',
+          evidence: 'bundle still imports com.day.cq.dam.api.AssetManager — migration incomplete',
+        };
+      }
+
+      return { result: 'pass', bundle_state: 'Active', component_state: 'Active', checks: { imports_legacy_dam: false } };
+    },
+  },
+
+  'event-migration': {
+    describe: 'OSGi EventHandler → Sling JobConsumer',
+    discover: (jar, args) => {
+      // Migrated code declares a JobConsumer with job.topics property.
+      if (args && args.fqcn) return { fqcn: args.fqcn };
+      for (const [fname, xml] of jarDsDescriptors(jar)) {
+        if (!/property\s+name="job\.topics"/.test(xml)) continue;
+        const nm = xml.match(/<scr:component[^>]*name="([^"]+)"/) || xml.match(/name="([^"]+)"/);
+        const topic = (xml.match(/property\s+name="job\.topics"[^>]*value="([^"]+)"/) || [])[1];
+        if (nm) return { fqcn: nm[1], topic: topic || null };
+      }
+      return null;
+    },
+    async verify({ sdkUrl, auth, bundleBSN, discovered }) {
+      const bundleJson = await getJson(`${sdkUrl}/system/console/bundles/${enc(bundleBSN)}.json`, auth).catch(() => null);
+      const bundle = bundleJson && bundleJson.data && bundleJson.data[0];
+      if (!bundle) return { result: 'fail', failure_class: FAILURE_CLASSES.BUNDLE_NOT_INSTALLED, bundle_state: 'Unknown', component_state: 'Unknown', evidence: `bundle ${bundleBSN} not on SDK` };
+      if (bundle.state !== 'Active') return { result: 'fail', failure_class: FAILURE_CLASSES.BUNDLE_NOT_ACTIVE, bundle_state: bundle.state, component_state: 'Unknown', evidence: `bundle state=${bundle.state}` };
+
+      const compJson = await getJson(`${sdkUrl}/system/console/components/${enc(discovered.fqcn)}.json`, auth).catch(() => null);
+      const comp = compJson && compJson.data && compJson.data[0];
+      if (!comp) return { result: 'fail', failure_class: FAILURE_CLASSES.COMPONENT_UNSATISFIED, bundle_state: 'Active', component_state: 'Unknown', evidence: `component ${discovered.fqcn} not registered as OSGi DS` };
+      const compState = String(comp.state || 'Unknown').toLowerCase();
+      const unsatisfied = (comp.unsatisfiedReferences || []).map((r) => r.name || r);
+      if (compState !== 'active') {
+        return {
+          result: 'fail',
+          failure_class: unsatisfied.length ? FAILURE_CLASSES.COMPONENT_UNSATISFIED : FAILURE_CLASSES.ACTIVATION_ERROR,
+          bundle_state: 'Active', component_state: capitalize(compState),
+          unsatisfied_references: unsatisfied,
+          activation_error: comp.error || comp.activationException || null,
+          evidence: `component_state=${compState}`,
+        };
+      }
+
+      const props = extractProps(comp);
+      const topic = props['job.topics'];
+      if (!topic) {
+        return {
+          result: 'fail',
+          failure_class: FAILURE_CLASSES.CONTRACT_MISMATCH,
+          bundle_state: 'Active', component_state: 'Active',
+          evidence: 'JobConsumer contract missing job.topics property',
+        };
+      }
+      return { result: 'pass', bundle_state: 'Active', component_state: 'Active', checks: { topic } };
+    },
+  },
+
+  replication: {
+    describe: 'CQ Replicator / Sling Replicator → Sling Distribution API',
+    discover: (jar, args) => {
+      // Discovery on manifest: bundle imports org.apache.sling.distribution
+      // (migrated) and NOT com.day.cq.replication (legacy). Class detection
+      // is optional; we can verify at the bundle level.
+      if (args && args.fqcn) return { fqcn: args.fqcn };
+      const manifest = readJarManifest(jar);
+      const importsDistribution = /Import-Package:[\s\S]*org\.apache\.sling\.distribution/.test(manifest);
+      const importsLegacy = /Import-Package:[\s\S]*com\.day\.cq\.replication/.test(manifest);
+      return { importsDistribution, importsLegacy, fqcn: null };
+    },
+    async verify({ sdkUrl, auth, bundleBSN, discovered }) {
+      const bundleJson = await getJson(`${sdkUrl}/system/console/bundles/${enc(bundleBSN)}.json`, auth).catch(() => null);
+      const bundle = bundleJson && bundleJson.data && bundleJson.data[0];
+      if (!bundle) return { result: 'fail', failure_class: FAILURE_CLASSES.BUNDLE_NOT_INSTALLED, bundle_state: 'Unknown', component_state: 'Unknown', evidence: `bundle ${bundleBSN} not on SDK` };
+      if (bundle.state !== 'Active') return { result: 'fail', failure_class: FAILURE_CLASSES.BUNDLE_NOT_ACTIVE, bundle_state: bundle.state, component_state: 'Unknown', evidence: `bundle state=${bundle.state}` };
+
+      if (discovered.importsLegacy) {
+        return {
+          result: 'fail',
+          failure_class: FAILURE_CLASSES.CONTRACT_MISMATCH,
+          bundle_state: 'Active', component_state: 'Active',
+          evidence: 'bundle still imports com.day.cq.replication — migration incomplete',
+        };
+      }
+      if (!discovered.importsDistribution) {
+        return {
+          result: 'fail',
+          failure_class: FAILURE_CLASSES.CONTRACT_MISMATCH,
+          bundle_state: 'Active', component_state: 'Active',
+          evidence: 'bundle does not import org.apache.sling.distribution — migration incomplete',
+        };
+      }
+
+      // Confirm Distributor is available on the SDK (comes from AEM SDK itself,
+      // not the customer bundle — but if missing, the migrated code can't run).
+      const services = await getJson(`${sdkUrl}/system/console/services.json`, auth).catch(() => null);
+      const list = services?.data || [];
+      const hasDistributor = list.some((s) => /org\.apache\.sling\.distribution\.Distributor/.test(String(s.types || s.interfaces || '')));
+      if (!hasDistributor) {
+        return {
+          result: 'fail',
+          failure_class: FAILURE_CLASSES.CONTRACT_MISMATCH,
+          bundle_state: 'Active', component_state: 'Active',
+          evidence: 'org.apache.sling.distribution.Distributor service not present on SDK',
+        };
+      }
+
+      return { result: 'pass', bundle_state: 'Active', component_state: 'Active', checks: { imports_distribution: true, imports_legacy: false, distributor_present: true } };
+    },
+  },
+
+  'legacy-ui': {
+    describe: 'Classic UI / Coral 2 dialogs → Coral 3 (offline source check)',
+    mode: 'source-only',
+    discover: (jar) => {
+      // Content packages (.zip via maven-bundle-plugin) put dialog XMLs under
+      // /jcr_root/apps/**/cq:dialog/.content.xml. Bundles that embed content
+      // also carry them at the same path or under jcr_root/.
+      const listing = execFileSync('unzip', ['-l', jar], { encoding: 'utf8' });
+      const dialogs = [];
+      for (const line of listing.split('\n')) {
+        const m = line.match(/(jcr_root\/.*?\/(_cq_dialog|cq:dialog)\/\.content\.xml)$/);
+        if (m) dialogs.push(m[1]);
+      }
+      return dialogs.length ? { dialogs } : null;
+    },
+    async verify({ artifactPath, discovered }) {
+      const classic = [];
+      const coral2 = [];
+      const coral3 = [];
+      for (const p of discovered.dialogs) {
+        const xml = execFileSync('unzip', ['-p', artifactPath, p], { encoding: 'utf8' });
+        if (/\bxtype\s*=\s*"/.test(xml)) classic.push(p);
+        else if (/sling:resourceType\s*=\s*"cq\/gui\/components\/authoring\/dialog/.test(xml)) coral2.push(p);
+        else if (/sling:resourceType\s*=\s*"granite\/ui\/components\/coral\/foundation/.test(xml)) coral3.push(p);
+      }
+      const bad = classic.length + coral2.length;
+      if (bad > 0) {
+        return {
+          result: 'fail',
+          failure_class: FAILURE_CLASSES.SOURCE_CONTRACT_MISMATCH,
+          bundle_state: null, component_state: null,
+          evidence: `${classic.length} Classic UI + ${coral2.length} Coral 2 dialogs remain (Coral 3 ok: ${coral3.length})`,
+          checks: { dialogs_total: discovered.dialogs.length, classic: classic.length, coral2: coral2.length, coral3: coral3.length },
+        };
+      }
+      return {
+        result: 'pass',
+        bundle_state: null, component_state: null,
+        checks: { dialogs_total: discovered.dialogs.length, coral3: coral3.length },
+      };
+    },
+  },
 };
 
 // Wall-clock start of this run, captured in main(), used for started_at on
@@ -183,6 +385,16 @@ async function main() {
     evidence: `no DS component in ${artifactPath} matches the ${args.pattern} signature` }, null, args);
   console.log(`  ok → ${JSON.stringify(discovered)}\n`);
 
+  // Source-only patterns (e.g. legacy-ui): skip deploy + runtime — verify
+  // straight off the built artifact.
+  if (pat.mode === 'source-only') {
+    step('source verify');
+    const outcome = await pat.verify({ artifactPath, discovered });
+    outcome.verification_level = 'source-only';
+    console.log(`  ${outcome.result === 'pass' ? 'ok' : 'FAIL'}${outcome.evidence ? ' — ' + outcome.evidence : ''}\n`);
+    return finish(outcome, { discovered }, args);
+  }
+
   // 3. deploy the customer bundle (— anything from here on touched the SDK, so verification_level = runtime)
   step('deploy customer bundle');
   const d = await deploy({ artifactPath, sdkUrl, user, password });
@@ -209,6 +421,14 @@ function jarDsDescriptors(jarPath) {
     if (m) files.push(m[1]);
   }
   return files.map(f => [f, execFileSync('unzip', ['-p', jarPath, f], { encoding: 'utf8' })]);
+}
+
+// Read META-INF/MANIFEST.MF from a jar, unfolding continuation lines.
+function readJarManifest(jarPath) {
+  try {
+    const mf = execFileSync('unzip', ['-p', jarPath, 'META-INF/MANIFEST.MF'], { encoding: 'utf8' });
+    return mf.replace(/\r?\n /g, '');
+  } catch { return ''; }
 }
 
 async function getJson(url, auth) {

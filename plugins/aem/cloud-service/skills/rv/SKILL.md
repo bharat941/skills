@@ -156,16 +156,40 @@ structured payload so it can decide on a follow-up recipe.
 
 ## Supported patterns today
 
-- **scheduler** — `Sling Scheduler` Cloud Service contract. Proven end-to-end on
-  the AEM Cloud SDK 2026.8+.
+Five patterns are wired into `rv-check`. All share the same CLI shape
+(`rv-check <pattern>`) and the same MCP payload — only the per-pattern
+discover + verify functions differ.
 
-Patterns coming back (Phase 2.5): `asset-manager`, `event-migration`, `replication`.
-Same command shape, extra probe bundle deploy step handled by `rv-check` when
-`needsProbes: true`.
+**bundle-runtime** (`mode: bundle-runtime`) — build → deploy to Felix → check
+bundle_state + component_state on the SDK:
 
-Patterns coming later (Phase 3): `dispatcher-converter`, `unsupported-runmodes`,
-`filevault-deps`, `custom-templates` — will use `content-package` or `offline-only`
-verify modes. Framework stays the same, only the verify pipeline branches.
+- **scheduler** — `Sling Scheduler` Cloud Service contract. Checks
+  `scheduler.expression`, `scheduler.concurrent:Boolean`, and
+  `scheduler.runOn ∈ {SINGLE, LEADER}` on the migrated DS component.
+- **asset-manager** — `AssetManager → ResourceResolver`. Bundle must be Active,
+  component Active, and manifest must not import `com.day.cq.dam.api.AssetManager`.
+- **event-migration** — `OSGi EventHandler → Sling JobConsumer`. Bundle
+  Active, JobConsumer component Active, and its `job.topics` property present.
+- **replication** — `CQ Replicator / Sling Replicator → Sling Distribution API`.
+  Bundle Active, manifest imports `org.apache.sling.distribution` and not
+  `com.day.cq.replication`, and the `Distributor` service is present on the SDK.
+
+**source-only** (`mode: source-only`) — build → inspect the artifact; no SDK
+touched, no bundle deploy:
+
+- **legacy-ui** — `Classic UI / Coral 2 dialogs → Coral 3`. Extracts every
+  `cq:dialog/.content.xml` from the built artifact and flags any remaining
+  Classic UI `xtype=` attributes or Coral 2 resource types
+  (`cq/gui/components/authoring/dialog/...`); passes only when all dialogs use
+  Coral 3 (`granite/ui/components/coral/foundation/...`). Runs in ~2 s with no
+  Cloud SDK required.
+
+## Patterns not yet wired
+
+Coming as source-only entries (same shape as legacy-ui, offline artifact
+inspection): `dispatcher-converter`, `unsupported-runmodes`, `filevault-deps`.
+`custom-templates` needs a content-package deploy pipeline
+(`POST /crx/packmgr/service.jsp`) which is the next mode to add.
 
 ## Reference
 
