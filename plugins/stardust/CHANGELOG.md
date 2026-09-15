@@ -4,6 +4,110 @@ This file starts at 0.14.0. Prior versions (0.3.0 – 0.13.1) are documented in
 git history only (plus the branch-scoped notes in
 `CHANGELOG-redesign-adobecom.md` and `CHANGELOG-delivery-media-fidelity.md`).
 
+## 0.21.1 — evals: criteria.json in the tessl `weighted_checklist` schema
+
+`tessl plugin publish` validates every `evals/*/criteria.json` against the registry schema
+(`context`, `type: "weighted_checklist"`, `checklist[{ name, max_score, description }]`); the
+plugin's evals used the runner's own `{ criteria[{ id, weight, description }], total }` shape, so
+0.20.0 and 0.21.0 both failed to publish. All eleven rubrics are converted (ids → `name`, weights →
+`max_score`); the runner normalises either shape (`normalizeCriteria`), so scoring is unchanged.
+
+## 0.21.0 — AI readability: the checker formula, one gate, document-first listings
+
+Four migrations (a family-entertainment chain, a semiconductor company's replica, a UK
+package-holiday retailer, a beverage brand pilot) were scored 40–58 % by Adobe's "AI Content
+Visibility Checker" while every stardust gate was green. Each session reverse-engineered a
+different model of the tool — served-text parity, hidden text, markdown line diff — and each spent
+a round on a fix the score did not reward (inlining nav/footer into 143 documents; clipping instead
+of hiding; unwrapping generated anchors). The extension's own analyzer code settles it:
+**score = min(100, served words ÷ rendered-DOM words)**, landmarks stripped by default, hidden text
+counted as rendered, a count ratio and not a word-set diff. Reproduced to the word on one site.
+
+- **New reference `deploy/reference/ai-readability.md`** (on demand): the formula and its
+  consequences (what JS adds to the DOM is the whole defect; hidden text, chrome and generated
+  anchors are neutral; served-only text inflates; short pages suffer most), the two metrics kept
+  apart (checker score vs served-text parity), a cause-class table with remediation (loop clones,
+  index-fed cards, runtime fragments, definition-driven forms, generated labels), six block rules,
+  chrome inlining as a documented option with its trade-off, and the gate contract.
+- **New gate `deploy/scripts/ai-readability.mjs`**: exact reimplementation, both toggles, `code`
+  score (fragments credited, app blocks excluded), per-block served-gap attribution, allowlist by
+  block + string, JSON report, exit 1 below `--min` (98). Runs in the deploy atomic delivery
+  contract on the published page, as the new `qa` check `ai-readability` (K), and in `audit`
+  Phase 4.
+- **Block rule (deploy, always-on, one bullet): `decorate()` adds no words to the DOM** — clones
+  presentational, listings document-first, generated text only for allowlisted runtime values.
+  The D12 key-facts paragraph shrinks to a one-liner that points at the reference (net always-on
+  growth ≈ 0).
+- **Listings contract rewritten (`dynamics/reference/listings.md`)**: document-first — one authored
+  row per item with the card's text, a heading row per group, a label-list row; the block uses the
+  index for non-text fields and top-up; re-runs replace their own rows. Dynamics Phase 4 and
+  rollout D2 point at it.
+- **Replica**: loop clones carry no text/alt/href/aria (`recreation-procedure.md`).
+- **Eval `evals/ai-readability/`**: clones, document-first listing, explicit fragment decision, no
+  generated text, gate reported, checker facts stated correctly.
+- Not adopted, on evidence: clip-instead-of-hide rules (hidden text is neutral), inlining nav/footer
+  into every document as a default (does not move the default score; two of three owners declined),
+  CSS-stretched links *for the score* (kept as the accessible-name shape only).
+
+## 0.20.0 — dynamics: the dynamic surface of a migration
+
+Three real migrations (a US health insurer's employers section rebuilt greenfield, a UK
+package-holiday site on an existing EDS library, a consumer-credit site re-platformed at
+~5,900 URLs) found the same thing: a site's dynamic surface — modals, players, forms,
+search, tags, APIs, client-rendered and sheet-backed content — is invisible to a
+block-scoped, pixel-verified pipeline, and invisible in a way every gate certifies as
+correct. This release makes it visible, forces a decision per row before import, and
+proves the behaviour after delivery. Migration-bound by design: default-on in both
+migration flows, never for redesign-only work.
+
+- **New sub-skill `stardust:dynamics`** (`skills/dynamics/`): detect → classify → triage →
+  implement → verify. Triage on **four axes** — class (`L S F M V T A R X I18N CR D`),
+  disposition (`rebuild-native · index-backed · data-fed · embed-passthrough · client-only ·
+  static-snapshot · decided-out`), reproducibility (`self · needs-credential ·
+  needs-human-capture · needs-backend · needs-business-decision`), status. Only `self` ships
+  autonomously; the rest is one owner decision batch. Hard rules: reconcile against the
+  migrated output first, never fabricate a blank client-rendered page, never auto-wire a
+  regulated-PII form, a search box implies a results page, decided-out is explicit.
+- **References** (loaded on demand, not in the always-on skills): classes-and-signals,
+  triage (+ the `stardust/dynamic-features.md` inventory format, which subsumes the former
+  dynamic-blocks map), patterns (catalogue with contracts and three embedded example
+  mechanisms — modal loader, index search, JSON post with honeypot), listings (folded from
+  rollout's dynamic-listings), off-origin-data (host-keyed endpoint indirection, code-bus
+  snapshots, fetch shim, per-state rendered snapshots + `Source` row, sheet sync, chrome URL
+  space), forms (controls not form tags; intake by content source; regulated data),
+  parity-report, locale-trees. The plugin ships **contracts and tooling, not blocks**: no
+  block was reused as-is across the three cases and an existing library must be fed, not
+  forked.
+- **Tooling** (`skills/dynamics/scripts/`, verified end to end on a local fixture):
+  `dynamics-detect.mjs` (network log by host, first-party API paths with status, POST
+  bodies, forms **and form-less control groups**, the trigger → dialog → content graph,
+  player ids, iframes without src, tag-manager mount divs, settings-object keys, framework,
+  auth/commerce/locale, client-rendered slots and pages, listing candidates; `--from-state`
+  for one page per type; `--reach` folds the crawl's per-page signals in),
+  `dynamics-plan.mjs` (four-axis draft per finding, `--target-origin` **host-bound** probe of
+  every recorded API path, `--migrated` reconcile against delivered output, regulated-PII
+  flag), `dynamics-check.mjs` (parity replay over a closed set of check types —
+  `fetch-json`, `dom-count`, `click-dialog`, `search-query`, `form-flow`, `video-plays`,
+  `consent-gate`, `no-page-errors` — third-party request statuses recorded per check),
+  `snapshot-api.mjs`, `snapshot-forms.mjs`, `sync-sheets.mjs`, `vendors.json` (the
+  classification engine: host pattern → class + role, product names only).
+- **Hooks in the existing skills, ≤15 lines each:** `extract --dynamics` (opt-in per-page
+  reach signals; never set by a bare extract, `uplift` or `audit`); `prepare-migration`
+  Phase 4.5 and `replica` Phase 2 run Phases 1–3 as the pre-import gate; `migrate` Phase 1
+  is the safety net for the hand-run flow; `deploy` reads the inventory as brief input and
+  never flattens `client-only` / modal-bearing sections into prose; `rollout` B2 verifies the
+  inventory against fresh evidence, D2 implements the `self` set and batches the rest, H
+  reports parity; `qa` gains the `dynamics` check (`parity-missing` / `parity-failed` /
+  `parity-env-limit` / `parity-unchecked`); master routing + both flows name it.
+- **Origin-scoped site auth everywhere.** `resolveSiteAuth` / `attachOriginAuth` in the shared
+  live-session helper and the qa runner (`--auth-header` / `--token-env`, default
+  `SITE_TOKEN`): the secret rides a route filter on the base origin only — a context-wide
+  header leaked it to a video vendor's playback API, whose CORS check then produced a player
+  error real users never see.
+- **Learnings ledger** failure classes `dynamic-gap` / `api-dependency` now point at the
+  dynamics references. Removed: `rollout/reference/dynamic-listings.md` and the 0.19.9
+  `dynamic-capabilities.md` (folded into `skills/dynamics/reference/`).
+
 ## 0.19.8 — impeccable dependency: unpinned by design, with an update hint
 
 - **Dependency declaration** moves to the documented cross-marketplace object
