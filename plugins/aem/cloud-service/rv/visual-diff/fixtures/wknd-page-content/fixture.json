@@ -1,0 +1,38 @@
+{
+  "sourceTemplate": "/apps/wknd/templates/page-content",
+  "targetTemplate": "/conf/wknd/settings/wcm/templates/page-content",
+  "parentPath": "/content/rv-template",
+  "mockContent": {
+    "jcr:title": "Template check — page-content",
+    "jcr:description": "Synthetic page for validating static → editable template migration.",
+    "root/container/title/jcr:title": "The Long Way Back",
+    "root/container/text/text": "<p>Lorem ipsum dolor sit amet, consectetur adipiscing elit.</p>",
+    "root/container/image/fileReference": "/content/dam/wknd/en/adventures/bali-surf-camp/adobestock_216674449.jpeg",
+    "root/container/image/alt": "Hero image"
+  },
+  "assertions": {
+    "requireExactTextParity": false,
+    "minWordOverlap": 0.9,
+    "destination": {
+      "mustContainSelectors": [
+        "h1",
+        ".cmp-title__text",
+        ".cmp-image__image",
+        ".cmp-text"
+      ],
+      "mustNotContain": [
+        "cq:error",
+        "class=\"error\"",
+        "Exception",
+        "Sling Error"
+      ],
+      "mustHaveAttribute": [
+        { "selector": ".cmp-image__image", "attr": "src" },
+        { "selector": ".cmp-image__image", "attr": "alt" }
+      ]
+    },
+    "source": {
+      "mustNotContain": ["cq:error", "Sling Error"]
+    }
+  }
+}
