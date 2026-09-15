@@ -1,0 +1,21 @@
+{
+  "sourceTemplate": "/apps/wknd/templates/article",
+  "targetTemplate": "/conf/wknd/settings/wcm/templates/article-page",
+  "parentPath": "/content/rv-ab",
+  "viewport": { "width": 1440, "height": 900 },
+  "modernize": {
+    "applyInPlace": false,
+    "note": "Set applyInPlace=true to convert the source page instead of creating a second page from the target template. Requires aem-modernize-tools installed + rewrite rules registered."
+  },
+  "mockContent": {
+    "jcr:title": "RV A/B — Article",
+    "jcr:description": "Same content, rendered on legacy and modern templates.",
+    "root/container/hero/fileReference": "/content/dam/wknd/en/adventures/bali-surf-camp/adobestock_216674449.jpeg",
+    "root/container/hero/alt": "Hero image",
+    "root/container/title/jcr:title": "The Long Way Back",
+    "root/container/text/text": "<p>Lorem ipsum dolor sit amet, consectetur adipiscing elit.</p>"
+  },
+  "assertions": {
+    "maxDiffPct": 0.5
+  }
+}
