@@ -1,0 +1,19 @@
+{
+  "$schema": "../../schema/fixture.schema.json",
+  "template": "/conf/wknd/settings/wcm/templates/article-page",
+  "viewport": { "width": 1440, "height": 900 },
+  "mockContent": {
+    "jcr:title": "RV Visual Test — Article",
+    "jcr:description": "Fixture-driven article page for visual validation.",
+    "cq:tags": "wknd:activity/hiking",
+    "root/container/hero/fileReference": "/content/dam/wknd/en/adventures/bali-surf-camp/adobestock_216674449.jpeg",
+    "root/container/hero/alt": "Hero image for RV visual test",
+    "root/container/title/jcr:title": "The Long Way Back",
+    "root/container/text/text": "<p>Lorem ipsum dolor sit amet, consectetur adipiscing elit.</p>"
+  },
+  "assertions": {
+    "maxDiffPct": 0.5,
+    "mustContainSelectors": ["h1", "img"],
+    "mustNotContain": ["cq:error", "class=\"error\""]
+  }
+}

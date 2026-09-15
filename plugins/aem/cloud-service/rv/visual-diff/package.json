@@ -1,0 +1,20 @@
+{
+  "name": "@aem-cloud-service/rv-visual-diff",
+  "version": "0.1.0",
+  "description": "Pixel-perfect visual comparison for template/UI migrations. Companion to RV.",
+  "type": "module",
+  "bin": {
+    "visual-check": "./visual-check.js"
+  },
+  "scripts": {
+    "start": "node visual-check.js"
+  },
+  "dependencies": {
+    "puppeteer": "^22.0.0",
+    "pixelmatch": "^5.3.0",
+    "pngjs": "^7.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
