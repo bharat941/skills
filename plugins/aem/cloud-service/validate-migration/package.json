@@ -1,0 +1,14 @@
+{
+  "name": "aem-cs-validate-migration",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "validate-migration — deploy migrated AEM Cloud Service bundles to a local SDK and confirm they run",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "bin": {
+    "validate-migration-init": "./init.js",
+    "validate-migration-check": "./check.js"
+  }
+}
