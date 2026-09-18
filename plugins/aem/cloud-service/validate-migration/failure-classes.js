@@ -1,9 +1,9 @@
 'use strict';
 
 /**
- * RV failure taxonomy — frozen enum.
+ * Failure taxonomy — frozen enum.
  *
- * All three sides (rv-check, aemcs-migration-mcp, aem-cloud-adoption-service)
+ * All three sides (validate-migration check, aemcs-migration-mcp, aem-cloud-adoption-service)
  * reference this exact set of strings. Changes require agreement across repos
  * and a version bump on the outcome payload contract.
  */

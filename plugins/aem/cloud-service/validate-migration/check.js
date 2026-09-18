@@ -2,21 +2,30 @@
 'use strict';
 
 /**
- * rv-check — verify one migrated pattern on the customer's local Cloud SDK.
+ * validate-migration check — verify one or more migrated patterns on the customer's local Cloud SDK.
  *
- *   rv-check <pattern>                       (all flags auto-resolved)
- *   rv-check <pattern> --finding <id> --project-id <pid> --project <dir>
+ *   validate-migration check                                 (auto: diff branch vs main, verify what changed)
+ *   validate-migration check <pattern>                       (manual: verify one pattern, flags auto-resolved)
+ *   validate-migration check <pattern> --finding <id> --project-id <pid> --project <dir>
  *
- * Auto-resolves from state on disk:
- *   ~/.rv/setup.json          — sdkUrl, user, password (written by `rv init`)
- *   <cwd>/.rv/context.json    — projectId, pendingFindings (written by analyze)
- *   <cwd>/pom.xml             — used as project root when --project omitted
+ * Auto mode diffs the current branch against `main`/`origin/main` (see plan.js),
+ * classifies changed files into supported patterns, and runs each as its own
+ * build → deploy → verify task — aggregated into one outcome + one MCP payload.
  *
- * Pipeline: build → discover class → deploy → verify → emit outcome via MCP.
+ * Config, all optional (never persisted to disk):
+ *   RV_SDK_URL       SDK base URL (default http://localhost:4502)
+ *   RV_SDK_USER      SDK admin user (default 'admin' — warns if used against a non-local URL)
+ *   RV_SDK_PASS      SDK admin password (default 'admin' — warns if used against a non-local URL)
+ *   --sdk / --user / --password    CLI overrides
+ *
+ * Reads <cwd>/.validate-migration/context.json for projectId + pendingFindings (written by the
+ * analyze / migration skill), and <cwd>/pom.xml as the default project root.
+ *
+ * Pipeline (per task): build → discover class → deploy → verify → emit outcome via MCP.
  * Exits 0 pass, 1 fail. Never modifies customer code.
  */
 if (typeof fetch !== 'function' || typeof FormData !== 'function' || typeof Blob !== 'function') {
-  console.error('[rv-check] Node 18+ required (needs global fetch / FormData / Blob).');
+  console.error('[validate-migration] Node 18+ required (needs global fetch / FormData / Blob).');
   process.exit(2);
 }
 
@@ -26,6 +35,8 @@ const { execFileSync } = require('child_process');
 const { build } = require('./build.js');
 const { deploy } = require('./deploy.js');
 const { FAILURE_CLASSES } = require('./failure-classes.js');
+const mcp = require('./mcp-client.js');
+const { computeValidationPlan } = require('./plan.js');
 
 // Each pattern entry defines how to find its migrated class in a built jar
 // (`discover`) and how to check the runtime contract on the SDK (`verify`).
@@ -54,41 +65,42 @@ const PATTERNS = {
     async verify({ sdkUrl, auth, bundleBSN, discovered }) {
       const fqcn = discovered.fqcn;
 
-      // 1. bundle state
-      const bundleJson = await getJson(`${sdkUrl}/system/console/bundles/${enc(bundleBSN)}.json`, auth).catch(() => null);
-      const bundle = bundleJson && bundleJson.data && bundleJson.data[0];
-      const bundle_state = bundle ? bundle.state : 'Unknown';
-      if (!bundle) {
-        return { result: 'fail', failure_class: FAILURE_CLASSES.BUNDLE_NOT_INSTALLED, bundle_state, component_state: 'Unknown', evidence: `bundle ${bundleBSN} not found on SDK` };
+      // 1. bundle + component state — both from the MCP diagnose-osgi-bundle tool
+      const diagnosis = await getBundleDiagnosis({ sdkUrl, auth, bundleBSN });
+      if (!diagnosis.found) {
+        return { result: 'fail', failure_class: FAILURE_CLASSES.BUNDLE_NOT_INSTALLED, bundle_state: diagnosis.bundle_state, component_state: 'Unknown', evidence: `bundle ${bundleBSN} not found on SDK` };
       }
-      if (bundle_state !== 'Active') {
-        return { result: 'fail', failure_class: FAILURE_CLASSES.BUNDLE_NOT_ACTIVE, bundle_state, component_state: 'Unknown', evidence: `bundle state=${bundle_state}` };
+      if (diagnosis.bundle_state !== 'Active') {
+        return { result: 'fail', failure_class: FAILURE_CLASSES.BUNDLE_NOT_ACTIVE, bundle_state: diagnosis.bundle_state, component_state: 'Unknown', evidence: `bundle state=${diagnosis.bundle_state}` };
       }
+      const bundle_state = diagnosis.bundle_state;
 
-      // 2. component state + properties
+      const compFromMcp = diagnosis.components.get(fqcn);
+      // Property values (scheduler.expression etc.) still come from Felix — the MCP
+      // report only exposes states, not properties. This is the documented gap.
       const compJson = await getJson(`${sdkUrl}/system/console/components/${enc(fqcn)}.json`, auth).catch(() => null);
       const comp = compJson && compJson.data && compJson.data[0];
-      if (!comp) {
+      if (!compFromMcp && !comp) {
         return { result: 'fail', failure_class: FAILURE_CLASSES.COMPONENT_UNSATISFIED, bundle_state, component_state: 'Unknown', evidence: `component ${fqcn} not registered as OSGi DS` };
       }
-      const component_state = String(comp.state || 'Unknown').toLowerCase();
-      const unsatisfied = (comp.unsatisfiedReferences || []).map((r) => r.name || r);
+      const component_state = (compFromMcp && compFromMcp.state) || (comp && normalizeState(comp.state)) || 'Unknown';
+      const unsatisfied = comp ? (comp.unsatisfiedReferences || []).map((r) => r.name || r) : [];
 
-      if (component_state !== 'active') {
+      if (component_state !== 'Active') {
         const failure_class = unsatisfied.length > 0 ? FAILURE_CLASSES.COMPONENT_UNSATISFIED : FAILURE_CLASSES.ACTIVATION_ERROR;
         return {
           result: 'fail',
           failure_class,
           bundle_state,
-          component_state: capitalize(component_state),
+          component_state,
           unsatisfied_references: unsatisfied,
-          activation_error: comp.error || comp.activationException || null,
+          activation_error: (comp && (comp.error || comp.activationException)) || null,
           evidence: `component_state=${component_state}${unsatisfied.length ? ' refs=' + unsatisfied.join(',') : ''}`,
         };
       }
 
       // 3. Cloud Service contract on properties
-      const props = extractProps(comp);
+      const props = extractProps(comp || {});
       const contract = {
         has_expression: !!props['scheduler.expression'],
         concurrent_boolean: props['scheduler.concurrent'] === 'false' || props['scheduler.concurrent'] === 'true' || props['scheduler.concurrent'] === false || props['scheduler.concurrent'] === true,
@@ -133,29 +145,35 @@ const PATTERNS = {
       return null;
     },
     async verify({ sdkUrl, auth, bundleBSN, discovered }) {
+      // 1. bundle + component state from MCP diagnose-osgi-bundle
+      const diagnosis = await getBundleDiagnosis({ sdkUrl, auth, bundleBSN });
+      if (!diagnosis.found) return { result: 'fail', failure_class: FAILURE_CLASSES.BUNDLE_NOT_INSTALLED, bundle_state: diagnosis.bundle_state, component_state: 'Unknown', evidence: `bundle ${bundleBSN} not on SDK` };
+      if (diagnosis.bundle_state !== 'Active') return { result: 'fail', failure_class: FAILURE_CLASSES.BUNDLE_NOT_ACTIVE, bundle_state: diagnosis.bundle_state, component_state: 'Unknown', evidence: `bundle state=${diagnosis.bundle_state}` };
+
+      // Manifest headers (Import-Package) aren't exposed by MCP — fetch bundle detail from Felix.
       const bundleJson = await getJson(`${sdkUrl}/system/console/bundles/${enc(bundleBSN)}.json`, auth).catch(() => null);
       const bundle = bundleJson && bundleJson.data && bundleJson.data[0];
-      if (!bundle) return { result: 'fail', failure_class: FAILURE_CLASSES.BUNDLE_NOT_INSTALLED, bundle_state: 'Unknown', component_state: 'Unknown', evidence: `bundle ${bundleBSN} not on SDK` };
-      if (bundle.state !== 'Active') return { result: 'fail', failure_class: FAILURE_CLASSES.BUNDLE_NOT_ACTIVE, bundle_state: bundle.state, component_state: 'Unknown', evidence: `bundle state=${bundle.state}` };
 
       // Legacy DAM API imports would show in Import-Package on the manifest.
       // Felix's bundle detail includes the manifest headers.
-      const imports = String(bundle.props?.find?.((p) => p?.key === 'Imported Packages')?.value || bundleJson?.data?.[0]?.props?.find?.((p) => p?.key === 'Imported Packages')?.value || '');
+      const imports = String(bundle?.props?.find?.((p) => p?.key === 'Imported Packages')?.value || '');
       const importsLegacyDam = /com\.day\.cq\.dam\.api\.AssetManager/.test(imports);
 
+      const compFromMcp = diagnosis.components.get(discovered.fqcn);
       const compJson = await getJson(`${sdkUrl}/system/console/components/${enc(discovered.fqcn)}.json`, auth).catch(() => null);
       const comp = compJson && compJson.data && compJson.data[0];
-      const compState = comp ? String(comp.state || 'Unknown').toLowerCase() : 'unknown';
+      const compState = (compFromMcp && compFromMcp.state) || (comp && normalizeState(comp.state)) || 'Unknown';
       const unsatisfied = comp ? (comp.unsatisfiedReferences || []).map((r) => r.name || r) : [];
 
-      if (!comp) return { result: 'fail', failure_class: FAILURE_CLASSES.COMPONENT_UNSATISFIED, bundle_state: 'Active', component_state: 'Unknown', evidence: `component ${discovered.fqcn} not registered as OSGi DS` };
-      if (compState !== 'active') {
+      if (!compFromMcp && !comp) return { result: 'fail', failure_class: FAILURE_CLASSES.COMPONENT_UNSATISFIED, bundle_state: 'Active', component_state: 'Unknown', evidence: `component ${discovered.fqcn} not registered as OSGi DS` };
+      // Satisfied is fine for a service-only component that nothing has activated yet.
+      if (compState !== 'Active' && compState !== 'Satisfied') {
         return {
           result: 'fail',
           failure_class: unsatisfied.length ? FAILURE_CLASSES.COMPONENT_UNSATISFIED : FAILURE_CLASSES.ACTIVATION_ERROR,
-          bundle_state: 'Active', component_state: capitalize(compState),
+          bundle_state: 'Active', component_state: compState,
           unsatisfied_references: unsatisfied,
-          activation_error: comp.error || comp.activationException || null,
+          activation_error: (comp && (comp.error || comp.activationException)) || null,
           evidence: `component_state=${compState}`,
         };
       }
@@ -187,23 +205,25 @@ const PATTERNS = {
       return null;
     },
     async verify({ sdkUrl, auth, bundleBSN, discovered }) {
-      const bundleJson = await getJson(`${sdkUrl}/system/console/bundles/${enc(bundleBSN)}.json`, auth).catch(() => null);
-      const bundle = bundleJson && bundleJson.data && bundleJson.data[0];
-      if (!bundle) return { result: 'fail', failure_class: FAILURE_CLASSES.BUNDLE_NOT_INSTALLED, bundle_state: 'Unknown', component_state: 'Unknown', evidence: `bundle ${bundleBSN} not on SDK` };
-      if (bundle.state !== 'Active') return { result: 'fail', failure_class: FAILURE_CLASSES.BUNDLE_NOT_ACTIVE, bundle_state: bundle.state, component_state: 'Unknown', evidence: `bundle state=${bundle.state}` };
+      // 1. bundle + component state from MCP diagnose-osgi-bundle
+      const diagnosis = await getBundleDiagnosis({ sdkUrl, auth, bundleBSN });
+      if (!diagnosis.found) return { result: 'fail', failure_class: FAILURE_CLASSES.BUNDLE_NOT_INSTALLED, bundle_state: diagnosis.bundle_state, component_state: 'Unknown', evidence: `bundle ${bundleBSN} not on SDK` };
+      if (diagnosis.bundle_state !== 'Active') return { result: 'fail', failure_class: FAILURE_CLASSES.BUNDLE_NOT_ACTIVE, bundle_state: diagnosis.bundle_state, component_state: 'Unknown', evidence: `bundle state=${diagnosis.bundle_state}` };
 
+      const compFromMcp = diagnosis.components.get(discovered.fqcn);
+      // Properties (job.topics) aren't in the MCP report — fall back to Felix for those.
       const compJson = await getJson(`${sdkUrl}/system/console/components/${enc(discovered.fqcn)}.json`, auth).catch(() => null);
       const comp = compJson && compJson.data && compJson.data[0];
-      if (!comp) return { result: 'fail', failure_class: FAILURE_CLASSES.COMPONENT_UNSATISFIED, bundle_state: 'Active', component_state: 'Unknown', evidence: `component ${discovered.fqcn} not registered as OSGi DS` };
-      const compState = String(comp.state || 'Unknown').toLowerCase();
-      const unsatisfied = (comp.unsatisfiedReferences || []).map((r) => r.name || r);
-      if (compState !== 'active') {
+      if (!compFromMcp && !comp) return { result: 'fail', failure_class: FAILURE_CLASSES.COMPONENT_UNSATISFIED, bundle_state: 'Active', component_state: 'Unknown', evidence: `component ${discovered.fqcn} not registered as OSGi DS` };
+      const compState = (compFromMcp && compFromMcp.state) || (comp && normalizeState(comp.state)) || 'Unknown';
+      const unsatisfied = comp ? (comp.unsatisfiedReferences || []).map((r) => r.name || r) : [];
+      if (compState !== 'Active') {
         return {
           result: 'fail',
           failure_class: unsatisfied.length ? FAILURE_CLASSES.COMPONENT_UNSATISFIED : FAILURE_CLASSES.ACTIVATION_ERROR,
-          bundle_state: 'Active', component_state: capitalize(compState),
+          bundle_state: 'Active', component_state: compState,
           unsatisfied_references: unsatisfied,
-          activation_error: comp.error || comp.activationException || null,
+          activation_error: (comp && (comp.error || comp.activationException)) || null,
           evidence: `component_state=${compState}`,
         };
       }
@@ -235,10 +255,10 @@ const PATTERNS = {
       return { importsDistribution, importsLegacy, fqcn: null };
     },
     async verify({ sdkUrl, auth, bundleBSN, discovered }) {
-      const bundleJson = await getJson(`${sdkUrl}/system/console/bundles/${enc(bundleBSN)}.json`, auth).catch(() => null);
-      const bundle = bundleJson && bundleJson.data && bundleJson.data[0];
-      if (!bundle) return { result: 'fail', failure_class: FAILURE_CLASSES.BUNDLE_NOT_INSTALLED, bundle_state: 'Unknown', component_state: 'Unknown', evidence: `bundle ${bundleBSN} not on SDK` };
-      if (bundle.state !== 'Active') return { result: 'fail', failure_class: FAILURE_CLASSES.BUNDLE_NOT_ACTIVE, bundle_state: bundle.state, component_state: 'Unknown', evidence: `bundle state=${bundle.state}` };
+      // Bundle state via MCP; manifest headers + services list only exist on Felix.
+      const diagnosis = await getBundleDiagnosis({ sdkUrl, auth, bundleBSN });
+      if (!diagnosis.found) return { result: 'fail', failure_class: FAILURE_CLASSES.BUNDLE_NOT_INSTALLED, bundle_state: diagnosis.bundle_state, component_state: 'Unknown', evidence: `bundle ${bundleBSN} not on SDK` };
+      if (diagnosis.bundle_state !== 'Active') return { result: 'fail', failure_class: FAILURE_CLASSES.BUNDLE_NOT_ACTIVE, bundle_state: diagnosis.bundle_state, component_state: 'Unknown', evidence: `bundle state=${diagnosis.bundle_state}` };
 
       if (discovered.importsLegacy) {
         return {
@@ -326,10 +346,9 @@ let RUN_STARTED_AT = null;
 async function main() {
   RUN_STARTED_AT = new Date().toISOString();
   const args = parseArgs(process.argv.slice(2));
-  const pat = PATTERNS[args.pattern];
-  if (!pat) fatal(`unknown pattern: ${args.pattern}\nsupported: ${Object.keys(PATTERNS).join(', ')}`);
+  if (args.pattern && !PATTERNS[args.pattern]) fatal(`unknown pattern: ${args.pattern}\nsupported: ${Object.keys(PATTERNS).join(', ')}`);
 
-  const setup = readSetup();
+  const setup = readSdkCreds(args);
   const context = readContext();
 
   // Auto-resolve project-id from analyze context if not given. --finding is
@@ -337,49 +356,82 @@ async function main() {
   // schema uses run_id as parent identity; per-class detail lives in classes[]).
   if (!args['project-id']) {
     if (context.projectId) { args['project-id'] = context.projectId; console.log(`(auto) project-id = ${args['project-id']}`); }
-    else fatal('--project-id not provided and no projectId in .rv/context.json — run analyze first, or pass --project-id <id>');
+    else fatal('--project-id not provided and no projectId in .validate-migration/context.json — run analyze first, or pass --project-id <id>');
   }
-  // Default --project to CWD if it looks like a Maven project.
-  if (!args.project && !args.jar) {
-    if (fs.existsSync(path.join(process.cwd(), 'pom.xml'))) {
-      args.project = process.cwd();
-      console.log(`(auto) project    = ${args.project}`);
-    } else {
-      fatal('no --project or --jar and current directory has no pom.xml — cd into your project or pass --project <dir>');
+
+  // Resolve tasks: either the pattern the caller pinned, or an auto-detected
+  // set from diffing the branch against main (plan.js) — "run validate-migration on this branch".
+  const cwd = args.project || process.cwd();
+  let tasks;
+  if (args.pattern) {
+    if (!args.project && !args.jar) {
+      if (fs.existsSync(path.join(process.cwd(), 'pom.xml'))) {
+        args.project = process.cwd();
+        console.log(`(auto) project    = ${args.project}`);
+      } else {
+        fatal('no --project or --jar and current directory has no pom.xml — cd into your project or pass --project <dir>');
+      }
     }
+    tasks = [{ module: args.project, jar: args.jar, pattern: args.pattern, fqcn: args.fqcn }];
+  } else {
+    const plan = computeValidationPlan({ cwd, baseRef: args.base });
+    if (plan.error) fatal(`could not auto-detect what to verify: ${plan.error} — pass --pattern <name> to run one pattern manually`);
+    if (plan.tasks.length === 0) {
+      console.log(`[validate-migration] no validate-migration-relevant changes vs ${plan.baseRef} — nothing to verify.`);
+      process.exit(0);
+    }
+    console.log(`[validate-migration] auto-detected ${plan.tasks.length} task(s) from diff vs ${plan.baseRef}:`);
+    for (const t of plan.tasks) console.log(`  • ${t.pattern} — ${path.relative(cwd, t.module) || '.'} (${t.files.length} file(s) changed)`);
+    tasks = plan.tasks;
   }
 
-  if (!args.sdk && !setup.sdkUrl) fatal('no SDK — run `rv-init` first, or pass --sdk <url>');
-
-  const sdkUrl = (args.sdk || setup.sdkUrl).replace(/\/$/, '');
-  const user = args.user || setup.user || 'admin';
-  const password = args.password || setup.password || 'admin';
+  const anyNeedsSdk = tasks.some((t) => PATTERNS[t.pattern].mode !== 'source-only');
+  const sdkUrl = anyNeedsSdk ? await resolveSdkUrl(args) : null;
+  if (anyNeedsSdk && !sdkUrl) {
+    fatal('no running SDK found on ports 4502 / 4602 / 4503. Start your local Cloud SDK, or set RV_SDK_URL / pass --sdk <url>.');
+  }
+  const { user, password } = validateCreds(setup, sdkUrl);
   const auth = 'Basic ' + Buffer.from(`${user}:${password}`).toString('base64');
 
-  console.log(`\n=== rv-check · ${args.pattern} ===`);
-  console.log(args.jar ? `jar    : ${args.jar}` : `project: ${args.project}`);
-  console.log(`sdk    : ${sdkUrl}`);
+  const records = [];
+  for (const task of tasks) {
+    records.push(await runTask(task, { sdkUrl, user, password, auth }));
+  }
+
+  return finishAll(records, args);
+}
+
+// Runs the build → discover → (source verify | deploy + runtime verify)
+// pipeline for one { module, jar, pattern } task and returns a flat per-class
+// outcome record. Never throws — failures come back as `result: 'fail'`.
+async function runTask(task, { sdkUrl, user, password, auth }) {
+  const pat = PATTERNS[task.pattern];
+  console.log(`\n=== validate-migration check · ${task.pattern} ===`);
+  console.log(task.jar ? `jar    : ${task.jar}` : `project: ${task.module}`);
+  if (pat.mode !== 'source-only') console.log(`sdk    : ${sdkUrl}`);
   console.log(`pattern: ${pat.describe}\n`);
 
   // 1. build (unless a pre-built jar was supplied)
   let artifactPath;
-  if (args.jar) {
-    if (!fs.existsSync(args.jar)) return finish({ result: 'fail', failure_class: FAILURE_CLASSES.INPUT_JAR_MISSING, verification_level: 'source-only', evidence: `no file at ${args.jar}` }, null, args);
-    artifactPath = args.jar;
+  if (task.jar) {
+    if (!fs.existsSync(task.jar)) return { pattern: task.pattern, result: 'fail', failure_class: FAILURE_CLASSES.INPUT_JAR_MISSING, verification_level: 'source-only', evidence: `no file at ${task.jar}` };
+    artifactPath = task.jar;
     console.log(`▸ skip build (using --jar)\n  ok (${path.basename(artifactPath)})\n`);
   } else {
     step('build customer project');
-    const b = build({ projectDir: args.project });
-    if (!b.ok) return finish({ result: 'fail', failure_class: FAILURE_CLASSES.BUILD_FAILED, verification_level: 'source-only', evidence: b.log }, null, args);
+    const b = build({ projectDir: task.module });
+    if (!b.ok) return { pattern: task.pattern, result: 'fail', failure_class: FAILURE_CLASSES.BUILD_FAILED, verification_level: 'source-only', evidence: b.log };
     artifactPath = b.artifactPath;
     console.log(`  ok (${path.basename(artifactPath)}, ${b.elapsedMs}ms)\n`);
   }
 
   // 2. auto-discover
   step('discover migrated class');
-  const discovered = pat.discover(artifactPath, args);
-  if (!discovered) return finish({ result: 'fail', failure_class: FAILURE_CLASSES.DISCOVERY_NO_MATCH, verification_level: 'source-only',
-    evidence: `no DS component in ${artifactPath} matches the ${args.pattern} signature` }, null, args);
+  const discovered = pat.discover(artifactPath, task);
+  if (!discovered) {
+    return { pattern: task.pattern, result: 'fail', failure_class: FAILURE_CLASSES.DISCOVERY_NO_MATCH, verification_level: 'source-only',
+      evidence: `no DS component in ${artifactPath} matches the ${task.pattern} signature` };
+  }
   console.log(`  ok → ${JSON.stringify(discovered)}\n`);
 
   // Source-only patterns (e.g. legacy-ui): skip deploy + runtime — verify
@@ -387,31 +439,33 @@ async function main() {
   if (pat.mode === 'source-only') {
     step('source verify');
     const outcome = await pat.verify({ artifactPath, discovered });
-    outcome.verification_level = 'source-only';
     console.log(`  ${outcome.result === 'pass' ? 'ok' : 'FAIL'}${outcome.evidence ? ' — ' + outcome.evidence : ''}\n`);
-    return finish(outcome, { discovered }, args);
+    return { pattern: task.pattern, ...outcome, verification_level: 'source-only', discovered };
   }
 
   // 3. deploy the customer bundle (— anything from here on touched the SDK, so verification_level = runtime)
   step('deploy customer bundle');
-  const d = await deploy({ artifactPath, sdkUrl, user, password });
+  const d = await deploy({ projectDir: task.module, artifactPath, sdkUrl, user, password });
   if (!d.ok) {
-    const bundle = d.symbolicName ? { symbolic_name: d.symbolicName, state: normalizeBundleState(d.state) } : null;
-    return finish({ result: 'fail', failure_class: FAILURE_CLASSES.DEPLOY_FAILED, verification_level: 'runtime', evidence: `${d.log} state=${d.state}` }, bundle ? { bundle } : null, args);
+    // Deploy only confirms the install call, not runtime state — leave state Unknown.
+    const bundle = d.symbolicName ? { symbolic_name: d.symbolicName, state: normalizeBundleState() } : null;
+    return { pattern: task.pattern, result: 'fail', failure_class: FAILURE_CLASSES.DEPLOY_FAILED, verification_level: 'runtime', evidence: d.log, ...(bundle ? { bundle } : {}) };
   }
-  console.log(`  ok (bundle ${d.bundleId} · ${d.symbolicName})\n`);
+  console.log(`  ok (bundle ${d.symbolicName}${d.mode ? ' via ' + d.mode : ''})\n`);
   await sleep(3000); // let DS settle
 
   // 4. runtime verify (bundle_state + component_state + contract)
   step('runtime verify');
   const outcome = await pat.verify({ sdkUrl, auth, bundleBSN: d.symbolicName, discovered });
-  outcome.verification_level = 'runtime';
   console.log(`  ${outcome.result === 'pass' ? 'ok' : 'FAIL'} — bundle=${outcome.bundle_state} component=${outcome.component_state}${outcome.evidence ? '  ' + outcome.evidence : ''}\n`);
 
-  return finish(outcome, {
+  return {
+    pattern: task.pattern,
+    ...outcome,
+    verification_level: 'runtime',
     discovered,
-    bundle: { symbolic_name: d.symbolicName, state: normalizeBundleState(outcome.bundle_state || d.state) },
-  }, args);
+    bundle: { symbolic_name: d.symbolicName, state: normalizeBundleState(outcome.bundle_state) },
+  };
 }
 
 // ---- helpers ----
@@ -440,6 +494,100 @@ async function getJson(url, auth) {
   return res.json();
 }
 
+// ---- MCP-based diagnosis (AEM Quickstart MCP server, /bin/mcp) ----
+// Lazily initialized once per validate-migration check run; null means the MCP server isn't
+// reachable or doesn't ship the bundle-diagnostic tool, so callers fall back
+// to the Felix bundles.json / components.json endpoints for what MCP doesn't
+// expose (component properties, manifest headers, service registrations).
+let mcpCtx; // undefined = not yet attempted, null = attempted and unavailable
+const diagnosisCache = new Map(); // BSN -> parsed diagnosis, per validate-migration check run
+
+async function getMcpContext(sdkUrl, auth) {
+  if (mcpCtx !== undefined) return mcpCtx;
+  try {
+    const sessionId = await mcp.initSession(sdkUrl, auth);
+    const tools = await mcp.listTools(sdkUrl, auth, sessionId);
+    const tool = mcp.findBundleDiagnosticTool(tools);
+    mcpCtx = tool ? { sessionId, tool } : null;
+  } catch {
+    mcpCtx = null;
+  }
+  return mcpCtx;
+}
+
+// Returns { bundle_state, found, components: Map<fqcn, {state}>, source }.
+// `source` is 'mcp' or 'felix' so callers can decide when to fall back for
+// signals MCP doesn't expose.
+async function getBundleDiagnosis({ sdkUrl, auth, bundleBSN }) {
+  if (diagnosisCache.has(bundleBSN)) return diagnosisCache.get(bundleBSN);
+
+  const ctx = await getMcpContext(sdkUrl, auth);
+  if (ctx) {
+    const report = await mcp.callTool(sdkUrl, auth, ctx.sessionId, ctx.tool.name, { bundleSymbolicName: bundleBSN }).catch(() => null);
+    if (report) {
+      const parsed = parseBundleDiagnosticReport(report);
+      parsed.source = 'mcp';
+      diagnosisCache.set(bundleBSN, parsed);
+      return parsed;
+    }
+  }
+
+  // Felix fallback: bundle state + a shallow component map.
+  const bundleJson = await getJson(`${sdkUrl}/system/console/bundles/${enc(bundleBSN)}.json`, auth).catch(() => null);
+  const bundle = bundleJson && bundleJson.data && bundleJson.data[0];
+  const fallback = {
+    bundle_state: bundle ? normalizeState(bundle.state) : 'Unknown',
+    found: !!bundle,
+    components: new Map(),
+    source: 'felix',
+  };
+  diagnosisCache.set(bundleBSN, fallback);
+  return fallback;
+}
+
+// Back-compat wrapper: existing sites that only needed bundle-level state.
+async function checkBundleState(args) {
+  const d = await getBundleDiagnosis(args);
+  return { bundle_state: d.bundle_state, found: d.found };
+}
+
+// The diagnostic tool returns free text, not JSON. Unrecognized shapes map to
+// 'Unknown' rather than a guessed 'Active', so a parse miss fails safe.
+// State is normalized to title case ('Active', 'Installed', 'Resolved') because
+// the OSGi runtime and Sling's diagnostic report both use upper case ('ACTIVE'),
+// while Felix's JSON and the rest of validate-migration use title case.
+function parseBundleDiagnosticReport(text) {
+  const components = parseComponentsFromReport(text);
+  if (/no such bundle|not found|not installed/i.test(text)) return { bundle_state: 'Unknown', found: false, components };
+  const stateLine = text.match(/State:\s*([A-Za-z]+)/);
+  if (stateLine) return { bundle_state: normalizeState(stateLine[1]), found: true, components };
+  if (/INSTALLED but not RESOLVED/i.test(text)) return { bundle_state: 'Installed', found: true, components };
+  if (/\bACTIVE\b/i.test(text) && !/not RESOLVED|not ACTIVE|unsatisfied/i.test(text)) return { bundle_state: 'Active', found: true, components };
+  return { bundle_state: 'Unknown', found: true, components };
+}
+
+// Parses the `--- Declarative Services Components ---` section of the report
+// into a Map<fqcn, {state}>. Only states are exposed; component properties are
+// still Felix-only (the MCP tool doesn't emit them today).
+function parseComponentsFromReport(text) {
+  const out = new Map();
+  const start = text.indexOf('Declarative Services Components');
+  if (start === -1) return out;
+  const body = text.slice(start);
+  const re = /Component:\s*([^\r\n]+)\r?\n\s*State:\s*([A-Za-z]+)/g;
+  let m;
+  while ((m = re.exec(body)) !== null) {
+    out.set(m[1].trim(), { state: normalizeState(m[2]) });
+  }
+  return out;
+}
+
+function normalizeState(s) {
+  if (!s) return 'Unknown';
+  const lc = String(s).toLowerCase();
+  return lc.charAt(0).toUpperCase() + lc.slice(1);
+}
+
 const enc = encodeURIComponent;
 
 function capitalize(s) { return s ? s[0].toUpperCase() + s.slice(1) : s; }
@@ -465,19 +613,23 @@ function step(name) { console.log(`▸ ${name}`); }
 function fatal(msg) { console.error(msg); process.exit(2); }
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-function finish(outcome, extra, args) {
+// Aggregates every task's outcome record into one run, prints it, emits the
+// MCP payload once for the whole run, and exits (0 all-pass, 1 any-fail).
+function finishAll(records, args) {
+  const finishedAt = new Date().toISOString();
   const record = {
-    run_id: outcome.run_id || 'rvc-' + Date.now(),
-    started_at: outcome.started_at || RUN_STARTED_AT || new Date().toISOString(),
-    ...outcome,
-    ...(extra || {}),
-    finished_at: outcome.finished_at || new Date().toISOString(),
+    run_id: 'rvc-' + Date.now(),
+    started_at: RUN_STARTED_AT || finishedAt,
+    finished_at: finishedAt,
+    result: records.some((r) => r.result === 'fail') ? 'fail' : 'pass',
+    verification_level: records.some((r) => r.verification_level === 'runtime') ? 'runtime' : 'source-only',
+    classes: records,
   };
   console.log('=== outcome ===');
   console.log(JSON.stringify(record, null, 2));
 
   // Emit the MCP payload as a delimited block. The calling agent (skill) reads
-  // this block and invokes the `report-rv-outcome` MCP tool with it — rv-check
+  // this block and invokes the `report-rv-outcome` MCP tool with it — validate-migration check
   // does not speak MCP itself.
   if (args && args['project-id']) {
     const payload = buildMcpPayload(record, args);
@@ -489,18 +641,48 @@ function finish(outcome, extra, args) {
   process.exit(record.result === 'pass' ? 0 : 1);
 }
 
-// ---- setup.json (from rv-init) — machine-global at ~/.rv/, falls back to CWD ----
-function readSetup() {
-  const candidates = [
-    path.join(process.env.HOME || '', '.rv', 'setup.json'),
-    path.join(process.cwd(), '.rv', 'setup.json'),
-  ];
-  for (const p of candidates) {
-    if (p && fs.existsSync(p)) {
-      try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { /* try next */ }
+// ---- SDK config (never persisted to disk) ----
+// URL: honors --sdk / RV_SDK_URL; otherwise probes common local ports so a
+// developer never has to configure anything when the SDK is on 4502/4602/4503.
+// Credentials: --user/--password / RV_SDK_USER/RV_SDK_PASS, default admin/admin.
+// admin/admin is refused for any URL that isn't localhost — keeps the default
+// safe if someone accidentally points validate-migration at a shared instance.
+const COMMON_SDK_PORTS = [4502, 4602, 4503];
+const SDK_PROBE_TIMEOUT_MS = 500;
+
+async function resolveSdkUrl(args) {
+  const explicit = args.sdk || process.env.RV_SDK_URL;
+  if (explicit) return explicit.replace(/\/$/, '');
+  for (const port of COMMON_SDK_PORTS) {
+    const url = `http://localhost:${port}`;
+    if (await isSdkReachable(url)) {
+      console.log(`(auto) SDK       = ${url}`);
+      return url;
     }
   }
-  return {};
+  return null;
+}
+
+async function isSdkReachable(url) {
+  try {
+    const res = await fetch(`${url}/system/console`, { redirect: 'manual', signal: AbortSignal.timeout(SDK_PROBE_TIMEOUT_MS) });
+    return res.status < 500;
+  } catch { return false; }
+}
+
+function readSdkCreds(args) {
+  return {
+    user: args.user || process.env.RV_SDK_USER || 'admin',
+    password: args.password || process.env.RV_SDK_PASS || 'admin',
+  };
+}
+
+function validateCreds({ user, password }, sdkUrl) {
+  const isLocal = !sdkUrl || /^https?:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/i.test(sdkUrl);
+  if (!isLocal && user === 'admin' && password === 'admin') {
+    fatal(`refusing to send admin/admin to non-local SDK: ${sdkUrl}. Set RV_SDK_USER and RV_SDK_PASS.`);
+  }
+  return { user, password };
 }
 
 // ---- context.json (written by the analyze / migration skill) ----
@@ -540,8 +722,35 @@ function flattenChecks(checks) {
   return Object.keys(out).length ? out : undefined;
 }
 
-function buildMcpPayload(outcome, args) {
-  const className = (outcome.discovered && outcome.discovered.fqcn) || '(unknown)';
+function buildMcpPayload(record, args) {
+  const classes = record.classes.map(toClassEntry);
+  const bundleEntry = record.classes.find((r) => r.bundle);
+  const patterns = [...new Set(record.classes.map((r) => r.pattern).filter(Boolean))];
+
+  const payload = {
+    run_id: record.run_id,
+    project_id: args['project-id'],
+    skill_pattern: args.pattern || patterns.join('+'),
+    skill_version: args['skill-version'] || '1.0',
+    result: record.result,
+    verification_level: record.verification_level,
+    started_at: record.started_at,
+    finished_at: record.finished_at,
+    summary: {
+      classes_total: classes.length,
+      classes_pass: record.classes.filter((r) => r.result === 'pass').length,
+      classes_fail: record.classes.filter((r) => r.result === 'fail').length,
+    },
+    classes,
+  };
+  if (bundleEntry) payload.bundle = bundleEntry.bundle;
+  if (record.skill_decisions) payload.skill_decisions = record.skill_decisions;
+  return stripEmpty(payload);
+}
+
+// Builds one `classes[]` entry (report-rv-outcome schema) from one task's outcome.
+function toClassEntry(outcome) {
+  const className = (outcome.discovered && outcome.discovered.fqcn) || `(${outcome.pattern})`;
   const cls = { class_name: className, result: outcome.result };
 
   if (outcome.result === 'fail') {
@@ -557,26 +766,7 @@ function buildMcpPayload(outcome, args) {
     const checks = flattenChecks(outcome.checks);
     if (checks) cls.checks = checks;
   }
-
-  const payload = {
-    run_id: outcome.run_id,
-    project_id: args['project-id'],
-    skill_pattern: args.pattern,
-    skill_version: args['skill-version'] || '1.0',
-    result: outcome.result,
-    verification_level: outcome.verification_level,
-    started_at: outcome.started_at,
-    finished_at: outcome.finished_at,
-    summary: {
-      classes_total: 1,
-      classes_pass: outcome.result === 'pass' ? 1 : 0,
-      classes_fail: outcome.result === 'fail' ? 1 : 0,
-    },
-    classes: [stripEmpty(cls)],
-  };
-  if (outcome.bundle) payload.bundle = outcome.bundle;
-  if (outcome.skill_decisions) payload.skill_decisions = outcome.skill_decisions;
-  return stripEmpty(payload);
+  return stripEmpty(cls);
 }
 
 function truncate(s, max) {
@@ -591,11 +781,13 @@ function stripEmpty(obj) {
 }
 
 function parseArgs(argv) {
-  const out = { pattern: argv[0] };
-  for (let i = 1; i < argv.length; i++) {
-    if (!argv[i].startsWith('--')) continue;
-    const k = argv[i].replace(/^--/, '');
-    out[k] = argv[++i];
+  const out = {};
+  if (argv[0] && !argv[0].startsWith('--')) out.pattern = argv[0];
+  const rest = out.pattern ? argv.slice(1) : argv;
+  for (let i = 0; i < rest.length; i++) {
+    if (!rest[i].startsWith('--')) continue;
+    const k = rest[i].replace(/^--/, '');
+    out[k] = rest[++i];
   }
   return out;
 }

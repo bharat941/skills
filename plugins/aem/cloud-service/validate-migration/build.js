@@ -1,13 +1,13 @@
 'use strict';
 
 /**
- * build.js — wraps `mvn clean package -DskipTests` for an RV project.
+ * build.js — wraps `mvn clean package -DskipTests` for a validate-migration project.
  *
  * Input : { projectDir }
  * Output: { ok, artifactPath, log, elapsedMs }
  *
  * Uses whatever `java` / JAVA_HOME the customer has. Set RV_JAVA_HOME to pin
- * a specific JDK for RV builds without touching JAVA_HOME globally.
+ * a specific JDK for validate-migration builds without touching JAVA_HOME globally.
  */
 const { execFileSync } = require('child_process');
 const fs = require('fs');
@@ -23,7 +23,7 @@ function build({ projectDir }) {
 
   let log;
   try {
-    // RV verifies runtime contract on the SDK, not customer test correctness.
+    // validate-migration verifies runtime contract on the SDK, not customer test correctness.
     log = execFileSync('mvn', ['-q', '-B', '-DskipTests', 'clean', 'package'],
       { cwd: projectDir, env, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
   } catch (e) {
