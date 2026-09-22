@@ -37,8 +37,30 @@ function resolveBaseRef(cwd) {
 }
 
 function changedFiles(cwd, baseRef) {
-  const out = execFileSync('git', ['diff', '--name-only', '--diff-filter=ACMR', `${baseRef}...HEAD`], { cwd, encoding: 'utf8' });
-  return out.split('\n').map((l) => l.trim()).filter(Boolean);
+  // Union of everything that differs from baseRef in the working tree:
+  //   • committed vs baseRef merge-base (baseRef...HEAD)
+  //   • staged (index vs HEAD)
+  //   • unstaged (working tree vs HEAD)
+  //   • untracked (respects .gitignore)
+  // The migration skill often edits files without committing, so committed-only
+  // scoping would report "nothing to verify" right after a migration.
+  const runs = [
+    ['diff', '--name-only', '--diff-filter=ACMR', `${baseRef}...HEAD`],
+    ['diff', '--name-only', '--diff-filter=ACMR', '--cached', 'HEAD'],
+    ['diff', '--name-only', '--diff-filter=ACMR', 'HEAD'],
+    ['ls-files', '--others', '--exclude-standard'],
+  ];
+  const set = new Set();
+  for (const argv of runs) {
+    let out;
+    try { out = execFileSync('git', argv, { cwd, encoding: 'utf8' }); }
+    catch { continue; }
+    for (const line of out.split('\n')) {
+      const f = line.trim();
+      if (f) set.add(f);
+    }
+  }
+  return [...set];
 }
 
 // Walks up from a changed file's directory to find the nearest pom.xml —

@@ -13,6 +13,7 @@ const FAILURE_CLASSES = Object.freeze({
   BUILD_FAILED:             'build.failed',
   DISCOVERY_NO_MATCH:       'discovery.no_pattern_match',
   SDK_UNREACHABLE:          'sdk.unreachable',
+  SETUP_MCP_UNAVAILABLE:    'setup.mcp_unavailable',
   DEPLOY_FAILED:            'deploy.failed',
 
   BUNDLE_NOT_INSTALLED:     'runtime.bundle_not_installed',

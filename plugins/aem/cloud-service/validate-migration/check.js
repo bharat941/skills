@@ -35,7 +35,6 @@ const { execFileSync } = require('child_process');
 const { build } = require('./build.js');
 const { deploy } = require('./deploy.js');
 const { FAILURE_CLASSES } = require('./failure-classes.js');
-const mcp = require('./mcp-client.js');
 const { computeValidationPlan } = require('./plan.js');
 
 // Each pattern entry defines how to find its migrated class in a built jar
@@ -62,11 +61,12 @@ const PATTERNS = {
       }
       return { fqcn: (migrated || candidates[0]).fqcn };
     },
-    async verify({ sdkUrl, auth, bundleBSN, discovered }) {
+    async verify({ bundleBSN, discovered, args }) {
       const fqcn = discovered.fqcn;
 
       // 1. bundle + component state — both from the MCP diagnose-osgi-bundle tool
-      const diagnosis = await getBundleDiagnosis({ sdkUrl, auth, bundleBSN });
+      const diagnosis = await getBundleDiagnosis({ bundleBSN, args });
+      if (!diagnosis.available) return mcpUnavailableOutcome(bundleBSN);
       if (!diagnosis.found) {
         return { result: 'fail', failure_class: FAILURE_CLASSES.BUNDLE_NOT_INSTALLED, bundle_state: diagnosis.bundle_state, component_state: 'Unknown', evidence: `bundle ${bundleBSN} not found on SDK` };
       }
@@ -76,54 +76,31 @@ const PATTERNS = {
       const bundle_state = diagnosis.bundle_state;
 
       const compFromMcp = diagnosis.components.get(fqcn);
-      // Property values (scheduler.expression etc.) still come from Felix — the MCP
-      // report only exposes states, not properties. This is the documented gap.
-      const compJson = await getJson(`${sdkUrl}/system/console/components/${enc(fqcn)}.json`, auth).catch(() => null);
-      const comp = compJson && compJson.data && compJson.data[0];
-      if (!compFromMcp && !comp) {
-        return { result: 'fail', failure_class: FAILURE_CLASSES.COMPONENT_UNSATISFIED, bundle_state, component_state: 'Unknown', evidence: `component ${fqcn} not registered as OSGi DS` };
+      if (!compFromMcp) {
+        return { result: 'fail', failure_class: FAILURE_CLASSES.COMPONENT_UNSATISFIED, bundle_state, component_state: 'Unknown', evidence: `component ${fqcn} not present in MCP diagnose-osgi-bundle report` };
       }
-      const component_state = (compFromMcp && compFromMcp.state) || (comp && normalizeState(comp.state)) || 'Unknown';
-      const unsatisfied = comp ? (comp.unsatisfiedReferences || []).map((r) => r.name || r) : [];
+      const component_state = compFromMcp.state || 'Unknown';
 
       if (component_state !== 'Active') {
-        const failure_class = unsatisfied.length > 0 ? FAILURE_CLASSES.COMPONENT_UNSATISFIED : FAILURE_CLASSES.ACTIVATION_ERROR;
         return {
           result: 'fail',
-          failure_class,
+          failure_class: FAILURE_CLASSES.ACTIVATION_ERROR,
           bundle_state,
           component_state,
-          unsatisfied_references: unsatisfied,
-          activation_error: (comp && (comp.error || comp.activationException)) || null,
-          evidence: `component_state=${component_state}${unsatisfied.length ? ' refs=' + unsatisfied.join(',') : ''}`,
+          evidence: `component_state=${component_state}`,
         };
       }
 
-      // 3. Cloud Service contract on properties
-      const props = extractProps(comp || {});
-      const contract = {
-        has_expression: !!props['scheduler.expression'],
-        concurrent_boolean: props['scheduler.concurrent'] === 'false' || props['scheduler.concurrent'] === 'true' || props['scheduler.concurrent'] === false || props['scheduler.concurrent'] === true,
-        runOn_scoped: props['scheduler.runOn'] === 'SINGLE' || props['scheduler.runOn'] === 'LEADER',
-      };
-      const contractOk = contract.has_expression && contract.concurrent_boolean && contract.runOn_scoped;
-
-      if (!contractOk) {
-        return {
-          result: 'fail',
-          failure_class: FAILURE_CLASSES.CONTRACT_MISMATCH,
-          bundle_state,
-          component_state: 'Active',
-          checks: { ...contract, properties: props },
-          evidence: `contract mismatch: ${JSON.stringify(contract)}`,
-        };
-      }
-
+      // Contract properties (scheduler.expression, scheduler.runOn, etc.) are
+      // not exposed by diagnose-osgi-bundle today. Report as restricted so the
+      // agent knows the bundle+component check passed but the DS-property
+      // contract could not be verified. Track as an MCP feature request.
       return {
         result: 'pass',
         bundle_state,
         component_state: 'Active',
-        checks: { ...contract, properties: props },
+        restricted: true,
+        restricted_reason: 'scheduler DS properties not exposed by diagnose-osgi-bundle',
       };
     },
   },
@@ -140,45 +117,20 @@ const PATTERNS = {
       for (const [fname, xml] of jarDsDescriptors(jar)) {
         if (!/reference\s+[^>]*interface="org\.apache\.sling\.api\.resource\.ResourceResolverFactory"/.test(xml)) continue;
         const nm = xml.match(/<scr:component[^>]*name="([^"]+)"/) || xml.match(/name="([^"]+)"/);
-        if (nm) return { fqcn: nm[1] };
+        if (nm) return { fqcn: nm[1], manifestImportsLegacyDam: manifestImportsLegacyDam(jar) };
       }
-      return null;
+      return { fqcn: null, manifestImportsLegacyDam: manifestImportsLegacyDam(jar) };
     },
-    async verify({ sdkUrl, auth, bundleBSN, discovered }) {
+    async verify({ bundleBSN, discovered, args }) {
       // 1. bundle + component state from MCP diagnose-osgi-bundle
-      const diagnosis = await getBundleDiagnosis({ sdkUrl, auth, bundleBSN });
+      const diagnosis = await getBundleDiagnosis({ bundleBSN, args });
+      if (!diagnosis.available) return mcpUnavailableOutcome(bundleBSN);
       if (!diagnosis.found) return { result: 'fail', failure_class: FAILURE_CLASSES.BUNDLE_NOT_INSTALLED, bundle_state: diagnosis.bundle_state, component_state: 'Unknown', evidence: `bundle ${bundleBSN} not on SDK` };
       if (diagnosis.bundle_state !== 'Active') return { result: 'fail', failure_class: FAILURE_CLASSES.BUNDLE_NOT_ACTIVE, bundle_state: diagnosis.bundle_state, component_state: 'Unknown', evidence: `bundle state=${diagnosis.bundle_state}` };
 
-      // Manifest headers (Import-Package) aren't exposed by MCP — fetch bundle detail from Felix.
-      const bundleJson = await getJson(`${sdkUrl}/system/console/bundles/${enc(bundleBSN)}.json`, auth).catch(() => null);
-      const bundle = bundleJson && bundleJson.data && bundleJson.data[0];
-
-      // Legacy DAM API imports would show in Import-Package on the manifest.
-      // Felix's bundle detail includes the manifest headers.
-      const imports = String(bundle?.props?.find?.((p) => p?.key === 'Imported Packages')?.value || '');
-      const importsLegacyDam = /com\.day\.cq\.dam\.api\.AssetManager/.test(imports);
-
-      const compFromMcp = diagnosis.components.get(discovered.fqcn);
-      const compJson = await getJson(`${sdkUrl}/system/console/components/${enc(discovered.fqcn)}.json`, auth).catch(() => null);
-      const comp = compJson && compJson.data && compJson.data[0];
-      const compState = (compFromMcp && compFromMcp.state) || (comp && normalizeState(comp.state)) || 'Unknown';
-      const unsatisfied = comp ? (comp.unsatisfiedReferences || []).map((r) => r.name || r) : [];
-
-      if (!compFromMcp && !comp) return { result: 'fail', failure_class: FAILURE_CLASSES.COMPONENT_UNSATISFIED, bundle_state: 'Active', component_state: 'Unknown', evidence: `component ${discovered.fqcn} not registered as OSGi DS` };
-      // Satisfied is fine for a service-only component that nothing has activated yet.
-      if (compState !== 'Active' && compState !== 'Satisfied') {
-        return {
-          result: 'fail',
-          failure_class: unsatisfied.length ? FAILURE_CLASSES.COMPONENT_UNSATISFIED : FAILURE_CLASSES.ACTIVATION_ERROR,
-          bundle_state: 'Active', component_state: compState,
-          unsatisfied_references: unsatisfied,
-          activation_error: (comp && (comp.error || comp.activationException)) || null,
-          evidence: `component_state=${compState}`,
-        };
-      }
-
-      if (importsLegacyDam) {
+      // Manifest headers are read offline from the built artifact — not from
+      // the SDK — so this stays MCP-independent.
+      if (discovered.manifestImportsLegacyDam) {
         return {
           result: 'fail',
           failure_class: FAILURE_CLASSES.CONTRACT_MISMATCH,
@@ -187,7 +139,21 @@ const PATTERNS = {
         };
       }
 
-      return { result: 'pass', bundle_state: 'Active', component_state: 'Active', checks: { imports_legacy_dam: false } };
+      const compFromMcp = discovered.fqcn ? diagnosis.components.get(discovered.fqcn) : null;
+      if (discovered.fqcn && !compFromMcp) return { result: 'fail', failure_class: FAILURE_CLASSES.COMPONENT_UNSATISFIED, bundle_state: 'Active', component_state: 'Unknown', evidence: `component ${discovered.fqcn} not present in MCP diagnose-osgi-bundle report` };
+      const compState = (compFromMcp && compFromMcp.state) || 'Unknown';
+
+      // Satisfied is fine for a service-only component that nothing has activated yet.
+      if (compFromMcp && compState !== 'Active' && compState !== 'Satisfied') {
+        return {
+          result: 'fail',
+          failure_class: FAILURE_CLASSES.ACTIVATION_ERROR,
+          bundle_state: 'Active', component_state: compState,
+          evidence: `component_state=${compState}`,
+        };
+      }
+
+      return { result: 'pass', bundle_state: 'Active', component_state: compFromMcp ? compState : 'Active', checks: { imports_legacy_dam: false } };
     },
   },
 
@@ -204,41 +170,36 @@ const PATTERNS = {
       }
       return null;
     },
-    async verify({ sdkUrl, auth, bundleBSN, discovered }) {
+    async verify({ bundleBSN, discovered, args }) {
       // 1. bundle + component state from MCP diagnose-osgi-bundle
-      const diagnosis = await getBundleDiagnosis({ sdkUrl, auth, bundleBSN });
+      const diagnosis = await getBundleDiagnosis({ bundleBSN, args });
+      if (!diagnosis.available) return mcpUnavailableOutcome(bundleBSN);
       if (!diagnosis.found) return { result: 'fail', failure_class: FAILURE_CLASSES.BUNDLE_NOT_INSTALLED, bundle_state: diagnosis.bundle_state, component_state: 'Unknown', evidence: `bundle ${bundleBSN} not on SDK` };
       if (diagnosis.bundle_state !== 'Active') return { result: 'fail', failure_class: FAILURE_CLASSES.BUNDLE_NOT_ACTIVE, bundle_state: diagnosis.bundle_state, component_state: 'Unknown', evidence: `bundle state=${diagnosis.bundle_state}` };
 
       const compFromMcp = diagnosis.components.get(discovered.fqcn);
-      // Properties (job.topics) aren't in the MCP report — fall back to Felix for those.
-      const compJson = await getJson(`${sdkUrl}/system/console/components/${enc(discovered.fqcn)}.json`, auth).catch(() => null);
-      const comp = compJson && compJson.data && compJson.data[0];
-      if (!compFromMcp && !comp) return { result: 'fail', failure_class: FAILURE_CLASSES.COMPONENT_UNSATISFIED, bundle_state: 'Active', component_state: 'Unknown', evidence: `component ${discovered.fqcn} not registered as OSGi DS` };
-      const compState = (compFromMcp && compFromMcp.state) || (comp && normalizeState(comp.state)) || 'Unknown';
-      const unsatisfied = comp ? (comp.unsatisfiedReferences || []).map((r) => r.name || r) : [];
+      if (!compFromMcp) return { result: 'fail', failure_class: FAILURE_CLASSES.COMPONENT_UNSATISFIED, bundle_state: 'Active', component_state: 'Unknown', evidence: `component ${discovered.fqcn} not present in MCP diagnose-osgi-bundle report` };
+      const compState = compFromMcp.state || 'Unknown';
       if (compState !== 'Active') {
         return {
           result: 'fail',
-          failure_class: unsatisfied.length ? FAILURE_CLASSES.COMPONENT_UNSATISFIED : FAILURE_CLASSES.ACTIVATION_ERROR,
+          failure_class: FAILURE_CLASSES.ACTIVATION_ERROR,
           bundle_state: 'Active', component_state: compState,
-          unsatisfied_references: unsatisfied,
-          activation_error: (comp && (comp.error || comp.activationException)) || null,
           evidence: `component_state=${compState}`,
         };
       }
 
-      const props = extractProps(comp);
-      const topic = props['job.topics'];
-      if (!topic) {
+      // job.topics is read at discovery time from the built DS descriptor
+      // (offline), so no Felix property lookup is needed.
+      if (!discovered.topic) {
         return {
           result: 'fail',
           failure_class: FAILURE_CLASSES.CONTRACT_MISMATCH,
           bundle_state: 'Active', component_state: 'Active',
-          evidence: 'JobConsumer contract missing job.topics property',
+          evidence: 'JobConsumer contract missing job.topics property in DS descriptor',
         };
       }
-      return { result: 'pass', bundle_state: 'Active', component_state: 'Active', checks: { topic } };
+      return { result: 'pass', bundle_state: 'Active', component_state: 'Active', checks: { topic: discovered.topic } };
     },
   },
 
@@ -247,16 +208,19 @@ const PATTERNS = {
     discover: (jar, args) => {
       // Discovery on manifest: bundle imports org.apache.sling.distribution
       // (migrated) and NOT com.day.cq.replication (legacy). Class detection
-      // is optional; we can verify at the bundle level.
+      // is optional; we verify at the bundle level.
       if (args && args.fqcn) return { fqcn: args.fqcn };
       const manifest = readJarManifest(jar);
       const importsDistribution = /Import-Package:[\s\S]*org\.apache\.sling\.distribution/.test(manifest);
       const importsLegacy = /Import-Package:[\s\S]*com\.day\.cq\.replication/.test(manifest);
       return { importsDistribution, importsLegacy, fqcn: null };
     },
-    async verify({ sdkUrl, auth, bundleBSN, discovered }) {
-      // Bundle state via MCP; manifest headers + services list only exist on Felix.
-      const diagnosis = await getBundleDiagnosis({ sdkUrl, auth, bundleBSN });
+    async verify({ bundleBSN, discovered, args }) {
+      // Bundle state via MCP. Manifest headers are inspected offline from the
+      // built artifact (see discover); the Distributor service list is not
+      // exposed by diagnose-osgi-bundle today — tracked as a restricted check.
+      const diagnosis = await getBundleDiagnosis({ bundleBSN, args });
+      if (!diagnosis.available) return mcpUnavailableOutcome(bundleBSN);
       if (!diagnosis.found) return { result: 'fail', failure_class: FAILURE_CLASSES.BUNDLE_NOT_INSTALLED, bundle_state: diagnosis.bundle_state, component_state: 'Unknown', evidence: `bundle ${bundleBSN} not on SDK` };
       if (diagnosis.bundle_state !== 'Active') return { result: 'fail', failure_class: FAILURE_CLASSES.BUNDLE_NOT_ACTIVE, bundle_state: diagnosis.bundle_state, component_state: 'Unknown', evidence: `bundle state=${diagnosis.bundle_state}` };
 
@@ -277,21 +241,13 @@ const PATTERNS = {
         };
       }
 
-      // Confirm Distributor is available on the SDK (comes from AEM SDK itself,
-      // not the customer bundle — but if missing, the migrated code can't run).
-      const services = await getJson(`${sdkUrl}/system/console/services.json`, auth).catch(() => null);
-      const list = services?.data || [];
-      const hasDistributor = list.some((s) => /org\.apache\.sling\.distribution\.Distributor/.test(String(s.types || s.interfaces || '')));
-      if (!hasDistributor) {
-        return {
-          result: 'fail',
-          failure_class: FAILURE_CLASSES.CONTRACT_MISMATCH,
-          bundle_state: 'Active', component_state: 'Active',
-          evidence: 'org.apache.sling.distribution.Distributor service not present on SDK',
-        };
-      }
-
-      return { result: 'pass', bundle_state: 'Active', component_state: 'Active', checks: { imports_distribution: true, imports_legacy: false, distributor_present: true } };
+      return {
+        result: 'pass',
+        bundle_state: 'Active', component_state: 'Active',
+        restricted: true,
+        restricted_reason: 'Distributor service registration not exposed by diagnose-osgi-bundle',
+        checks: { imports_distribution: true, imports_legacy: false },
+      };
     },
   },
 
@@ -348,20 +304,43 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.pattern && !PATTERNS[args.pattern]) fatal(`unknown pattern: ${args.pattern}\nsupported: ${Object.keys(PATTERNS).join(', ')}`);
 
+  const stage = args.stage || 'all'; // 'prepare' | 'verify' | 'all'
+  if (!['prepare', 'verify', 'all'].includes(stage)) {
+    fatal(`unknown --stage: ${stage}. Use one of: prepare, verify, all.`);
+  }
+
   const setup = readSdkCreds(args);
   const context = readContext();
 
-  // Auto-resolve project-id from analyze context if not given. --finding is
-  // accepted for backward-compat but no longer required (Option C outcome
-  // schema uses run_id as parent identity; per-class detail lives in classes[]).
-  if (!args['project-id']) {
-    if (context.projectId) { args['project-id'] = context.projectId; console.log(`(auto) project-id = ${args['project-id']}`); }
-    else fatal('--project-id not provided and no projectId in .validate-migration/context.json — run analyze first, or pass --project-id <id>');
+  // Local validation does not require a CAM project-id. When one is available
+  // (either --project-id or auto-loaded from .validate-migration/context.json),
+  // we emit the report-rv-outcome payload; otherwise we skip that reporting
+  // step and just print the local outcome.
+  if (!args['project-id'] && context.projectId) {
+    args['project-id'] = context.projectId;
+    console.log(`(auto) project-id = ${args['project-id']}`);
   }
 
-  // Resolve tasks: either the pattern the caller pinned, or an auto-detected
-  // set from diffing the branch against main (plan.js) — "run validate-migration on this branch".
   const cwd = args.project || process.cwd();
+  const statePath = path.join(cwd, '.validate-migration', 'state.json');
+
+  // ---- stage: verify (consume persisted state + agent-supplied MCP diagnosis) ----
+  if (stage === 'verify') {
+    if (!fs.existsSync(statePath)) {
+      fatal(`no ${path.relative(cwd, statePath)} found. Run --stage prepare first.`);
+    }
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    RUN_STARTED_AT = state.started_at || RUN_STARTED_AT;
+    const records = [];
+    for (const t of state.prepared) {
+      records.push(await verifyPreparedTask(t, args));
+    }
+    return finishAll(records, args);
+  }
+
+  // ---- stage: prepare | all ----
+  // Resolve tasks: either the pattern the caller pinned, or an auto-detected
+  // set from diffing the branch against main (plan.js).
   let tasks;
   if (args.pattern) {
     if (!args.project && !args.jar) {
@@ -391,22 +370,48 @@ async function main() {
     fatal('no running SDK found on ports 4502 / 4602 / 4503. Start your local Cloud SDK, or set RV_SDK_URL / pass --sdk <url>.');
   }
   const { user, password } = validateCreds(setup, sdkUrl);
-  const auth = 'Basic ' + Buffer.from(`${user}:${password}`).toString('base64');
 
-  const records = [];
+  const prepared = [];
   for (const task of tasks) {
-    records.push(await runTask(task, { sdkUrl, user, password, auth }));
+    const p = await prepareTask(task, { sdkUrl, user, password });
+    prepared.push(p);
   }
 
+  // Persist prepared state so `--stage verify` (potentially re-invoked after
+  // the agent gathers MCP diagnosis) doesn't have to rebuild + redeploy.
+  fs.mkdirSync(path.dirname(statePath), { recursive: true });
+  fs.writeFileSync(statePath, JSON.stringify({ started_at: RUN_STARTED_AT, prepared }, null, 2));
+
+  if (stage === 'prepare') {
+    console.log(`\n[validate-migration] prepare complete. ${prepared.length} task(s) staged.`);
+    const bsns = [...new Set(prepared.map((p) => p.symbolicName).filter(Boolean))];
+    if (bsns.length) {
+      console.log('Have the coding assistant call the AEM Quickstart MCP tool `diagnose-osgi-bundle` for each of these bundles:');
+      for (const b of bsns) console.log(`  - ${b}`);
+      console.log(`then write the raw tool outputs to ${path.relative(cwd, path.join(cwd, '.validate-migration', 'diagnosis-map.json'))} as a { "<BSN>": "<raw text>" } map,`);
+      console.log('and finally re-run:  node ../../validate-migration/check.js --stage verify');
+    }
+    process.exit(0);
+  }
+
+  // stage === 'all': continue straight into verify. Give DS a moment to
+  // settle after deploy so component activation is observable.
+  if (prepared.some((p) => p.mode === 'bundle-runtime' && !p.failure)) {
+    await sleep(3000);
+  }
+  const records = [];
+  for (const t of prepared) {
+    records.push(await verifyPreparedTask(t, args));
+  }
   return finishAll(records, args);
 }
 
-// Runs the build → discover → (source verify | deploy + runtime verify)
-// pipeline for one { module, jar, pattern } task and returns a flat per-class
-// outcome record. Never throws — failures come back as `result: 'fail'`.
-async function runTask(task, { sdkUrl, user, password, auth }) {
+// prepareTask: build → discover → (source-only verify | deploy). Returns a
+// serializable record persisted to .validate-migration/state.json and later
+// consumed by verifyPreparedTask.
+async function prepareTask(task, { sdkUrl, user, password }) {
   const pat = PATTERNS[task.pattern];
-  console.log(`\n=== validate-migration check · ${task.pattern} ===`);
+  console.log(`\n=== validate-migration prepare · ${task.pattern} ===`);
   console.log(task.jar ? `jar    : ${task.jar}` : `project: ${task.module}`);
   if (pat.mode !== 'source-only') console.log(`sdk    : ${sdkUrl}`);
   console.log(`pattern: ${pat.describe}\n`);
@@ -414,13 +419,19 @@ async function runTask(task, { sdkUrl, user, password, auth }) {
   // 1. build (unless a pre-built jar was supplied)
   let artifactPath;
   if (task.jar) {
-    if (!fs.existsSync(task.jar)) return { pattern: task.pattern, result: 'fail', failure_class: FAILURE_CLASSES.INPUT_JAR_MISSING, verification_level: 'source-only', evidence: `no file at ${task.jar}` };
+    if (!fs.existsSync(task.jar)) {
+      return { pattern: task.pattern, module: task.module, jar: task.jar,
+        failure: { result: 'fail', failure_class: FAILURE_CLASSES.INPUT_JAR_MISSING, verification_level: 'source-only', evidence: `no file at ${task.jar}` } };
+    }
     artifactPath = task.jar;
     console.log(`▸ skip build (using --jar)\n  ok (${path.basename(artifactPath)})\n`);
   } else {
     step('build customer project');
     const b = build({ projectDir: task.module });
-    if (!b.ok) return { pattern: task.pattern, result: 'fail', failure_class: FAILURE_CLASSES.BUILD_FAILED, verification_level: 'source-only', evidence: b.log };
+    if (!b.ok) {
+      return { pattern: task.pattern, module: task.module,
+        failure: { result: 'fail', failure_class: FAILURE_CLASSES.BUILD_FAILED, verification_level: 'source-only', evidence: b.log } };
+    }
     artifactPath = b.artifactPath;
     console.log(`  ok (${path.basename(artifactPath)}, ${b.elapsedMs}ms)\n`);
   }
@@ -429,42 +440,54 @@ async function runTask(task, { sdkUrl, user, password, auth }) {
   step('discover migrated class');
   const discovered = pat.discover(artifactPath, task);
   if (!discovered) {
-    return { pattern: task.pattern, result: 'fail', failure_class: FAILURE_CLASSES.DISCOVERY_NO_MATCH, verification_level: 'source-only',
-      evidence: `no DS component in ${artifactPath} matches the ${task.pattern} signature` };
+    return { pattern: task.pattern, module: task.module, artifactPath,
+      failure: { result: 'fail', failure_class: FAILURE_CLASSES.DISCOVERY_NO_MATCH, verification_level: 'source-only', evidence: `no DS component in ${artifactPath} matches the ${task.pattern} signature` } };
   }
   console.log(`  ok → ${JSON.stringify(discovered)}\n`);
 
-  // Source-only patterns (e.g. legacy-ui): skip deploy + runtime — verify
-  // straight off the built artifact.
+  // Source-only patterns: no deploy; verify runs off the artifact only.
   if (pat.mode === 'source-only') {
-    step('source verify');
-    const outcome = await pat.verify({ artifactPath, discovered });
-    console.log(`  ${outcome.result === 'pass' ? 'ok' : 'FAIL'}${outcome.evidence ? ' — ' + outcome.evidence : ''}\n`);
-    return { pattern: task.pattern, ...outcome, verification_level: 'source-only', discovered };
+    return { pattern: task.pattern, module: task.module, artifactPath, discovered, mode: 'source-only' };
   }
 
-  // 3. deploy the customer bundle (— anything from here on touched the SDK, so verification_level = runtime)
+  // 3. deploy the customer bundle
   step('deploy customer bundle');
   const d = await deploy({ projectDir: task.module, artifactPath, sdkUrl, user, password });
   if (!d.ok) {
-    // Deploy only confirms the install call, not runtime state — leave state Unknown.
-    const bundle = d.symbolicName ? { symbolic_name: d.symbolicName, state: normalizeBundleState() } : null;
-    return { pattern: task.pattern, result: 'fail', failure_class: FAILURE_CLASSES.DEPLOY_FAILED, verification_level: 'runtime', evidence: d.log, ...(bundle ? { bundle } : {}) };
+    return { pattern: task.pattern, module: task.module, artifactPath, discovered, mode: 'bundle-runtime',
+      symbolicName: d.symbolicName || null,
+      failure: { result: 'fail', failure_class: FAILURE_CLASSES.DEPLOY_FAILED, verification_level: 'runtime', evidence: d.log,
+        ...(d.symbolicName ? { bundle: { symbolic_name: d.symbolicName, state: normalizeBundleState() } } : {}) } };
   }
   console.log(`  ok (bundle ${d.symbolicName}${d.mode ? ' via ' + d.mode : ''})\n`);
-  await sleep(3000); // let DS settle
+  return { pattern: task.pattern, module: task.module, artifactPath, discovered, mode: 'bundle-runtime', symbolicName: d.symbolicName, deployMode: d.mode };
+}
 
-  // 4. runtime verify (bundle_state + component_state + contract)
-  step('runtime verify');
-  const outcome = await pat.verify({ sdkUrl, auth, bundleBSN: d.symbolicName, discovered });
+// verifyPreparedTask: source-only patterns verify off the artifact; runtime
+// patterns require the agent-supplied MCP diagnosis-map.
+async function verifyPreparedTask(prepared, args) {
+  if (prepared.failure) {
+    return { pattern: prepared.pattern, ...prepared.failure, discovered: prepared.discovered };
+  }
+  const pat = PATTERNS[prepared.pattern];
+
+  if (prepared.mode === 'source-only') {
+    step(`source verify · ${prepared.pattern}`);
+    const outcome = await pat.verify({ artifactPath: prepared.artifactPath, discovered: prepared.discovered });
+    console.log(`  ${outcome.result === 'pass' ? 'ok' : 'FAIL'}${outcome.evidence ? ' — ' + outcome.evidence : ''}\n`);
+    return { pattern: prepared.pattern, ...outcome, verification_level: 'source-only', discovered: prepared.discovered };
+  }
+
+  step(`runtime verify · ${prepared.pattern}`);
+  const outcome = await pat.verify({ bundleBSN: prepared.symbolicName, discovered: prepared.discovered, args });
   console.log(`  ${outcome.result === 'pass' ? 'ok' : 'FAIL'} — bundle=${outcome.bundle_state} component=${outcome.component_state}${outcome.evidence ? '  ' + outcome.evidence : ''}\n`);
 
   return {
-    pattern: task.pattern,
+    pattern: prepared.pattern,
     ...outcome,
     verification_level: 'runtime',
-    discovered,
-    bundle: { symbolic_name: d.symbolicName, state: normalizeBundleState(outcome.bundle_state) },
+    discovered: prepared.discovered,
+    bundle: { symbolic_name: prepared.symbolicName, state: normalizeBundleState(outcome.bundle_state) },
   };
 }
 
@@ -488,67 +511,79 @@ function readJarManifest(jarPath) {
   } catch { return ''; }
 }
 
-async function getJson(url, auth) {
-  const res = await fetch(url, { headers: { Authorization: auth } });
-  if (!res.ok) throw new Error(`GET ${url} -> ${res.status}`);
-  return res.json();
+// Offline check for the legacy DAM API import, read from the built artifact's
+// manifest. Used by the asset-manager pattern in place of a Felix bundle
+// detail lookup.
+function manifestImportsLegacyDam(jarPath) {
+  const manifest = readJarManifest(jarPath);
+  const importLine = (manifest.match(/Import-Package:\s*([^\n]*)/) || [])[1] || '';
+  return /com\.day\.cq\.dam\.api\.AssetManager/.test(importLine);
 }
 
-// ---- MCP-based diagnosis (AEM Quickstart MCP server, /bin/mcp) ----
-// Lazily initialized once per validate-migration check run; null means the MCP server isn't
-// reachable or doesn't ship the bundle-diagnostic tool, so callers fall back
-// to the Felix bundles.json / components.json endpoints for what MCP doesn't
-// expose (component properties, manifest headers, service registrations).
-let mcpCtx; // undefined = not yet attempted, null = attempted and unavailable
-const diagnosisCache = new Map(); // BSN -> parsed diagnosis, per validate-migration check run
+// ---- MCP-based diagnosis (AEM Quickstart MCP server, diagnose-osgi-bundle) ----
+// The skill (agent) invokes the `diagnose-osgi-bundle` MCP tool on the
+// agent-configured AEM Quickstart MCP server and writes a JSON map
+//     { "<Bundle-SymbolicName>": "<raw tool text output>" }
+// to `.validate-migration/diagnosis-map.json` (or a path passed via
+// `--diagnosis-map <file>`). This script does not speak MCP itself — that is
+// the coding-assistant's job.
+//
+// When a BSN is not in the map, verification for that task fails with
+// `setup.mcp_unavailable` and the outcome carries setup guidance. There is no
+// silent Felix Web Console fallback.
+let diagnosisMap; // undefined = not yet loaded, {} = loaded (may be empty)
+const diagnosisCache = new Map(); // BSN -> parsed diagnosis, per run
 
-async function getMcpContext(sdkUrl, auth) {
-  if (mcpCtx !== undefined) return mcpCtx;
-  try {
-    const sessionId = await mcp.initSession(sdkUrl, auth);
-    const tools = await mcp.listTools(sdkUrl, auth, sessionId);
-    const tool = mcp.findBundleDiagnosticTool(tools);
-    mcpCtx = tool ? { sessionId, tool } : null;
-  } catch {
-    mcpCtx = null;
+function loadDiagnosisMap(args) {
+  if (diagnosisMap !== undefined) return diagnosisMap;
+  const explicit = args && args['diagnosis-map'];
+  const candidates = [
+    explicit,
+    path.join(process.cwd(), '.validate-migration', 'diagnosis-map.json'),
+  ].filter(Boolean);
+  for (const p of candidates) {
+    if (!fs.existsSync(p)) continue;
+    try {
+      const parsed = JSON.parse(fs.readFileSync(p, 'utf8'));
+      if (parsed && typeof parsed === 'object') { diagnosisMap = parsed; return diagnosisMap; }
+    } catch { /* try next */ }
   }
-  return mcpCtx;
+  diagnosisMap = {};
+  return diagnosisMap;
 }
 
-// Returns { bundle_state, found, components: Map<fqcn, {state}>, source }.
-// `source` is 'mcp' or 'felix' so callers can decide when to fall back for
-// signals MCP doesn't expose.
-async function getBundleDiagnosis({ sdkUrl, auth, bundleBSN }) {
+// Returns { bundle_state, found, components: Map<fqcn, {state}>, source, available }.
+// `available: false` means the agent has not supplied MCP diagnosis for this
+// BSN — callers must fail with SETUP_MCP_UNAVAILABLE + setup guidance.
+async function getBundleDiagnosis({ bundleBSN, args }) {
   if (diagnosisCache.has(bundleBSN)) return diagnosisCache.get(bundleBSN);
-
-  const ctx = await getMcpContext(sdkUrl, auth);
-  if (ctx) {
-    const report = await mcp.callTool(sdkUrl, auth, ctx.sessionId, ctx.tool.name, { bundleSymbolicName: bundleBSN }).catch(() => null);
-    if (report) {
-      const parsed = parseBundleDiagnosticReport(report);
-      parsed.source = 'mcp';
-      diagnosisCache.set(bundleBSN, parsed);
-      return parsed;
-    }
+  const map = loadDiagnosisMap(args);
+  const raw = map[bundleBSN];
+  if (raw == null) {
+    const missing = { available: false };
+    diagnosisCache.set(bundleBSN, missing);
+    return missing;
   }
-
-  // Felix fallback: bundle state + a shallow component map.
-  const bundleJson = await getJson(`${sdkUrl}/system/console/bundles/${enc(bundleBSN)}.json`, auth).catch(() => null);
-  const bundle = bundleJson && bundleJson.data && bundleJson.data[0];
-  const fallback = {
-    bundle_state: bundle ? normalizeState(bundle.state) : 'Unknown',
-    found: !!bundle,
-    components: new Map(),
-    source: 'felix',
-  };
-  diagnosisCache.set(bundleBSN, fallback);
-  return fallback;
+  const text = typeof raw === 'string' ? raw : JSON.stringify(raw);
+  const parsed = parseBundleDiagnosticReport(text);
+  parsed.available = true;
+  parsed.source = 'mcp';
+  diagnosisCache.set(bundleBSN, parsed);
+  return parsed;
 }
 
-// Back-compat wrapper: existing sites that only needed bundle-level state.
-async function checkBundleState(args) {
-  const d = await getBundleDiagnosis(args);
-  return { bundle_state: d.bundle_state, found: d.found };
+function mcpUnavailableOutcome(bundleBSN) {
+  return {
+    result: 'fail',
+    failure_class: FAILURE_CLASSES.SETUP_MCP_UNAVAILABLE,
+    bundle_state: 'Unknown',
+    component_state: 'Unknown',
+    evidence: `no MCP diagnose-osgi-bundle output for ${bundleBSN}. `
+      + `Have the coding assistant call the AEM Quickstart MCP tool `
+      + `\`diagnose-osgi-bundle\` for this bundle and write the raw text output `
+      + `into .validate-migration/diagnosis-map.json as { "${bundleBSN}": "..." }, `
+      + `then re-run \`node ../../validate-migration/check.js --stage verify\`.`,
+  };
 }
 
 // The diagnostic tool returns free text, not JSON. Unrecognized shapes map to
@@ -567,8 +602,8 @@ function parseBundleDiagnosticReport(text) {
 }
 
 // Parses the `--- Declarative Services Components ---` section of the report
-// into a Map<fqcn, {state}>. Only states are exposed; component properties are
-// still Felix-only (the MCP tool doesn't emit them today).
+// into a Map<fqcn, {state}>. Only states are exposed today; component
+// properties are a documented MCP gap (tracked upstream).
 function parseComponentsFromReport(text) {
   const out = new Map();
   const start = text.indexOf('Declarative Services Components');
@@ -586,27 +621,6 @@ function normalizeState(s) {
   if (!s) return 'Unknown';
   const lc = String(s).toLowerCase();
   return lc.charAt(0).toUpperCase() + lc.slice(1);
-}
-
-const enc = encodeURIComponent;
-
-function capitalize(s) { return s ? s[0].toUpperCase() + s.slice(1) : s; }
-
-// Felix components.json returns props as [{key, value}, ...] with a nested
-// "Properties" entry whose value is an array of "k = v" strings — that's where
-// the OSGi DS component properties actually live.
-function extractProps(component) {
-  const props = component.props || component.properties || [];
-  const propsEntry = Array.isArray(props) ? props.find((p) => p && p.key === 'Properties') : null;
-  const rawList = propsEntry && Array.isArray(propsEntry.value) ? propsEntry.value : [];
-  const out = {};
-  for (const line of rawList) {
-    if (typeof line !== 'string') continue;
-    const eq = line.indexOf(' = ');
-    if (eq < 0) continue;
-    out[line.slice(0, eq).trim()] = line.slice(eq + 3).trim();
-  }
-  return out;
 }
 
 function step(name) { console.log(`▸ ${name}`); }
@@ -628,9 +642,10 @@ function finishAll(records, args) {
   console.log('=== outcome ===');
   console.log(JSON.stringify(record, null, 2));
 
-  // Emit the MCP payload as a delimited block. The calling agent (skill) reads
-  // this block and invokes the `report-rv-outcome` MCP tool with it — validate-migration check
-  // does not speak MCP itself.
+  // Emit the report-rv-outcome payload only when a CAM project-id is available.
+  // Local validation does not require CAM integration — outcome reporting is
+  // optional. The agent reads this delimited block, if present, and invokes
+  // the `report-rv-outcome` MCP tool with it.
   if (args && args['project-id']) {
     const payload = buildMcpPayload(record, args);
     console.log('\n=== report-rv-outcome payload ===');
@@ -688,7 +703,7 @@ function validateCreds({ user, password }, sdkUrl) {
 // ---- context.json (written by the analyze / migration skill) ----
 // Shape: { projectId: string, pendingFindings: [{ id, pattern }] }
 function readContext() {
-  const ctxPath = path.join(process.cwd(), '.rv', 'context.json');
+  const ctxPath = path.join(process.cwd(), '.validate-migration', 'context.json');
   if (!fs.existsSync(ctxPath)) return {};
   try { return JSON.parse(fs.readFileSync(ctxPath, 'utf8')); } catch { return {}; }
 }

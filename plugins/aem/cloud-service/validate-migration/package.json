@@ -6,9 +6,5 @@
   "description": "validate-migration — deploy migrated AEM Cloud Service bundles to a local SDK and confirm they run",
   "engines": {
     "node": ">=18.0.0"
-  },
-  "bin": {
-    "validate-migration-init": "./init.js",
-    "validate-migration-check": "./check.js"
   }
 }

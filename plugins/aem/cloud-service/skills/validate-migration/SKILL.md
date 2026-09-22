@@ -45,62 +45,88 @@ satisfies the Cloud Service contract."
 
 ## The customer contract
 
-Two CLI commands, exposed via `npm link` (or by adding
-`plugins/aem/cloud-service/validate-migration/` to `PATH`). The skill drives
-them; the customer never types either directly.
+Two Node scripts invoked via plugin-relative paths from the customer's project
+root. The skill drives them; the customer never types either directly.
 
 ```bash
-validate-migration-init            # readiness check: mvn/unzip, SDK reachable, MCP tools registered
-validate-migration-check           # from project root: auto-diff mode
-validate-migration-check <pattern> # optional: run one pattern manually
+# Local readiness check (mvn, unzip, SDK reachable). Idempotent.
+node ../../validate-migration/init.js
+
+# Two-stage validation flow. See "The flow the skill runs" below.
+node ../../validate-migration/check.js --stage prepare     # build + deploy, list BSNs
+node ../../validate-migration/check.js --stage verify      # consume MCP diagnosis, emit outcome
+
+# Manual override: run a single pattern instead of auto-diffing the branch.
+node ../../validate-migration/check.js --pattern <name>
 ```
+
+Paths are relative to the SKILL.md location
+(`plugins/aem/cloud-service/skills/validate-migration/`). No `npm link`, no
+global bin — the scripts run in place.
 
 ## The flow the skill runs
 
-1. **Readiness.** Run `validate-migration-init` once per environment. It
-   verifies `mvn` + `unzip` on `PATH`, that an SDK is reachable on ports 4502 /
-   4602 / 4503 (auto-discovered), and that the AEM Quickstart MCP content
-   package is installed (`diagnose-osgi-bundle` tool appears in `tools/list`).
-   No SDK boot — the customer starts their SDK however they normally do. No
-   credentials or state on disk.
+1. **Readiness.** Run `node ../../validate-migration/init.js` once per
+   environment. It verifies `mvn` + `unzip` on `PATH` and that an SDK is
+   reachable on `RV_SDK_URL` (default `http://localhost:4502`). It does not
+   speak MCP — the coding assistant is expected to already have the AEM
+   Quickstart MCP server configured (see Adobe MCP setup link at the bottom).
+   No SDK boot. No credentials or state on disk.
 
-2. **Plan.** Run `validate-migration-check` from the customer's project root.
-   It calls `plan.js` internally to diff `HEAD` against `origin/main` (fallback
-   `main`), classify each changed file into a supported pattern, and group hits
-   by Maven module. `--pattern <name>` overrides for manual runs.
+2. **Prepare (build + deploy).** From the customer's project root:
+   `node ../../validate-migration/check.js --stage prepare`. It calls
+   `plan.js` internally to diff against `origin/main` (fallback `main`),
+   including committed, staged, unstaged, and untracked changes — so runs
+   immediately after the `migration` skill (which edits without committing)
+   still detect the pending work. Each detected task is built with `mvn` and
+   deployed via the customer's own `-PautoInstallBundle` /
+   `-PautoInstallPackage` profile (fallback: `sling-maven-plugin:install-file`).
+   Prepare writes `<project>/.validate-migration/state.json` and prints the
+   Bundle-SymbolicNames the agent must diagnose next.
 
-3. **Per-pattern pipeline** (`check.js` `runTask`):
-    - **Build** — `mvn -q -B -DskipTests clean package` on the module.
-    - **Discover** — auto-locate the migrated class from the built jar's OSGi
-      DS descriptors, preferring signals that only appear post-migration (e.g.
-      `scheduler.runOn`).
-    - **Deploy** — prefer the customer's own `-PautoInstallBundle` (archetype
-      standard). Auto-fall-back to `sling-maven-plugin:install-file` if the
-      profile install fails. Never Felix multipart POST.
-    - **Verify** — bundle + component state from the MCP `diagnose-osgi-bundle`
-      tool (per-run cache, one call per BSN). Pattern-specific contract
-      properties (`scheduler.expression`, `scheduler.runOn`, `job.topics`,
-      `Import-Package` headers, Distributor service) come from the Felix Web
-      Console only for signals the MCP tool doesn't expose today — a
-      documented gap.
+3. **Diagnose (agent-driven MCP).** For each BSN emitted by prepare, invoke
+   the `diagnose-osgi-bundle` tool on the agent-configured AEM Quickstart MCP
+   server. Concatenate the raw text output per bundle into a JSON map:
+   ```json
+   {
+     "com.customer.core": "<full text output of diagnose-osgi-bundle for that BSN>",
+     "com.customer.ui.apps": "<...>"
+   }
+   ```
+   Write it to `<project>/.validate-migration/diagnosis-map.json`. If the MCP
+   tool is not available, stop with setup guidance — do not proceed.
 
-4. **Aggregate outcome.** All patterns' outcomes merge into a single record
-   with one `run_id`, one `classes[]` array (per-class detail), and one
-   `report-rv-outcome` payload block on stdout.
+4. **Verify.** Run `node ../../validate-migration/check.js --stage verify`.
+   The script reads `state.json` + `diagnosis-map.json`, evaluates the
+   bundle-runtime contract (bundle Active, component Active, plus offline
+   manifest / DS-descriptor checks read from the built artifact), and emits
+   one aggregated outcome. Any BSN missing from the map is reported with
+   `failure_class: setup.mcp_unavailable` and setup guidance. Contract signals
+   the MCP tool does not expose today (e.g. component DS properties like
+   `scheduler.expression` / `scheduler.runOn`, Distributor service list) are
+   reported as `restricted: true` on an otherwise-passing outcome — tracked
+   upstream as MCP feature requests, never patched around with direct Felix
+   Web Console calls.
 
-5. **Call the `report-rv-outcome` MCP tool** with the payload block, once, on
-   the final attempt. Same MCP session used for `fetch-cam-bpa-findings-*`.
-   `validate-migration-check` does not speak MCP itself for outcome reporting;
-   **you (the agent) do**.
+5. **Report outcome (optional).** If a CAM `project-id` is available — passed
+   as `--project-id <id>` or picked up from
+   `<project>/.validate-migration/context.json` written by the analyze /
+   migration skill — verify prints a delimited `report-rv-outcome` payload
+   block. Invoke the `report-rv-outcome` MCP tool with that payload once. If
+   no project-id is configured, skip this step — local validation does not
+   require CAM integration.
 
-6. **Retry policy.** Wait 5s and retry once on transient classes only:
-   `sdk.unreachable`, `deploy.failed` (only if the log ends in "timeout").
-   Never retry runtime contract failures (`runtime.bundle_not_active`,
-   `runtime.component_unsatisfied`, `runtime.activation_error`,
-   `runtime.contract_mismatch`, `source.contract_mismatch`, `tests.failed`,
-   `input.jar_missing`, `discovery.no_pattern_match`) — the deploy is stable,
-   the code needs a real fix. Hand back to the `migration` skill with the
-   structured evidence.
+6. **Retry policy.** Wait 5s and retry only transient classes on the failed
+   task: `sdk.unreachable`, or `deploy.failed` whose evidence ends in
+   "timeout". Never retry runtime contract failures
+   (`runtime.bundle_not_active`, `runtime.component_unsatisfied`,
+   `runtime.activation_error`, `runtime.contract_mismatch`,
+   `source.contract_mismatch`, `tests.failed`, `input.jar_missing`,
+   `discovery.no_pattern_match`) — the deploy is stable, the code needs a
+   real fix. Hand back to the `migration` skill with the structured evidence.
+
+   `setup.mcp_unavailable` is a setup problem, not a code problem — stop and
+   surface the setup guidance to the user; do not silently retry.
 
 ## What to show the user on success
 
@@ -154,8 +180,8 @@ Fields to pull from each `classes[i]` (never paste raw):
   `plugins/aem/cloud-service/validate-migration/failure-classes.js`.
 - **Never boot the SDK.** Rely on the customer's normal SDK workflow. `init`
   only checks readiness.
-- **Never store credentials.** No `~/.rv/setup.json`, no `~/.validate-migration/`
-  — nothing persistent in the user's HOME.
+- **Never store credentials.** No `~/.validate-migration/` — nothing
+  persistent in the user's HOME.
 - **Never bypass the Maven profile check.** Customer projects have their own
   install plugin config; delegate to it.
 
@@ -166,26 +192,35 @@ Fields to pull from each `classes[i]` (never paste raw):
 | `RV_SDK_URL` | `--sdk <url>` | auto-discover on 4502 / 4602 / 4503 |
 | `RV_SDK_USER` | `--user <name>` | `admin` — refused on non-localhost |
 | `RV_SDK_PASS` | `--password <pw>` | `admin` — refused on non-localhost |
+| — | `--project-id <id>` | picked up from `.validate-migration/context.json`; optional |
+| — | `--diagnosis-map <file>` | default `<project>/.validate-migration/diagnosis-map.json` |
+| — | `--stage prepare\|verify\|all` | `all` |
 
 ## Supported patterns today
 
 Five patterns are wired in `check.js`. All share the same CLI shape
-(`validate-migration-check <pattern>`) and the same MCP payload — only the
-per-pattern discover + verify functions differ.
+(`node ../../validate-migration/check.js --pattern <name>`) and the same MCP
+payload — only the per-pattern discover + verify functions differ.
 
 **bundle-runtime** (`mode: bundle-runtime`) — build → deploy → check
-bundle_state + component_state on the SDK:
+bundle_state + component_state via MCP `diagnose-osgi-bundle`:
 
-- **scheduler** — Sling Scheduler Cloud Service contract:
-  `scheduler.expression`, `scheduler.concurrent:Boolean`,
-  `scheduler.runOn ∈ {SINGLE, LEADER}` on the migrated DS component.
-- **asset-manager** — `AssetManager → ResourceResolver`. Bundle must be Active,
-  component Active, and manifest must not import `com.day.cq.dam.api.AssetManager`.
-- **event-migration** — `OSGi EventHandler → Sling JobConsumer`. Bundle Active,
-  JobConsumer component Active, and its `job.topics` property present.
-- **replication** — `CQ Replicator / Sling Replicator → Sling Distribution API`.
-  Bundle Active, manifest imports `org.apache.sling.distribution` and not
-  `com.day.cq.replication`, and the `Distributor` service is present on the SDK.
+- **scheduler** — Sling Scheduler Cloud Service contract. Verifies bundle
+  Active + component Active via MCP. DS-property checks
+  (`scheduler.expression`, `scheduler.concurrent:Boolean`, `scheduler.runOn`)
+  are `restricted: true` on the outcome because the MCP tool does not expose
+  component properties today — tracked upstream.
+- **asset-manager** — `AssetManager → ResourceResolver`. Bundle Active +
+  component Active via MCP, and offline manifest check that
+  `com.day.cq.dam.api.AssetManager` is no longer imported.
+- **event-migration** — `OSGi EventHandler → Sling JobConsumer`. Bundle Active
+  + JobConsumer component Active via MCP; `job.topics` presence is read
+  offline from the DS descriptor in the built jar.
+- **replication** — `CQ Replicator / Sling Replicator → Sling Distribution
+  API`. Bundle Active via MCP, and offline manifest check that
+  `org.apache.sling.distribution` is imported and `com.day.cq.replication` is
+  not. `Distributor` service registration on the SDK is `restricted: true`
+  (tracked upstream).
 
 **source-only** (`mode: source-only`) — build → inspect artifact; no SDK
 touched, no bundle deploy:
