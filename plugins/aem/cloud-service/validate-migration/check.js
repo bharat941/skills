@@ -314,7 +314,7 @@ async function main() {
 
   // Local validation does not require a CAM project-id. When one is available
   // (either --project-id or auto-loaded from .validate-migration/context.json),
-  // we emit the report-rv-outcome payload; otherwise we skip that reporting
+  // we emit the report-migration-outcome payload; otherwise we skip that reporting
   // step and just print the local outcome.
   if (!args['project-id'] && context.projectId) {
     args['project-id'] = context.projectId;
@@ -642,13 +642,13 @@ function finishAll(records, args) {
   console.log('=== outcome ===');
   console.log(JSON.stringify(record, null, 2));
 
-  // Emit the report-rv-outcome payload only when a CAM project-id is available.
+  // Emit the report-migration-outcome payload only when a CAM project-id is available.
   // Local validation does not require CAM integration — outcome reporting is
   // optional. The agent reads this delimited block, if present, and invokes
-  // the `report-rv-outcome` MCP tool with it.
+  // the `report-migration-outcome` MCP tool with it.
   if (args && args['project-id']) {
     const payload = buildMcpPayload(record, args);
-    console.log('\n=== report-rv-outcome payload ===');
+    console.log('\n=== report-migration-outcome payload ===');
     console.log(JSON.stringify(payload));
     console.log('=== end payload ===');
   }
@@ -763,7 +763,7 @@ function buildMcpPayload(record, args) {
   return stripEmpty(payload);
 }
 
-// Builds one `classes[]` entry (report-rv-outcome schema) from one task's outcome.
+// Builds one `classes[]` entry (report-migration-outcome schema) from one task's outcome.
 function toClassEntry(outcome) {
   const className = (outcome.discovered && outcome.discovered.fqcn) || `(${outcome.pattern})`;
   const cls = { class_name: className, result: outcome.result };

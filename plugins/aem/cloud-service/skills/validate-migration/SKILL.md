@@ -111,8 +111,8 @@ global bin — the scripts run in place.
 5. **Report outcome (optional).** If a CAM `project-id` is available — passed
    as `--project-id <id>` or picked up from
    `<project>/.validate-migration/context.json` written by the analyze /
-   migration skill — verify prints a delimited `report-rv-outcome` payload
-   block. Invoke the `report-rv-outcome` MCP tool with that payload once. If
+   migration skill — verify prints a delimited `report-migration-outcome` payload
+   block. Invoke the `report-migration-outcome` MCP tool with that payload once. If
    no project-id is configured, skip this step — local validation does not
    require CAM integration.
 
@@ -174,7 +174,7 @@ Fields to pull from each `classes[i]` (never paste raw):
 - **Never modify customer code.** `validate-migration` verifies. Fixes belong to
   the `migration` skill.
 - **Never touch adoption-service directly.** Every outcome goes through the
-  `report-rv-outcome` MCP tool. Contract stays frozen even when the local sink
+  `report-migration-outcome` MCP tool. Contract stays frozen even when the local sink
   is swapped for the real service.
 - **Never invent a `failure_class`.** Use only the frozen enum in
   `plugins/aem/cloud-service/validate-migration/failure-classes.js`.
@@ -239,7 +239,7 @@ touched, no bundle deploy:
 
 - Frozen failure taxonomy:
   `plugins/aem/cloud-service/validate-migration/failure-classes.js`
-- MCP tool: `aemcs-migration-mcp/src/tools/report-rv-outcome.ts`
+- MCP tool: `aemcs-migration-mcp/src/tools/report-migration-outcome.ts`
 - Primitives:
   `plugins/aem/cloud-service/validate-migration/init.js`, `check.js`
 - Optional on-disk input from the sibling migration skill:
