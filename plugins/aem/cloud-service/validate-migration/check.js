@@ -13,9 +13,9 @@
  * build → deploy → verify task — aggregated into one outcome + one MCP payload.
  *
  * Config, all optional (never persisted to disk):
- *   RV_SDK_URL       SDK base URL (default http://localhost:4502)
- *   RV_SDK_USER      SDK admin user (default 'admin' — warns if used against a non-local URL)
- *   RV_SDK_PASS      SDK admin password (default 'admin' — warns if used against a non-local URL)
+ *   AEM_SDK_URL      SDK base URL (default http://localhost:4502)
+ *   AEM_SDK_USER     SDK admin user (default 'admin' — warns if used against a non-local URL)
+ *   AEM_SDK_PASS     SDK admin password (default 'admin' — warns if used against a non-local URL)
  *   --sdk / --user / --password    CLI overrides
  *
  * Reads <cwd>/.validate-migration/context.json for projectId + pendingFindings (written by the
@@ -367,7 +367,7 @@ async function main() {
   const anyNeedsSdk = tasks.some((t) => PATTERNS[t.pattern].mode !== 'source-only');
   const sdkUrl = anyNeedsSdk ? await resolveSdkUrl(args) : null;
   if (anyNeedsSdk && !sdkUrl) {
-    fatal('no running SDK found on ports 4502 / 4602 / 4503. Start your local Cloud SDK, or set RV_SDK_URL / pass --sdk <url>.');
+    fatal('no running SDK found on ports 4502 / 4602 / 4503. Start your local Cloud SDK, or set AEM_SDK_URL / pass --sdk <url>.');
   }
   const { user, password } = validateCreds(setup, sdkUrl);
 
@@ -657,16 +657,16 @@ function finishAll(records, args) {
 }
 
 // ---- SDK config (never persisted to disk) ----
-// URL: honors --sdk / RV_SDK_URL; otherwise probes common local ports so a
+// URL: honors --sdk / AEM_SDK_URL; otherwise probes common local ports so a
 // developer never has to configure anything when the SDK is on 4502/4602/4503.
-// Credentials: --user/--password / RV_SDK_USER/RV_SDK_PASS, default admin/admin.
+// Credentials: --user/--password / AEM_SDK_USER/AEM_SDK_PASS, default admin/admin.
 // admin/admin is refused for any URL that isn't localhost — keeps the default
 // safe if someone accidentally points validate-migration at a shared instance.
 const COMMON_SDK_PORTS = [4502, 4602, 4503];
 const SDK_PROBE_TIMEOUT_MS = 500;
 
 async function resolveSdkUrl(args) {
-  const explicit = args.sdk || process.env.RV_SDK_URL;
+  const explicit = args.sdk || process.env.AEM_SDK_URL;
   if (explicit) return explicit.replace(/\/$/, '');
   for (const port of COMMON_SDK_PORTS) {
     const url = `http://localhost:${port}`;
@@ -687,15 +687,15 @@ async function isSdkReachable(url) {
 
 function readSdkCreds(args) {
   return {
-    user: args.user || process.env.RV_SDK_USER || 'admin',
-    password: args.password || process.env.RV_SDK_PASS || 'admin',
+    user: args.user || process.env.AEM_SDK_USER || 'admin',
+    password: args.password || process.env.AEM_SDK_PASS || 'admin',
   };
 }
 
 function validateCreds({ user, password }, sdkUrl) {
   const isLocal = !sdkUrl || /^https?:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/i.test(sdkUrl);
   if (!isLocal && user === 'admin' && password === 'admin') {
-    fatal(`refusing to send admin/admin to non-local SDK: ${sdkUrl}. Set RV_SDK_USER and RV_SDK_PASS.`);
+    fatal(`refusing to send admin/admin to non-local SDK: ${sdkUrl}. Set AEM_SDK_USER and AEM_SDK_PASS.`);
   }
   return { user, password };
 }

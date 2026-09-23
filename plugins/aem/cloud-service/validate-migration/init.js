@@ -5,14 +5,14 @@
  * validate-migration init — readiness check. Does NOT boot the SDK.
  *
  * Confirms the developer's environment is ready to run validate-migration check:
- *   • RV_SDK_URL  (default http://localhost:4502) is reachable
+ *   • AEM_SDK_URL  (default http://localhost:4502) is reachable
  *   • `mvn` and `unzip` are on PATH
  *
  * The MCP `diagnose-osgi-bundle` tool is invoked by the coding assistant
  * itself, not by this script. init.js does not speak MCP.
  *
  * Config, all optional:
- *   RV_SDK_URL       SDK base URL (default http://localhost:4502)
+ *   AEM_SDK_URL      SDK base URL (default http://localhost:4502)
  *   --sdk <url>      CLI override
  */
 
@@ -51,7 +51,7 @@ function fatal(msg) { console.error(msg); process.exit(1); }
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const sdkUrl = (args.sdk || process.env.RV_SDK_URL || 'http://localhost:4502').replace(/\/$/, '');
+  const sdkUrl = (args.sdk || process.env.AEM_SDK_URL || 'http://localhost:4502').replace(/\/$/, '');
 
   console.log(`[validate-migration] SDK URL:  ${sdkUrl}`);
 

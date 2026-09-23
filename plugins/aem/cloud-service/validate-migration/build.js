@@ -6,7 +6,7 @@
  * Input : { projectDir }
  * Output: { ok, artifactPath, log, elapsedMs }
  *
- * Uses whatever `java` / JAVA_HOME the customer has. Set RV_JAVA_HOME to pin
+ * Uses whatever `java` / JAVA_HOME the customer has. Set AEM_JAVA_HOME to pin
  * a specific JDK for validate-migration builds without touching JAVA_HOME globally.
  */
 const { execFileSync } = require('child_process');
@@ -19,7 +19,7 @@ function build({ projectDir }) {
     return { ok: false, log: `no pom.xml at ${projectDir}` };
   }
   const env = { ...process.env };
-  if (process.env.RV_JAVA_HOME) env.JAVA_HOME = process.env.RV_JAVA_HOME;
+  if (process.env.AEM_JAVA_HOME) env.JAVA_HOME = process.env.AEM_JAVA_HOME;
 
   let log;
   try {

@@ -58,9 +58,9 @@ Zero config for standard local dev. Overrides via env or CLI:
 
 | Env | CLI | Default | Notes |
 |---|---|---|---|
-| `RV_SDK_URL` | `--sdk <url>` | auto-discover on 4502 / 4602 / 4503 | first SDK to answer wins |
-| `RV_SDK_USER` | `--user <name>` | `admin` | refused on non-localhost URLs |
-| `RV_SDK_PASS` | `--password <pw>` | `admin` | refused on non-localhost URLs |
+| `AEM_SDK_URL` | `--sdk <url>` | auto-discover on 4502 / 4602 / 4503 | first SDK to answer wins |
+| `AEM_SDK_USER` | `--user <name>` | `admin` | refused on non-localhost URLs |
+| `AEM_SDK_PASS` | `--password <pw>` | `admin` | refused on non-localhost URLs |
 | — | `--project-id <id>` | optional; auto-loaded from `.validate-migration/context.json` | when unset, the `report-rv-outcome` payload block is not emitted |
 | — | `--diagnosis-map <file>` | `<project>/.validate-migration/diagnosis-map.json` | agent-supplied BSN → raw MCP text output |
 | — | `--stage prepare\|verify\|all` | `all` | two-stage flow support |

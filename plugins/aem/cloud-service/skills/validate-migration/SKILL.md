@@ -68,7 +68,7 @@ global bin — the scripts run in place.
 
 1. **Readiness.** Run `node ../../validate-migration/init.js` once per
    environment. It verifies `mvn` + `unzip` on `PATH` and that an SDK is
-   reachable on `RV_SDK_URL` (default `http://localhost:4502`). It does not
+   reachable on `AEM_SDK_URL` (default `http://localhost:4502`). It does not
    speak MCP — the coding assistant is expected to already have the AEM
    Quickstart MCP server configured (see Adobe MCP setup link at the bottom).
    No SDK boot. No credentials or state on disk.
@@ -189,9 +189,9 @@ Fields to pull from each `classes[i]` (never paste raw):
 
 | Env | CLI | Default |
 |---|---|---|
-| `RV_SDK_URL` | `--sdk <url>` | auto-discover on 4502 / 4602 / 4503 |
-| `RV_SDK_USER` | `--user <name>` | `admin` — refused on non-localhost |
-| `RV_SDK_PASS` | `--password <pw>` | `admin` — refused on non-localhost |
+| `AEM_SDK_URL` | `--sdk <url>` | auto-discover on 4502 / 4602 / 4503 |
+| `AEM_SDK_USER` | `--user <name>` | `admin` — refused on non-localhost |
+| `AEM_SDK_PASS` | `--password <pw>` | `admin` — refused on non-localhost |
 | — | `--project-id <id>` | picked up from `.validate-migration/context.json`; optional |
 | — | `--diagnosis-map <file>` | default `<project>/.validate-migration/diagnosis-map.json` |
 | — | `--stage prepare\|verify\|all` | `all` |
