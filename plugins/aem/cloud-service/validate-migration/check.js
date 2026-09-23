@@ -807,4 +807,18 @@ function parseArgs(argv) {
   return out;
 }
 
-main().catch(e => { console.error(e); process.exit(2); });
+if (require.main === module) {
+  main().catch(e => { console.error(e); process.exit(2); });
+}
+
+module.exports = {
+  parseBundleDiagnosticReport,
+  parseComponentsFromReport,
+  normalizeState,
+  mcpUnavailableOutcome,
+  buildMcpPayload,
+  toClassEntry,
+  stripEmpty,
+  truncate,
+  parseArgs,
+};
