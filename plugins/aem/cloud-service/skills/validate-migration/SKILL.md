@@ -231,6 +231,11 @@ touched, no bundle deploy:
 
 - **legacy-ui** — Classic UI / Coral 2 → Coral 3. Flags any remaining Classic
   UI `xtype=` attributes or Coral 2 resource types in `cq:dialog/.content.xml`.
+- **cdw** — Custom Classic Widgets (ExtJS xtypes) → Coral 3. Flags any remaining
+  `jcr:primaryType="cq:Widget"` nodes or custom `xtype=` in dialog XMLs. Invoke
+  explicitly (`check.js cdw`): at branch-diff time it is path-indistinguishable
+  from legacy-ui, so auto-planning classifies shared dialog changes as legacy-ui
+  (which already flags remaining xtypes).
 
 ## Patterns not yet wired
 
