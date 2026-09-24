@@ -4,7 +4,7 @@ description: |
   Deploys migrated AEM Cloud Service code to a local Cloud SDK and confirms it
   actually runs. Diffs the current branch against `main`, classifies the changed
   files into supported patterns (scheduler, asset-manager, event-migration,
-  replication, legacy-ui), then per pattern: `mvn` build → `-PautoInstallBundle`
+  resource-change-listener, replication, legacy-ui), then per pattern: `mvn` build → `-PautoInstallBundle`
   deploy → runtime verify via the AEM Quickstart MCP server's
   `diagnose-osgi-bundle` tool → emit outcome payload. Companion to the
   `migration` skill: `migration` applies the fix, `validate-migration` proves it
@@ -216,6 +216,10 @@ bundle_state + component_state via MCP `diagnose-osgi-bundle`:
 - **event-migration** — `OSGi EventHandler → Sling JobConsumer`. Bundle Active
   + JobConsumer component Active via MCP; `job.topics` presence is read
   offline from the DS descriptor in the built jar.
+- **resource-change-listener** — `JCR EventListener / resource EventHandler →
+  Sling ResourceChangeListener`. Bundle Active + component Active via MCP;
+  `resource.paths` + `resource.change.types` presence is read offline from the
+  DS descriptor in the built jar (full contract verifiable, not restricted).
 - **replication** — `CQ Replicator / Sling Replicator → Sling Distribution
   API`. Bundle Active via MCP, and offline manifest check that
   `org.apache.sling.distribution` is imported and `com.day.cq.replication` is

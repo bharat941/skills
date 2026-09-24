@@ -18,6 +18,7 @@ const { execFileSync } = require('child_process');
 const RULES = [
   { pattern: 'scheduler', test: (file, text) => /\.java$/.test(file) && /scheduler\.expression|scheduler\.runOn/.test(text) },
   { pattern: 'asset-manager', test: (file, text) => /\.java$/.test(file) && /com\.day\.cq\.dam\.api\.AssetManager|ResourceResolverFactory/.test(text) },
+  { pattern: 'resource-change-listener', test: (file, text) => /\.java$/.test(file) && /ResourceChangeListener|resource\.change\.types/.test(text) },
   { pattern: 'event-migration', test: (file, text) => /\.java$/.test(file) && /job\.topics|JobConsumer|EventHandler/.test(text) },
   { pattern: 'replication', test: (file, text) => /\.java$/.test(file) && /org\.apache\.sling\.distribution|com\.day\.cq\.replication/.test(text) },
   { pattern: 'legacy-ui', test: (file) => /(_cq_dialog|cq:dialog)\/\.content\.xml$/.test(file) },

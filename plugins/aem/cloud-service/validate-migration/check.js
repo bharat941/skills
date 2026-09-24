@@ -203,6 +203,57 @@ const PATTERNS = {
     },
   },
 
+  'resource-change-listener': {
+    describe: 'JCR EventListener / resource EventHandler → Sling ResourceChangeListener',
+    discover: (jar, args) => {
+      // Migrated code registers a ResourceChangeListener (or External-) DS
+      // service with resource.paths + resource.change.types properties.
+      if (args && args.fqcn) return { fqcn: args.fqcn };
+      for (const [fname, xml] of jarDsDescriptors(jar)) {
+        const providesRcl = /provide\s+interface="org\.apache\.sling\.api\.resource\.observation\.(External)?ResourceChangeListener"/.test(xml);
+        const hasPaths = /property\s+name="resource\.paths"/.test(xml);
+        const hasChangeTypes = /property\s+name="resource\.change\.types"/.test(xml);
+        if (!providesRcl && !(hasPaths && hasChangeTypes)) continue;
+        const nm = xml.match(/<scr:component[^>]*name="([^"]+)"/) || xml.match(/name="([^"]+)"/);
+        if (nm) return { fqcn: nm ? nm[1] : path.basename(fname, '.xml'), hasPaths, hasChangeTypes };
+      }
+      return null;
+    },
+    async verify({ bundleBSN, discovered, args }) {
+      // 1. bundle + component state from MCP diagnose-osgi-bundle
+      const diagnosis = await getBundleDiagnosis({ bundleBSN, args });
+      if (!diagnosis.available) return mcpUnavailableOutcome(bundleBSN);
+      if (!diagnosis.found) return { result: 'fail', failure_class: FAILURE_CLASSES.BUNDLE_NOT_INSTALLED, bundle_state: diagnosis.bundle_state, component_state: 'Unknown', evidence: `bundle ${bundleBSN} not on SDK` };
+      if (diagnosis.bundle_state !== 'Active') return { result: 'fail', failure_class: FAILURE_CLASSES.BUNDLE_NOT_ACTIVE, bundle_state: diagnosis.bundle_state, component_state: 'Unknown', evidence: `bundle state=${diagnosis.bundle_state}` };
+
+      const compFromMcp = diagnosis.components.get(discovered.fqcn);
+      if (!compFromMcp) return { result: 'fail', failure_class: FAILURE_CLASSES.COMPONENT_UNSATISFIED, bundle_state: 'Active', component_state: 'Unknown', evidence: `component ${discovered.fqcn} not present in MCP diagnose-osgi-bundle report` };
+      const compState = compFromMcp.state || 'Unknown';
+      if (compState !== 'Active') {
+        return {
+          result: 'fail',
+          failure_class: FAILURE_CLASSES.ACTIVATION_ERROR,
+          bundle_state: 'Active', component_state: compState,
+          evidence: `component_state=${compState}`,
+        };
+      }
+
+      // resource.paths + resource.change.types are read at discovery time from
+      // the built DS descriptor (offline), so the full contract is verifiable
+      // without a Felix property lookup — no restricted check here.
+      if (!discovered.hasPaths || !discovered.hasChangeTypes) {
+        const missing = [!discovered.hasPaths && 'resource.paths', !discovered.hasChangeTypes && 'resource.change.types'].filter(Boolean).join(' + ');
+        return {
+          result: 'fail',
+          failure_class: FAILURE_CLASSES.CONTRACT_MISMATCH,
+          bundle_state: 'Active', component_state: 'Active',
+          evidence: `ResourceChangeListener contract incomplete: ${missing} missing in DS descriptor`,
+        };
+      }
+      return { result: 'pass', bundle_state: 'Active', component_state: 'Active', checks: { resource_paths: true, resource_change_types: true } };
+    },
+  },
+
   replication: {
     describe: 'CQ Replicator / Sling Replicator → Sling Distribution API',
     discover: (jar, args) => {
