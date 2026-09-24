@@ -253,4 +253,33 @@ test('readContext honors args.project for the context.json path', () => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
+// ── Review-fix regressions ────────────────────────────────────────
+
+test('RULES: a ResourceChangeListener that uses ResourceResolverFactory is not classified as asset-manager', () => {
+  const text = 'class X implements ResourceChangeListener { @Reference ResourceResolverFactory rrf; }';
+  const hit = RULES.find((r) => r.test('X.java', text));
+  assert.strictEqual(hit.pattern, 'resource-change-listener');
+});
+
+test('parseBundleDiagnosticReport reads Active state even when the report mentions a reference not found', () => {
+  const report = 'Bundle com.acme.core\nState: ACTIVE\n  reference com.foo.Bar not found (optional)';
+  const r = parseBundleDiagnosticReport(report);
+  assert.strictEqual(r.found, true);
+  assert.strictEqual(r.bundle_state, 'Active');
+});
+
+test('toClassEntry surfaces restricted in checks on a restricted pass', () => {
+  const cls = toClassEntry({
+    pattern: 'scheduler',
+    result: 'pass',
+    bundle_state: 'Active',
+    component_state: 'Active',
+    restricted: true,
+    restricted_reason: 'scheduler DS properties not exposed by diagnose-osgi-bundle',
+  });
+  assert.strictEqual(cls.result, 'pass');
+  assert.strictEqual(cls.checks.restricted, true);
+  assert.match(cls.checks.restricted_reason, /scheduler DS properties/);
+});
+
 

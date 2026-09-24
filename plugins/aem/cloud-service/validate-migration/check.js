@@ -306,13 +306,12 @@ const PATTERNS = {
     describe: 'Classic UI / Coral 2 dialogs → Coral 3 (offline source check)',
     mode: 'source-only',
     discover: (jar) => {
-      // Content packages (.zip via maven-bundle-plugin) put dialog XMLs under
-      // /jcr_root/apps/**/cq:dialog/.content.xml. Bundles that embed content
-      // also carry them at the same path or under jcr_root/.
+      // Classic + Touch UI dialogs, folder or single-file serialization:
+      // _cq_dialog/.content.xml, _cq_dialog.xml, dialog.xml, design_dialog, etc.
       const listing = execFileSync('unzip', ['-l', jar], { encoding: 'utf8' });
       const dialogs = [];
       for (const line of listing.split('\n')) {
-        const m = line.match(/(jcr_root\/.*?\/(_cq_dialog|cq:dialog)\/\.content\.xml)$/);
+        const m = line.match(/(jcr_root\/.*\/(?:_cq_dialog|cq:dialog|_cq_design_dialog|design_dialog|dialog)(?:\/\.content\.xml|\.xml))$/);
         if (m) dialogs.push(m[1]);
       }
       return dialogs.length ? { dialogs } : null;
@@ -357,10 +356,12 @@ const PATTERNS = {
     describe: 'Custom Classic Widgets (ExtJS xtypes) → Coral 3 (offline source check)',
     mode: 'source-only',
     discover: (jar) => {
+      // Classic + Touch UI dialogs, folder or single-file serialization:
+      // _cq_dialog/.content.xml, _cq_dialog.xml, dialog.xml, design_dialog, etc.
       const listing = execFileSync('unzip', ['-l', jar], { encoding: 'utf8' });
       const dialogs = [];
       for (const line of listing.split('\n')) {
-        const m = line.match(/(jcr_root\/.*?\/(_cq_dialog|cq:dialog)\/\.content\.xml)$/);
+        const m = line.match(/(jcr_root\/.*\/(?:_cq_dialog|cq:dialog|_cq_design_dialog|design_dialog|dialog)(?:\/\.content\.xml|\.xml))$/);
         if (m) dialogs.push(m[1]);
       }
       return dialogs.length ? { dialogs } : null;
@@ -493,7 +494,7 @@ async function main() {
       console.log('Have the coding assistant call the AEM Quickstart MCP tool `diagnose-osgi-bundle` for each of these bundles:');
       for (const b of bsns) console.log(`  - ${b}`);
       console.log(`then write the raw tool outputs to ${path.relative(cwd, path.join(cwd, '.validate-migration', 'diagnosis-map.json'))} as a { "<BSN>": "<raw text>" } map,`);
-      console.log('and finally re-run:  node ../../validate-migration/check.js --stage verify');
+      console.log(`and finally re-run:  node ${__filename} --stage verify`);
     }
     process.exit(0);
   }
@@ -693,7 +694,7 @@ function mcpUnavailableOutcome(bundleBSN) {
       + `Have the coding assistant call the AEM Quickstart MCP tool `
       + `\`diagnose-osgi-bundle\` for this bundle and write the raw text output `
       + `into .validate-migration/diagnosis-map.json as { "${bundleBSN}": "..." }, `
-      + `then re-run \`node ../../validate-migration/check.js --stage verify\`.`,
+      + `then re-run \`node ${__filename} --stage verify\`.`,
   };
 }
 
@@ -704,9 +705,12 @@ function mcpUnavailableOutcome(bundleBSN) {
 // while Felix's JSON and the rest of validate-migration use title case.
 function parseBundleDiagnosticReport(text) {
   const components = parseComponentsFromReport(text);
-  if (/no such bundle|not found|not installed/i.test(text)) return { bundle_state: 'Unknown', found: false, components };
+  // Read an explicit State: line first — an installed bundle always has one, so
+  // phrases like "reference … not found" in an Active report aren't misread as
+  // bundle_not_installed.
   const stateLine = text.match(/State:\s*([A-Za-z]+)/);
   if (stateLine) return { bundle_state: normalizeState(stateLine[1]), found: true, components };
+  if (/no such bundle|not found|not installed/i.test(text)) return { bundle_state: 'Unknown', found: false, components };
   if (/INSTALLED but not RESOLVED/i.test(text)) return { bundle_state: 'Installed', found: true, components };
   if (/\bACTIVE\b/i.test(text) && !/not RESOLVED|not ACTIVE|unsatisfied/i.test(text)) return { bundle_state: 'Active', found: true, components };
   return { bundle_state: 'Unknown', found: true, components };
@@ -890,8 +894,14 @@ function toClassEntry(outcome) {
   } else {
     if (outcome.bundle_state) cls.bundle_state = outcome.bundle_state;
     if (outcome.component_state) cls.component_state = outcome.component_state;
-    const checks = flattenChecks(outcome.checks);
-    if (checks) cls.checks = checks;
+    const checks = flattenChecks(outcome.checks) || {};
+    // restricted = a pass the MCP tool couldn't fully verify (e.g. scheduler DS
+    // props). Record it in checks so it isn't lost as a clean pass.
+    if (outcome.restricted) {
+      checks.restricted = true;
+      if (outcome.restricted_reason) checks.restricted_reason = outcome.restricted_reason;
+    }
+    if (Object.keys(checks).length) cls.checks = checks;
   }
   return stripEmpty(cls);
 }
