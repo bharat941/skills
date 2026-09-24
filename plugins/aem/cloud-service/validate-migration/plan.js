@@ -24,7 +24,7 @@ const RULES = [
   { pattern: 'event-migration', test: (file, text) => /\.java$/.test(file) && /job\.topics|JobConsumer|EventHandler/.test(text) },
   { pattern: 'replication', test: (file, text) => /\.java$/.test(file) && /org\.apache\.sling\.distribution|com\.day\.cq\.replication/.test(text) },
   { pattern: 'asset-manager', test: (file, text) => /\.java$/.test(file) && /com\.day\.cq\.dam\.api\.AssetManager|ResourceResolverFactory/.test(text) },
-  { pattern: 'legacy-ui', test: (file) => /(?:_cq_dialog|cq:dialog|_cq_design_dialog|design_dialog|dialog)(?:\/\.content\.xml|\.xml)$/.test(file) },
+  { pattern: 'legacy-ui', test: (file) => /(?:^|\/)(?:_cq_dialog|cq:dialog|_cq_design_dialog|design_dialog|dialog)(?:\/\.content\.xml|\.xml)$/.test(file) },
 ];
 
 // legacy-ui is the only pattern that doesn't need a deployed bundle to verify.
