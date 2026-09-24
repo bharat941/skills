@@ -271,9 +271,9 @@ test('parseBundleDiagnosticReport reads Active state even when the report mentio
 });
 
 test('parseBundleDiagnosticReport does not read a component State: as the bundle state', () => {
-  const report = 'Bundle com.acme.core\n\nDeclarative Services Components\nComponent: com.acme.Comp\n  State: RESOLVED';
+  const report = 'Bundle com.acme.core\n\nDeclarative Services Components\nComponent: com.acme.Comp\n  State: ACTIVE';
   const r = parseBundleDiagnosticReport(report);
-  assert.notStrictEqual(r.bundle_state, 'Resolved');
+  assert.strictEqual(r.bundle_state, 'Unknown');
 });
 
 test('toClassEntry surfaces restricted in checks on a restricted pass', () => {

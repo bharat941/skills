@@ -22,7 +22,8 @@
  * analyze / migration skill), and <cwd>/pom.xml as the default project root.
  *
  * Pipeline (per task): build → discover class → deploy → verify → emit outcome via MCP.
- * Exits 0 pass, 1 fail. Never modifies customer code.
+ * Exits 0 pass, 1 fail, 2 usage/error, 3 incomplete (prepared, not verified —
+ * bundle-runtime tasks awaiting MCP diagnosis). Never modifies customer code.
  */
 if (typeof fetch !== 'function' || typeof FormData !== 'function' || typeof Blob !== 'function') {
   console.error('[validate-migration] Node 18+ required (needs global fetch / FormData / Blob).');
@@ -510,7 +511,10 @@ async function main() {
     if (stage === 'all' && bundleTasks.length) {
       console.warn(`[validate-migration] --stage all can't verify ${bundleTasks.length} bundle-runtime pattern(s) in one shot — stopped after prepare. Gather MCP diagnosis, then re-run --stage verify.`);
     }
-    process.exit(0);
+    // Explicit `--stage prepare` completing is success (0). An `all` run that
+    // stopped early verified nothing — exit 3 (incomplete) so CI/agents don't
+    // read "nothing verified" as PASS.
+    process.exit(stage === 'prepare' ? 0 : 3);
   }
 
   // Only source-only tasks (or an explicit --diagnosis-map): verify now.
@@ -716,9 +720,9 @@ function parseBundleDiagnosticReport(text) {
   const bundleText = dsIdx === -1 ? text : text.slice(0, dsIdx);
   const stateLine = bundleText.match(/State:\s*([A-Za-z]+)/);
   if (stateLine) return { bundle_state: normalizeState(stateLine[1]), found: true, components };
-  if (/no such bundle|not found|not installed/i.test(text)) return { bundle_state: 'Unknown', found: false, components };
-  if (/INSTALLED but not RESOLVED/i.test(text)) return { bundle_state: 'Installed', found: true, components };
-  if (/\bACTIVE\b/i.test(text) && !/not RESOLVED|not ACTIVE|unsatisfied/i.test(text)) return { bundle_state: 'Active', found: true, components };
+  if (/no such bundle|not found|not installed/i.test(bundleText)) return { bundle_state: 'Unknown', found: false, components };
+  if (/INSTALLED but not RESOLVED/i.test(bundleText)) return { bundle_state: 'Installed', found: true, components };
+  if (/\bACTIVE\b/i.test(bundleText) && !/not RESOLVED|not ACTIVE|unsatisfied/i.test(bundleText)) return { bundle_state: 'Active', found: true, components };
   return { bundle_state: 'Unknown', found: true, components };
 }
 
