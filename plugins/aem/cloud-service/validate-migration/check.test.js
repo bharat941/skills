@@ -21,7 +21,7 @@ const {
 } = require('./check.js');
 const { ALL_FAILURE_CLASSES, FAILURE_CLASSES, isFailureClass } = require('./failure-classes.js');
 const { changedFiles, RULES, SOURCE_ONLY_PATTERNS } = require('./plan.js');
-
+const { selectArtifact } = require('./build.js');
 // ── Failure-class taxonomy ────────────────────────────────────────
 
 test('every failure_class the skill emits is in the frozen taxonomy', () => {
@@ -211,4 +211,32 @@ test('SOURCE_ONLY_PATTERNS matches the source-only patterns plan.js can emit', (
     'plan.js SOURCE_ONLY_PATTERNS is out of sync with check.js source-only modes',
   );
 });
+
+// ── Build artifact selection (bundle .jar vs content-package .zip) ──
+
+test('selectArtifact picks the .jar for bundle patterns', () => {
+  const files = ['core-1.0.jar', 'core-1.0-sources.jar'];
+  assert.strictEqual(selectArtifact(files, 'bundle'), 'core-1.0.jar');
+});
+
+test('selectArtifact picks the .zip for content-package (source-only) patterns', () => {
+  // ui.apps module: a content package .zip, no bundle jar — the legacy-ui/cdw case.
+  const files = ['ui.apps-1.0.zip'];
+  assert.strictEqual(selectArtifact(files, 'content-package'), 'ui.apps-1.0.zip');
+});
+
+test('selectArtifact prefers .zip over .jar for content-package', () => {
+  const files = ['ui.apps-1.0.jar', 'ui.apps-1.0.zip'];
+  assert.strictEqual(selectArtifact(files, 'content-package'), 'ui.apps-1.0.zip');
+});
+
+test('selectArtifact falls back to a content-embedding jar when no zip', () => {
+  const files = ['bundle-with-content-1.0.jar'];
+  assert.strictEqual(selectArtifact(files, 'content-package'), 'bundle-with-content-1.0.jar');
+});
+
+test('selectArtifact ignores -sources.jar and returns undefined when nothing matches', () => {
+  assert.strictEqual(selectArtifact(['app-sources.jar', 'app.pom'], 'bundle'), undefined);
+});
+
 

@@ -522,7 +522,7 @@ async function prepareTask(task, { sdkUrl, user, password }) {
     console.log(`▸ skip build (using --jar)\n  ok (${path.basename(artifactPath)})\n`);
   } else {
     step('build customer project');
-    const b = build({ projectDir: task.module });
+    const b = build({ projectDir: task.module, artifact: pat.mode === 'source-only' ? 'content-package' : 'bundle' });
     if (!b.ok) {
       return { pattern: task.pattern, module: task.module,
         failure: { result: 'fail', failure_class: FAILURE_CLASSES.BUILD_FAILED, verification_level: 'source-only', evidence: b.log } };
