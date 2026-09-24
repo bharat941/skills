@@ -215,7 +215,7 @@ const PATTERNS = {
         const hasChangeTypes = /property\s+name="resource\.change\.types"/.test(xml);
         if (!providesRcl && !(hasPaths && hasChangeTypes)) continue;
         const nm = xml.match(/<scr:component[^>]*name="([^"]+)"/) || xml.match(/name="([^"]+)"/);
-        if (nm) return { fqcn: nm ? nm[1] : path.basename(fname, '.xml'), hasPaths, hasChangeTypes };
+        if (nm) return { fqcn: nm[1], hasPaths, hasChangeTypes };
       }
       return null;
     },
