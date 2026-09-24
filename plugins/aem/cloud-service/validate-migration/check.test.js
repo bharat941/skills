@@ -19,6 +19,8 @@ const {
   parseArgs,
   PATTERNS,
   readContext,
+  classifyDialog,
+  clearDiagnosisMap,
 } = require('./check.js');
 const { ALL_FAILURE_CLASSES, FAILURE_CLASSES, isFailureClass } = require('./failure-classes.js');
 const { changedFiles, RULES, SOURCE_ONLY_PATTERNS } = require('./plan.js');
@@ -268,6 +270,12 @@ test('parseBundleDiagnosticReport reads Active state even when the report mentio
   assert.strictEqual(r.bundle_state, 'Active');
 });
 
+test('parseBundleDiagnosticReport does not read a component State: as the bundle state', () => {
+  const report = 'Bundle com.acme.core\n\nDeclarative Services Components\nComponent: com.acme.Comp\n  State: RESOLVED';
+  const r = parseBundleDiagnosticReport(report);
+  assert.notStrictEqual(r.bundle_state, 'Resolved');
+});
+
 test('toClassEntry surfaces restricted in checks on a restricted pass', () => {
   const cls = toClassEntry({
     pattern: 'scheduler',
@@ -280,6 +288,32 @@ test('toClassEntry surfaces restricted in checks on a restricted pass', () => {
   assert.strictEqual(cls.result, 'pass');
   assert.strictEqual(cls.checks.restricted, true);
   assert.match(cls.checks.restricted_reason, /scheduler DS properties/);
+});
+
+test('classifyDialog distinguishes classic, coral 2, and coral 3 by field type', () => {
+  assert.strictEqual(classifyDialog('<n xtype="textfield"/>'), 'classic');
+  assert.strictEqual(classifyDialog('<n sling:resourceType="granite/ui/components/foundation/form/textfield"/>'), 'coral2');
+  assert.strictEqual(classifyDialog('<n sling:resourceType="granite/ui/components/coral/foundation/form/textfield"/>'), 'coral3');
+  // Shared Touch UI dialog root alone is not a Coral 2 signal.
+  assert.strictEqual(classifyDialog('<n sling:resourceType="cq/gui/components/authoring/dialog"/>'), 'other');
+});
+
+test('clearDiagnosisMap removes a stale default map', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vm-map-'));
+  fs.mkdirSync(path.join(root, '.validate-migration'), { recursive: true });
+  const mapPath = path.join(root, '.validate-migration', 'diagnosis-map.json');
+  fs.writeFileSync(mapPath, '{"com.acme.core":"x"}');
+  clearDiagnosisMap(root);
+  assert.strictEqual(fs.existsSync(mapPath), false);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('legacy-ui plan rule requires a path boundary (confirmdialog.xml does not match)', () => {
+  const rule = RULES.find((r) => r.pattern === 'legacy-ui');
+  assert.strictEqual(rule.test('apps/x/comp/_cq_dialog/.content.xml'), true);
+  assert.strictEqual(rule.test('apps/x/comp/dialog.xml'), true);
+  assert.strictEqual(rule.test('apps/x/clientlibs/confirmdialog.xml'), false);
+  assert.strictEqual(rule.test('apps/x/custom-dialog.xml'), false);
 });
 
 

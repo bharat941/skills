@@ -305,15 +305,19 @@ const PATTERNS = {
   'legacy-ui': {
     describe: 'Classic UI / Coral 2 dialogs → Coral 3 (offline source check)',
     mode: 'source-only',
-    discover: (jar) => {
+    discover: (jar, task) => {
       // Classic + Touch UI dialogs, folder or single-file serialization:
       // _cq_dialog/.content.xml, _cq_dialog.xml, dialog.xml, design_dialog, etc.
       const listing = execFileSync('unzip', ['-l', jar], { encoding: 'utf8' });
-      const dialogs = [];
+      let dialogs = [];
       for (const line of listing.split('\n')) {
         const m = line.match(/(jcr_root\/.*\/(?:_cq_dialog|cq:dialog|_cq_design_dialog|design_dialog|dialog)(?:\/\.content\.xml|\.xml))$/);
         if (m) dialogs.push(m[1]);
       }
+      // Auto mode: verify only dialogs the branch changed, so a partial migration
+      // or a kept Classic backup elsewhere doesn't fail the run. Explicit
+      // --pattern (no task.files) scans the whole package.
+      dialogs = scopeToChangedFiles(dialogs, task);
       return dialogs.length ? { dialogs } : null;
     },
     async verify({ artifactPath, discovered }) {
@@ -322,11 +326,10 @@ const PATTERNS = {
       const coral3 = [];
       for (const p of discovered.dialogs) {
         const xml = execFileSync('unzip', ['-p', artifactPath, p], { encoding: 'utf8' });
-        if (/\bxtype\s*=\s*"/.test(xml)) classic.push(p);
-        // Coral 2 vs 3 differ by field type, not the dialog root (identical for both):
-        // coral 2 = granite/ui/components/foundation/, coral 3 inserts /coral/.
-        else if (/sling:resourceType\s*=\s*"granite\/ui\/components\/foundation\//.test(xml)) coral2.push(p);
-        else if (/sling:resourceType\s*=\s*"granite\/ui\/components\/coral\/foundation/.test(xml)) coral3.push(p);
+        const kind = classifyDialog(xml);
+        if (kind === 'classic') classic.push(p);
+        else if (kind === 'coral2') coral2.push(p);
+        else if (kind === 'coral3') coral3.push(p);
       }
       const bad = classic.length + coral2.length;
       if (bad > 0) {
@@ -355,15 +358,16 @@ const PATTERNS = {
   cdw: {
     describe: 'Custom Classic Widgets (ExtJS xtypes) → Coral 3 (offline source check)',
     mode: 'source-only',
-    discover: (jar) => {
+    discover: (jar, task) => {
       // Classic + Touch UI dialogs, folder or single-file serialization:
       // _cq_dialog/.content.xml, _cq_dialog.xml, dialog.xml, design_dialog, etc.
       const listing = execFileSync('unzip', ['-l', jar], { encoding: 'utf8' });
-      const dialogs = [];
+      let dialogs = [];
       for (const line of listing.split('\n')) {
         const m = line.match(/(jcr_root\/.*\/(?:_cq_dialog|cq:dialog|_cq_design_dialog|design_dialog|dialog)(?:\/\.content\.xml|\.xml))$/);
         if (m) dialogs.push(m[1]);
       }
+      dialogs = scopeToChangedFiles(dialogs, task);
       return dialogs.length ? { dialogs } : null;
     },
     async verify({ artifactPath, discovered }) {
@@ -441,7 +445,7 @@ async function main() {
   // is stale. Clear the default map so verify can't read stale bundle state
   // (an explicit --diagnosis-map is left as-is — it may be a fixture).
   if (!args['diagnosis-map']) {
-    fs.rmSync(path.join(cwd, '.validate-migration', 'diagnosis-map.json'), { force: true });
+    clearDiagnosisMap(cwd);
   }
 
   // Resolve tasks: either the pattern the caller pinned, or an auto-detected
@@ -487,7 +491,14 @@ async function main() {
   fs.mkdirSync(path.dirname(statePath), { recursive: true });
   fs.writeFileSync(statePath, JSON.stringify({ started_at: RUN_STARTED_AT, prepared }, null, 2));
 
-  if (stage === 'prepare') {
+  // Bundle-runtime patterns need the agent to gather MCP diagnosis BETWEEN
+  // prepare and verify. `--stage all` gives no such window, so when bundle
+  // tasks are present (and no explicit map was supplied) we stop after prepare
+  // with guidance instead of running — and failing — verify.
+  const bundleTasks = prepared.filter((p) => p.mode === 'bundle-runtime' && !p.failure);
+  const stopAfterPrepare = stage === 'prepare' || (bundleTasks.length > 0 && !args['diagnosis-map']);
+
+  if (stopAfterPrepare) {
     console.log(`\n[validate-migration] prepare complete. ${prepared.length} task(s) staged.`);
     const bsns = [...new Set(prepared.map((p) => p.symbolicName).filter(Boolean))];
     if (bsns.length) {
@@ -496,20 +507,13 @@ async function main() {
       console.log(`then write the raw tool outputs to ${path.relative(cwd, path.join(cwd, '.validate-migration', 'diagnosis-map.json'))} as a { "<BSN>": "<raw text>" } map,`);
       console.log(`and finally re-run:  node ${__filename} --stage verify`);
     }
+    if (stage === 'all' && bundleTasks.length) {
+      console.warn(`[validate-migration] --stage all can't verify ${bundleTasks.length} bundle-runtime pattern(s) in one shot — stopped after prepare. Gather MCP diagnosis, then re-run --stage verify.`);
+    }
     process.exit(0);
   }
 
-  // stage === 'all': prepare + verify in one shot. Bundle-runtime patterns need
-  // an MCP diagnosis map the agent writes BETWEEN prepare and verify; `all`
-  // gives no such window and prepare just cleared any stale map, so they report
-  // setup.mcp_unavailable unless an explicit --diagnosis-map was passed.
-  const bundleTasks = prepared.filter((p) => p.mode === 'bundle-runtime' && !p.failure);
-  if (bundleTasks.length && !args['diagnosis-map']) {
-    console.warn(`\n[validate-migration] --stage all cannot fetch MCP diagnosis for ${bundleTasks.length} bundle-runtime pattern(s): the agent must write diagnose-osgi-bundle output between prepare and verify. Use \`--stage prepare\` → gather MCP diagnosis → \`--stage verify\`. These will report setup.mcp_unavailable.`);
-  }
-  if (bundleTasks.length) {
-    await sleep(3000);
-  }
+  // Only source-only tasks (or an explicit --diagnosis-map): verify now.
   const records = [];
   for (const t of prepared) {
     records.push(await verifyPreparedTask(t, args));
@@ -694,7 +698,7 @@ function mcpUnavailableOutcome(bundleBSN) {
       + `Have the coding assistant call the AEM Quickstart MCP tool `
       + `\`diagnose-osgi-bundle\` for this bundle and write the raw text output `
       + `into .validate-migration/diagnosis-map.json as { "${bundleBSN}": "..." }, `
-      + `then re-run \`node ${__filename} --stage verify\`.`,
+      + `then re-run \`validate-migration check --stage verify\`.`,
   };
 }
 
@@ -705,10 +709,12 @@ function mcpUnavailableOutcome(bundleBSN) {
 // while Felix's JSON and the rest of validate-migration use title case.
 function parseBundleDiagnosticReport(text) {
   const components = parseComponentsFromReport(text);
-  // Read an explicit State: line first — an installed bundle always has one, so
-  // phrases like "reference … not found" in an Active report aren't misread as
-  // bundle_not_installed.
-  const stateLine = text.match(/State:\s*([A-Za-z]+)/);
+  // Bundle State: appears before the DS components section — scope the search
+  // there so a component's own State: line isn't read as the bundle's, and so
+  // "reference … not found" in an Active report isn't misread as not-installed.
+  const dsIdx = text.indexOf('Declarative Services Components');
+  const bundleText = dsIdx === -1 ? text : text.slice(0, dsIdx);
+  const stateLine = bundleText.match(/State:\s*([A-Za-z]+)/);
   if (stateLine) return { bundle_state: normalizeState(stateLine[1]), found: true, components };
   if (/no such bundle|not found|not installed/i.test(text)) return { bundle_state: 'Unknown', found: false, components };
   if (/INSTALLED but not RESOLVED/i.test(text)) return { bundle_state: 'Installed', found: true, components };
@@ -740,7 +746,28 @@ function normalizeState(s) {
 
 function step(name) { console.log(`▸ ${name}`); }
 function fatal(msg) { console.error(msg); process.exit(2); }
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// Classify one dialog's XML. Coral 2 vs 3 differ by field type, not the shared
+// dialog root: coral 2 = granite/ui/components/foundation/, coral 3 inserts /coral/.
+function classifyDialog(xml) {
+  if (/\bxtype\s*=\s*"/.test(xml)) return 'classic';
+  if (/sling:resourceType\s*=\s*"granite\/ui\/components\/foundation\//.test(xml)) return 'coral2';
+  if (/sling:resourceType\s*=\s*"granite\/ui\/components\/coral\/foundation/.test(xml)) return 'coral3';
+  return 'other';
+}
+
+// Auto mode passes task.files (the branch diff); scope discovered dialogs to
+// those. Explicit --pattern has no task.files → scan the whole package.
+function scopeToChangedFiles(dialogs, task) {
+  if (!task || !Array.isArray(task.files) || !task.files.length) return dialogs;
+  const changed = task.files.map((f) => f.replace(/\\/g, '/'));
+  return dialogs.filter((d) => changed.some((f) => f.endsWith(d)));
+}
+
+// Remove the default diagnosis map so a fresh prepare can't leave stale data.
+function clearDiagnosisMap(baseDir) {
+  fs.rmSync(path.join(baseDir, '.validate-migration', 'diagnosis-map.json'), { force: true });
+}
 
 // Aggregates every task's outcome record into one run, prints it, emits the
 // MCP payload once for the whole run, and exits (0 all-pass, 1 any-fail).
@@ -936,6 +963,8 @@ if (require.main === module) {
 module.exports = {
   PATTERNS,
   readContext,
+  classifyDialog,
+  clearDiagnosisMap,
   parseBundleDiagnosticReport,
   parseComponentsFromReport,
   normalizeState,
