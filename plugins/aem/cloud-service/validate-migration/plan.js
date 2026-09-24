@@ -15,13 +15,16 @@ const { execFileSync } = require('child_process');
 // Same five patterns validate-migration check verifies, keyed by a content/path signal cheap
 // enough to run on a raw diff (validate-migration check's own `discover()` needs a *built*
 // jar's DS descriptors, which isn't available yet at planning time).
+// Order matters: RULES.find takes the FIRST match. asset-manager's
+// ResourceResolverFactory marker is generic (listeners / job consumers use it
+// too), so it comes AFTER the specific patterns to avoid hijacking them.
 const RULES = [
   { pattern: 'scheduler', test: (file, text) => /\.java$/.test(file) && /scheduler\.expression|scheduler\.runOn/.test(text) },
-  { pattern: 'asset-manager', test: (file, text) => /\.java$/.test(file) && /com\.day\.cq\.dam\.api\.AssetManager|ResourceResolverFactory/.test(text) },
   { pattern: 'resource-change-listener', test: (file, text) => /\.java$/.test(file) && /ResourceChangeListener|resource\.change\.types/.test(text) },
   { pattern: 'event-migration', test: (file, text) => /\.java$/.test(file) && /job\.topics|JobConsumer|EventHandler/.test(text) },
   { pattern: 'replication', test: (file, text) => /\.java$/.test(file) && /org\.apache\.sling\.distribution|com\.day\.cq\.replication/.test(text) },
-  { pattern: 'legacy-ui', test: (file) => /(_cq_dialog|cq:dialog)\/\.content\.xml$/.test(file) },
+  { pattern: 'asset-manager', test: (file, text) => /\.java$/.test(file) && /com\.day\.cq\.dam\.api\.AssetManager|ResourceResolverFactory/.test(text) },
+  { pattern: 'legacy-ui', test: (file) => /(?:_cq_dialog|cq:dialog|_cq_design_dialog|design_dialog|dialog)(?:\/\.content\.xml|\.xml)$/.test(file) },
 ];
 
 // legacy-ui is the only pattern that doesn't need a deployed bundle to verify.
