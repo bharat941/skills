@@ -21,10 +21,12 @@ const {
   readContext,
   classifyDialog,
   clearDiagnosisMap,
+  prepareStopDecision,
 } = require('./check.js');
 const { ALL_FAILURE_CLASSES, FAILURE_CLASSES, isFailureClass } = require('./failure-classes.js');
 const { changedFiles, RULES, SOURCE_ONLY_PATTERNS } = require('./plan.js');
 const { selectArtifact } = require('./build.js');
+const { readBundleSymbolicName } = require('./deploy.js');
 // ── Failure-class taxonomy ────────────────────────────────────────
 
 test('every failure_class the skill emits is in the frozen taxonomy', () => {
@@ -306,6 +308,52 @@ test('clearDiagnosisMap removes a stale default map', () => {
   clearDiagnosisMap(root);
   assert.strictEqual(fs.existsSync(mapPath), false);
   fs.rmSync(root, { recursive: true, force: true });
+});
+
+// ── Phase 0 fixes ─────────────────────────────────────────────────
+
+test('readBundleSymbolicName strips directives (singleton:=true)', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vm-bsn-'));
+  const metaInf = path.join(root, 'META-INF');
+  fs.mkdirSync(metaInf, { recursive: true });
+  fs.writeFileSync(path.join(metaInf, 'MANIFEST.MF'), 'Manifest-Version: 1.0\r\nBundle-SymbolicName: com.acme.core;singleton:=true\r\n');
+  const jar = path.join(root, 'b.jar');
+  execFileSync('zip', ['-qr', jar, 'META-INF'], { cwd: root });
+  assert.strictEqual(readBundleSymbolicName(jar), 'com.acme.core');
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('selectArtifact ignores -javadoc.jar and -tests.jar for bundle', () => {
+  assert.strictEqual(selectArtifact(['x-javadoc.jar', 'x-tests.jar', 'x.jar'], 'bundle'), 'x.jar');
+  assert.strictEqual(selectArtifact(['x-javadoc.jar', 'x-tests.jar', 'x-sources.jar'], 'bundle'), undefined);
+});
+
+test('prepareStopDecision: --stage all with bundle tasks and no map stops and exits 3', () => {
+  assert.deepStrictEqual(prepareStopDecision('all', 1, false), { stop: true, exitCode: 3 });
+});
+
+test('prepareStopDecision: --stage prepare stops and exits 0', () => {
+  assert.deepStrictEqual(prepareStopDecision('prepare', 0, false), { stop: true, exitCode: 0 });
+});
+
+test('prepareStopDecision: --stage all source-only (no bundle tasks) does not stop', () => {
+  assert.strictEqual(prepareStopDecision('all', 0, false).stop, false);
+});
+
+test('prepareStopDecision: --stage all with an explicit map does not stop', () => {
+  assert.strictEqual(prepareStopDecision('all', 2, true).stop, false);
+});
+
+test('every failure_class named in SKILL.md is in the taxonomy and emitted by check.js', () => {
+  const skill = fs.readFileSync(path.join(__dirname, '..', 'skills', 'validate-migration', 'SKILL.md'), 'utf8');
+  const checkSrc = fs.readFileSync(path.join(__dirname, 'check.js'), 'utf8');
+  const keyOf = Object.fromEntries(Object.entries(FAILURE_CLASSES).map(([k, v]) => [v, k]));
+  const named = new Set((skill.match(/`([a-z]+\.[a-z_]+)`/g) || []).map((s) => s.replace(/`/g, '')));
+  for (const token of named) {
+    if (!/^(runtime|source|setup|deploy|build|input|discovery|tests|sdk)\./.test(token)) continue;
+    assert.ok(ALL_FAILURE_CLASSES.includes(token), `SKILL.md names '${token}' which is not in the frozen taxonomy`);
+    assert.ok(checkSrc.includes(`FAILURE_CLASSES.${keyOf[token]}`), `SKILL.md names '${token}' but check.js never emits it`);
+  }
 });
 
 test('legacy-ui plan rule requires a path boundary (confirmdialog.xml does not match)', () => {

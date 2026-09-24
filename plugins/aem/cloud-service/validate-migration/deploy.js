@@ -116,8 +116,9 @@ function readBundleSymbolicName(jarPath) {
     // MANIFEST folds long lines with "\r\n " continuations — unfold before matching
     const unfolded = mf.replace(/\r?\n /g, '');
     const m = unfolded.match(/^Bundle-SymbolicName:\s*(.+?)\s*$/m);
-    return m ? m[1].trim() : null;
+    // Strip directives/attributes: `com.foo;singleton:=true` → `com.foo`.
+    return m ? m[1].split(';')[0].trim() : null;
   } catch { return null; }
 }
 
-module.exports = { deploy };
+module.exports = { deploy, readBundleSymbolicName };

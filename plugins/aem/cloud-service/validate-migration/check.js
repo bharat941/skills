@@ -497,7 +497,15 @@ async function main() {
   // tasks are present (and no explicit map was supplied) we stop after prepare
   // with guidance instead of running — and failing — verify.
   const bundleTasks = prepared.filter((p) => p.mode === 'bundle-runtime' && !p.failure);
-  const stopAfterPrepare = stage === 'prepare' || (bundleTasks.length > 0 && !args['diagnosis-map']);
+
+  // Give DS components time to settle after deploy before the agent diagnoses.
+  const settleMs = Number(args['settle-ms'] ?? 5000);
+  if (bundleTasks.length && !args['diagnosis-map'] && settleMs > 0) {
+    step(`settle ${settleMs}ms for DS activation`);
+    await sleep(settleMs);
+  }
+
+  const { stop: stopAfterPrepare, exitCode: prepareExitCode } = prepareStopDecision(stage, bundleTasks.length, !!args['diagnosis-map']);
 
   if (stopAfterPrepare) {
     console.log(`\n[validate-migration] prepare complete. ${prepared.length} task(s) staged.`);
@@ -511,10 +519,7 @@ async function main() {
     if (stage === 'all' && bundleTasks.length) {
       console.warn(`[validate-migration] --stage all can't verify ${bundleTasks.length} bundle-runtime pattern(s) in one shot — stopped after prepare. Gather MCP diagnosis, then re-run --stage verify.`);
     }
-    // Explicit `--stage prepare` completing is success (0). An `all` run that
-    // stopped early verified nothing — exit 3 (incomplete) so CI/agents don't
-    // read "nothing verified" as PASS.
-    process.exit(stage === 'prepare' ? 0 : 3);
+    process.exit(prepareExitCode);
   }
 
   // Only source-only tasks (or an explicit --diagnosis-map): verify now.
@@ -702,7 +707,7 @@ function mcpUnavailableOutcome(bundleBSN) {
       + `Have the coding assistant call the AEM Quickstart MCP tool `
       + `\`diagnose-osgi-bundle\` for this bundle and write the raw text output `
       + `into .validate-migration/diagnosis-map.json as { "${bundleBSN}": "..." }, `
-      + `then re-run \`validate-migration check --stage verify\`.`,
+      + `then re-run \`node ../../validate-migration/check.js --stage verify\`.`,
   };
 }
 
@@ -750,6 +755,15 @@ function normalizeState(s) {
 
 function step(name) { console.log(`▸ ${name}`); }
 function fatal(msg) { console.error(msg); process.exit(2); }
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+// Decide whether prepare stops before verify, and the exit code if it does.
+// `--stage prepare` completing is success (0); an `all` run that stops early
+// (bundle-runtime tasks, no diagnosis map) verified nothing → 3 (incomplete).
+function prepareStopDecision(stage, bundleTaskCount, hasDiagnosisMap) {
+  const stop = stage === 'prepare' || (bundleTaskCount > 0 && !hasDiagnosisMap);
+  return { stop, exitCode: stage === 'prepare' ? 0 : 3 };
+}
 
 // Classify one dialog's XML. Coral 2 vs 3 differ by field type, not the shared
 // dialog root: coral 2 = granite/ui/components/foundation/, coral 3 inserts /coral/.
@@ -969,6 +983,7 @@ module.exports = {
   readContext,
   classifyDialog,
   clearDiagnosisMap,
+  prepareStopDecision,
   parseBundleDiagnosticReport,
   parseComponentsFromReport,
   normalizeState,

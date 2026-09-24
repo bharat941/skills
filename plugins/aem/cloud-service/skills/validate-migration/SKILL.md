@@ -116,17 +116,21 @@ global bin — the scripts run in place.
    no project-id is configured, skip this step — local validation does not
    require CAM integration.
 
-6. **Retry policy.** Wait 5s and retry only transient classes on the failed
-   task: `sdk.unreachable`, or `deploy.failed` whose evidence ends in
-   "timeout". Never retry runtime contract failures
+6. **Retry policy.** Wait 5s and retry only `deploy.failed` whose evidence
+   ends in "timeout". Never retry runtime contract failures
    (`runtime.bundle_not_active`, `runtime.component_unsatisfied`,
    `runtime.activation_error`, `runtime.contract_mismatch`,
-   `source.contract_mismatch`, `tests.failed`, `input.jar_missing`,
+   `source.contract_mismatch`, `input.jar_missing`,
    `discovery.no_pattern_match`) — the deploy is stable, the code needs a
    real fix. Hand back to the `migration` skill with the structured evidence.
 
    `setup.mcp_unavailable` is a setup problem, not a code problem — stop and
    surface the setup guidance to the user; do not silently retry.
+
+   **Exit codes:** `0` pass · `1` fail · `2` usage/error · `3` incomplete.
+   `--stage all` (the default) stops after prepare and exits `3` when
+   bundle-runtime patterns are present with no diagnosis map — gather MCP
+   diagnosis, then re-run `--stage verify`.
 
 ## What to show the user on success
 
@@ -139,7 +143,7 @@ patterns: N pass / 0 fail
 outcome recorded via MCP
 ```
 
-Also write `<project-root>/validate-migration/<run_id>.md` — customer-facing
+Also write `<project-root>/.validate-migration/<run_id>.md` — customer-facing
 report next to the code.
 
 ## What to show on a real (non-transient) failure
@@ -198,7 +202,7 @@ Fields to pull from each `classes[i]` (never paste raw):
 
 ## Supported patterns today
 
-Five patterns are wired in `check.js`. All share the same CLI shape
+Seven patterns are wired in `check.js`. All share the same CLI shape
 (`node ../../validate-migration/check.js --pattern <name>`) and the same MCP
 payload — only the per-pattern discover + verify functions differ.
 

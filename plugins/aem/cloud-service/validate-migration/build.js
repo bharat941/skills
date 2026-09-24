@@ -18,7 +18,7 @@ const path = require('path');
 // content-package `.zip`, falling back to a content-embedding jar. Returns the
 // filename or undefined.
 function selectArtifact(files, artifact) {
-  const jar = files.find((f) => f.endsWith('.jar') && !f.endsWith('-sources.jar'));
+  const jar = files.find((f) => f.endsWith('.jar') && !/-(sources|javadoc|tests)\.jar$/.test(f));
   const zip = files.find((f) => f.endsWith('.zip'));
   return artifact === 'content-package' ? (zip || jar) : (jar || zip);
 }
