@@ -18,6 +18,7 @@ const {
   truncate,
   parseArgs,
   PATTERNS,
+  readContext,
 } = require('./check.js');
 const { ALL_FAILURE_CLASSES, FAILURE_CLASSES, isFailureClass } = require('./failure-classes.js');
 const { changedFiles, RULES, SOURCE_ONLY_PATTERNS } = require('./plan.js');
@@ -237,6 +238,19 @@ test('selectArtifact falls back to a content-embedding jar when no zip', () => {
 
 test('selectArtifact ignores -sources.jar and returns undefined when nothing matches', () => {
   assert.strictEqual(selectArtifact(['app-sources.jar', 'app.pom'], 'bundle'), undefined);
+});
+
+// ── --project path resolution (read paths match write paths) ──
+
+test('readContext honors args.project for the context.json path', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vm-ctx-'));
+  fs.mkdirSync(path.join(root, '.validate-migration'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, '.validate-migration', 'context.json'),
+    JSON.stringify({ projectId: 'P123' }),
+  );
+  assert.strictEqual(readContext({ project: root }).projectId, 'P123');
+  fs.rmSync(root, { recursive: true, force: true });
 });
 
 

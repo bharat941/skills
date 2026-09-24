@@ -405,7 +405,7 @@ async function main() {
   }
 
   const setup = readSdkCreds(args);
-  const context = readContext();
+  const context = readContext(args);
 
   // Local validation does not require a CAM project-id. When one is available
   // (either --project-id or auto-loaded from .validate-migration/context.json),
@@ -632,9 +632,10 @@ const diagnosisCache = new Map(); // BSN -> parsed diagnosis, per run
 function loadDiagnosisMap(args) {
   if (diagnosisMap !== undefined) return diagnosisMap;
   const explicit = args && args['diagnosis-map'];
+  const baseDir = (args && args.project) || process.cwd();
   const candidates = [
     explicit,
-    path.join(process.cwd(), '.validate-migration', 'diagnosis-map.json'),
+    path.join(baseDir, '.validate-migration', 'diagnosis-map.json'),
   ].filter(Boolean);
   for (const p of candidates) {
     if (!fs.existsSync(p)) continue;
@@ -797,8 +798,9 @@ function validateCreds({ user, password }, sdkUrl) {
 
 // ---- context.json (written by the analyze / migration skill) ----
 // Shape: { projectId: string, pendingFindings: [{ id, pattern }] }
-function readContext() {
-  const ctxPath = path.join(process.cwd(), '.validate-migration', 'context.json');
+function readContext(args) {
+  const baseDir = (args && args.project) || process.cwd();
+  const ctxPath = path.join(baseDir, '.validate-migration', 'context.json');
   if (!fs.existsSync(ctxPath)) return {};
   try { return JSON.parse(fs.readFileSync(ctxPath, 'utf8')); } catch { return {}; }
 }
@@ -908,6 +910,7 @@ if (require.main === module) {
 
 module.exports = {
   PATTERNS,
+  readContext,
   parseBundleDiagnosticReport,
   parseComponentsFromReport,
   normalizeState,
