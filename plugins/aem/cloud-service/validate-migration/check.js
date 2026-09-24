@@ -324,7 +324,9 @@ const PATTERNS = {
       for (const p of discovered.dialogs) {
         const xml = execFileSync('unzip', ['-p', artifactPath, p], { encoding: 'utf8' });
         if (/\bxtype\s*=\s*"/.test(xml)) classic.push(p);
-        else if (/sling:resourceType\s*=\s*"cq\/gui\/components\/authoring\/dialog/.test(xml)) coral2.push(p);
+        // Coral 2 vs 3 differ by field type, not the dialog root (identical for both):
+        // coral 2 = granite/ui/components/foundation/, coral 3 inserts /coral/.
+        else if (/sling:resourceType\s*=\s*"granite\/ui\/components\/foundation\//.test(xml)) coral2.push(p);
         else if (/sling:resourceType\s*=\s*"granite\/ui\/components\/coral\/foundation/.test(xml)) coral3.push(p);
       }
       const bad = classic.length + coral2.length;
@@ -434,6 +436,13 @@ async function main() {
   }
 
   // ---- stage: prepare | all ----
+  // A fresh prepare rebuilds + redeploys, so any diagnosis map from a prior run
+  // is stale. Clear the default map so verify can't read stale bundle state
+  // (an explicit --diagnosis-map is left as-is — it may be a fixture).
+  if (!args['diagnosis-map']) {
+    fs.rmSync(path.join(cwd, '.validate-migration', 'diagnosis-map.json'), { force: true });
+  }
+
   // Resolve tasks: either the pattern the caller pinned, or an auto-detected
   // set from diffing the branch against main (plan.js).
   let tasks;
@@ -489,9 +498,15 @@ async function main() {
     process.exit(0);
   }
 
-  // stage === 'all': continue straight into verify. Give DS a moment to
-  // settle after deploy so component activation is observable.
-  if (prepared.some((p) => p.mode === 'bundle-runtime' && !p.failure)) {
+  // stage === 'all': prepare + verify in one shot. Bundle-runtime patterns need
+  // an MCP diagnosis map the agent writes BETWEEN prepare and verify; `all`
+  // gives no such window and prepare just cleared any stale map, so they report
+  // setup.mcp_unavailable unless an explicit --diagnosis-map was passed.
+  const bundleTasks = prepared.filter((p) => p.mode === 'bundle-runtime' && !p.failure);
+  if (bundleTasks.length && !args['diagnosis-map']) {
+    console.warn(`\n[validate-migration] --stage all cannot fetch MCP diagnosis for ${bundleTasks.length} bundle-runtime pattern(s): the agent must write diagnose-osgi-bundle output between prepare and verify. Use \`--stage prepare\` → gather MCP diagnosis → \`--stage verify\`. These will report setup.mcp_unavailable.`);
+  }
+  if (bundleTasks.length) {
     await sleep(3000);
   }
   const records = [];
