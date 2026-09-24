@@ -907,6 +907,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  PATTERNS,
   parseBundleDiagnosticReport,
   parseComponentsFromReport,
   normalizeState,

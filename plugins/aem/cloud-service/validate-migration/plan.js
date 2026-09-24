@@ -113,4 +113,4 @@ function safeRead(file) {
   try { return fs.readFileSync(file, 'utf8'); } catch { return ''; }
 }
 
-module.exports = { computeValidationPlan, changedFiles };
+module.exports = { computeValidationPlan, changedFiles, RULES, SOURCE_ONLY_PATTERNS };

@@ -17,9 +17,10 @@ const {
   stripEmpty,
   truncate,
   parseArgs,
+  PATTERNS,
 } = require('./check.js');
 const { ALL_FAILURE_CLASSES, FAILURE_CLASSES, isFailureClass } = require('./failure-classes.js');
-const { changedFiles } = require('./plan.js');
+const { changedFiles, RULES, SOURCE_ONLY_PATTERNS } = require('./plan.js');
 
 // ── Failure-class taxonomy ────────────────────────────────────────
 
@@ -188,3 +189,26 @@ test('changedFiles unions committed, staged, unstaged, and untracked changes', (
 
   fs.rmSync(root, { recursive: true, force: true });
 });
+
+// ── Pattern registry parity (plan.js ↔ check.js) ──────────────────
+
+test('every plan.js RULE pattern is verifiable in check.js PATTERNS', () => {
+  for (const { pattern } of RULES) {
+    assert.ok(PATTERNS[pattern], `plan.js emits '${pattern}' but check.js PATTERNS has no such verifier`);
+  }
+});
+
+test('SOURCE_ONLY_PATTERNS matches the source-only patterns plan.js can emit', () => {
+  const rulePatterns = new Set(RULES.map((r) => r.pattern));
+  // SOURCE_ONLY_PATTERNS only governs plan-derived tasks, so it must equal
+  // exactly the RULE patterns whose check.js verifier declares source-only mode.
+  const expected = new Set(
+    [...rulePatterns].filter((p) => PATTERNS[p].mode === 'source-only'),
+  );
+  assert.deepStrictEqual(
+    [...SOURCE_ONLY_PATTERNS].sort(),
+    [...expected].sort(),
+    'plan.js SOURCE_ONLY_PATTERNS is out of sync with check.js source-only modes',
+  );
+});
+
