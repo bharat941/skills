@@ -628,6 +628,7 @@ function writeRunbookCache(gathered, ctx, cachePath = DEFAULT_CACHE_PATH) {
     // `file` fields below are relative to this root — the apply handoff
     // resolves them with `path.join(workspaceRoot, file)`.
     workspaceRoot: root || null,
+    project: ctx.projectId ? { id: ctx.projectId, name: ctx.projectName || null } : null,
     sourceByPattern: gathered.sourceByPattern,
     findingsByPattern: {},
   };
@@ -663,12 +664,14 @@ function writeRunbookCache(gathered, ctx, cachePath = DEFAULT_CACHE_PATH) {
  *   cache reflects the merged findings.
  */
 async function generateRunbook(options = {}) {
-  const { outputPath = './migration-runbook.md', cachePath = DEFAULT_CACHE_PATH, bpaFilePath, workspaceRoot } = options;
+  const { outputPath = './migration-runbook.md', cachePath = DEFAULT_CACHE_PATH, bpaFilePath, workspaceRoot, projectId, projectName } = options;
 
   const gathered = await gatherFindings(options);
   const ctx = {
     bpaFilePath,
     workspaceRoot,
+    projectId,
+    projectName,
     generatedAt: new Date().toISOString().replace('T', ' ').slice(0, 19),
   };
 

@@ -782,3 +782,33 @@ test('a BPA report present but with NO URC rows warns and still runs the local s
     'a safety-net warning is surfaced'
   );
 });
+
+// ── CAM project handoff to validate-migration ──────────────────────────────
+
+test('writeRunbookCache records the CAM project in the sidecar when one is given', async () => {
+  const root = mkworkspace();
+  const gathered = await gatherFindings({ workspaceRoot: root });
+  const cache = path.join(root, 'migration-runbook.json');
+  writeRunbookCache(gathered, { generatedAt: 'now', projectId: '69b7bae51080241a9216f29f', projectName: 'WKND Legacy' }, cache);
+  const cached = JSON.parse(fs.readFileSync(cache, 'utf8'));
+  assert.deepStrictEqual(cached.project, { id: '69b7bae51080241a9216f29f', name: 'WKND Legacy' });
+});
+
+test('writeRunbookCache writes project null when no CAM project is linked', async () => {
+  const root = mkworkspace();
+  const gathered = await gatherFindings({ workspaceRoot: root });
+  const cache = path.join(root, 'migration-runbook.json');
+  writeRunbookCache(gathered, { generatedAt: 'now' }, cache);
+  assert.strictEqual(JSON.parse(fs.readFileSync(cache, 'utf8')).project, null);
+});
+
+test('generateRunbook keeps the CAM project in migration-runbook.json and creates no separate context.json', async () => {
+  const root = mkworkspace();
+  const cachePath = path.join(root, 'r.json');
+  await generateRunbook({
+    workspaceRoot: root, outputPath: path.join(root, 'r.md'), cachePath,
+    projectId: '69b7bae51080241a9216f29f', projectName: 'WKND Legacy',
+  });
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(cachePath, 'utf8')).project, { id: '69b7bae51080241a9216f29f', name: 'WKND Legacy' });
+  assert.strictEqual(fs.existsSync(path.join(root, '.validate-migration', 'context.json')), false);
+});
