@@ -1,0 +1,159 @@
+{
+  "kind": "migration-flywheel-contribution",
+  "schemaVersion": "2.0",
+  "submittedAt": "2026-07-07T06:38:23.110Z",
+  "contributor": {
+    "githubUser": "bharat941"
+  },
+  "mainBranch": "before-migration",
+  "migratedBranch": "after-migration",
+  "sitePath": "/content/freestyle/us/en/home",
+  "baseInstance": "http://localhost:4502/content/freestyle/us/en/home.html",
+  "targetInstance": "http://localhost:4503/content/freestyle/us/en/home.html",
+  "commitMessage": "Migrate site to AEMaaCS: static->editable templates + component-rewrite rules + legacy-ui dialog conversion\n\nSkills: template-modernization, legacy-ui",
+  "skillsUsed": [
+    "template-modernization",
+    "legacy-ui"
+  ],
+  "skillGaps": [
+    {
+      "id": "D-6",
+      "severity": "severe",
+      "title": "Template thumbnail.png migration is undocumented",
+      "detail": "The static template dir contains thumbnail.png alongside .content.xml. The skill's editable-template file list is 4 files and never mentions thumbnails, so the thumbnail is lost on migration.",
+      "fix": "Add a rule: copy thumbnail.png to /conf/<appId>/settings/wcm/templates/<tpl>/thumbnail.png and add it to the vault filter. PNG-only, filename must be thumbnail.png.",
+      "targetFile": "references/editable-template-creation.md",
+      "section": "Thumbnail migration"
+    }
+  ],
+  "findings": {
+    "schemaVersion": "2.0",
+    "jobId": "71c7bcaf1e56",
+    "generatedAt": "2026-07-07T06:37:44.175Z",
+    "baseBranch": "before-migration",
+    "targetBranch": "after-migration",
+    "sitePath": "/content/freestyle/us/en/home",
+    "baseInstance": "http://localhost:4502/content/freestyle/us/en/home.html",
+    "targetInstance": "http://localhost:4503/content/freestyle/us/en/home.html",
+    "commitMessage": "Migrate site to AEMaaCS: static->editable templates + component-rewrite rules + legacy-ui dialog conversion\n\nSkills: template-modernization, legacy-ui",
+    "skillsUsed": [
+      "template-modernization",
+      "legacy-ui"
+    ],
+    "skillGaps": [
+      {
+        "id": "D-6",
+        "severity": "severe",
+        "title": "Template thumbnail.png migration is undocumented",
+        "detail": "The static template dir contains thumbnail.png alongside .content.xml. The skill's editable-template file list is 4 files and never mentions thumbnails, so the thumbnail is lost on migration.",
+        "fix": "Add a rule: copy thumbnail.png to /conf/<appId>/settings/wcm/templates/<tpl>/thumbnail.png and add it to the vault filter. PNG-only, filename must be thumbnail.png.",
+        "targetFile": "references/editable-template-creation.md",
+        "section": "Thumbnail migration"
+      }
+    ],
+    "verdict": "CONVERSIONS_INCOMPLETE",
+    "conformanceScore": 0.75,
+    "conversions": [
+      {
+        "id": "static-to-editable",
+        "title": "Static templates converted to editable templates",
+        "category": "C2",
+        "rubric": "reflect/rubric.md#C2",
+        "validationRule": "template-modernization-validation.md §1.x",
+        "skill": "template-modernization",
+        "status": "pass",
+        "score": 1,
+        "summary": "Static templates under /apps became editable templates under /conf (cq:Template + cq:templateType).",
+        "evidence": [
+          {
+            "ref": "migrated",
+            "path": "/conf/freestyle/settings/wcm/templates/SiteRoot",
+            "note": "editable template (cq:Template, cq:templateType=/conf/.../template-types/page)"
+          }
+        ]
+      },
+      {
+        "id": "copy-children",
+        "title": "Component-rewrite rules preserve child content (cq:copyChildren)",
+        "category": "C1",
+        "rubric": "reflect/rubric.md#C1",
+        "validationRule": "template-modernization-validation.md §3.1",
+        "skill": "template-modernization",
+        "status": "pass",
+        "score": 1,
+        "summary": "Component-rewrite rules preserved child content via cq:copyChildren — nested nodes under rewritten components were carried over intact.",
+        "evidence": [
+          {
+            "ref": "migrated",
+            "path": "parsys-to-container.xml",
+            "note": "cq:copyChildren=\"{Boolean}true\" set on the container rewrite rule"
+          }
+        ]
+      },
+      {
+        "id": "template-thumbnail-migrated",
+        "title": "Template thumbnail.png migrated to /conf",
+        "category": "C7",
+        "rubric": "reflect/rubric.md#C7",
+        "validationRule": "editable-template-creation.md (thumbnail handling)",
+        "skill": "template-modernization",
+        "status": "fail",
+        "score": 0,
+        "summary": "thumbnail.png (4.9 KB) alongside the static template was not migrated to /conf/.../templates/SiteRoot/thumbnail.png. Skill gap D-6: reference files never mention thumbnails.",
+        "evidence": [
+          {
+            "ref": "baseline",
+            "path": "/apps/freestyle/templates/SiteRoot/thumbnail.png",
+            "note": "present in source, not carried over"
+          }
+        ]
+      },
+      {
+        "id": "lui-to-coral3",
+        "title": "Legacy-UI (Classic/Coral2) dialogs converted to Coral3",
+        "category": "C6",
+        "rubric": "reflect/rubric.md#C6",
+        "validationRule": "legacy-ui dialog conversion",
+        "skill": "legacy-ui",
+        "status": "pass",
+        "score": 1,
+        "summary": "Legacy-UI (Classic/Coral2) dialogs were converted to Coral3 (cq:dialog with granite/ui/components/coral/foundation resource types).",
+        "evidence": [
+          {
+            "ref": "migrated",
+            "path": "/apps/freestyle/components/**/cq:dialog",
+            "note": "Coral3 dialog structure emitted by the legacy-ui dialog conversion"
+          }
+        ]
+      }
+    ],
+    "rendering": {
+      "reachable": false,
+      "unreachableReason": "instance unreachable",
+      "renderingParity": {
+        "score": 0,
+        "htmlSimilarityRatio": 0,
+        "htmlIdentical": false,
+        "statusMatch": false,
+        "contentTypeMatch": false,
+        "addedLineCount": 0,
+        "removedLineCount": 0
+      },
+      "metrics": {
+        "left": {
+          "reachable": false,
+          "error": ""
+        },
+        "right": {
+          "reachable": false,
+          "error": ""
+        },
+        "statusMatch": false,
+        "contentTypeMatch": false
+      },
+      "headers": null,
+      "html": null
+    }
+  },
+  "note": null
+}
