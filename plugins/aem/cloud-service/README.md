@@ -57,6 +57,7 @@ Granite Workflow Engine lifecycle: design, develop, deploy, debug.
 |-------|-------------|--------|
 | [code-assessment](skills/code-assessment/SKILL.md) | Detect and fix AEM CS code-quality issues locally — Sling Model patterns (`@Inject` to injector-specific), deprecated APIs, scheduler, replication, resource listeners, unbounded queries, outbound call timeouts, event migration, asset manager API, outdated Maven dependencies. Verifies with `mvn compile`. | `Scan this AEM project for code issues` |
 | [migration](skills/migration/SKILL.md) | Migrate legacy AEM (6.x, AMS, on-prem) to AEM CS using BPA CSV/cache or CAM/MCP discovery. Covers scheduler, ResourceChangeListener, replication, EventListener, OSGi EventHandler, DAM AssetManager, HTL lint, Classic UI dialog migration, Custom Design Widgets, static to editable template modernization, and OSGi config to Cloud Manager. One pattern per session; delegates refactors to `code-assessment`. | `Review my code for AEMaaCS migration` |
+| [validate-migration](skills/validate-migration/SKILL.md) | Verify a migration on a local Cloud SDK: build → deploy → runtime check via the AEM Quickstart MCP `diagnose-osgi-bundle` tool → structured outcome. Covers scheduler, asset-manager, event-migration, resource-change-listener, replication (bundle-runtime) and legacy-ui, cdw (source-only). | `Validate my AEM CS migration` |
 
 ### Content distribution
 

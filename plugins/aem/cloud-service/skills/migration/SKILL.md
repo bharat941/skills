@@ -260,10 +260,18 @@ const result = await generateRunbook({
   bpaFilePath: '<csv path or undefined>',     // cascade tier 2
   collectionsDir: './unified-collections',
   projectId, mcpFetcher,                      // cascade tier 1 (MCP), when configured
+  projectName,                                // the name the user confirmed, so validate-migration can report to the same CAM project
   outputPath: './migration-runbook.md',
 });
 // result.needsLlmScan → cascade patterns no deterministic source could scan
 ```
+
+When findings come from CAM over MCP, pass the **resolved `projectId`** from the
+`fetch-cam-bpa-findings-by-pattern` response and the **`projectName` the user
+confirmed** into `generateRunbook`. It records them in `migration-runbook.json`
+under `project`, which `validate-migration` later reads to report the outcome to
+the same CAM project. For local-CSV runs there is no project — omit both and the
+runbook records `project: null`.
 
 **Tier 4 — LLM scan (last resort).** If `result.needsLlmScan` is non-empty (no BPA source **and** the analyzer could not run — e.g. no JDK), the agent scans those patterns itself: read each pattern guide's detection hints under `{code-assessment}/<pattern>/`, locate matches **inside the IDE workspace** (see **Workspace scope**). For **each** pattern the agent scans, update `result.gathered` so the re-render and cache stay consistent:
 
