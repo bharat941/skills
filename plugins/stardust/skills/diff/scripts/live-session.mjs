@@ -55,6 +55,7 @@
 
 /* eslint-disable import/no-extraneous-dependencies, import/extensions, no-await-in-loop, no-restricted-syntax, brace-style, object-curly-newline, max-len */
 /* standalone dev-tool library: sequential page ops use awaited loops by design */
+import { existsSync, readFileSync } from 'node:fs';
 
 // Current stable Chrome on macOS. Chrome's UA reduction freezes the platform
 // token at 10_15_7 and the minor version at .0.0.0 — only the major matters,
@@ -151,7 +152,7 @@ export function contextOptions({ ua, locale, viewport } = {}) {
  * cleared it; the spoof is harmless on non-challenging sites). Extra
  * Playwright context options pass through (reducedMotion, ...).
  */
-export async function newLiveContext(browser, { ua, locale, viewport, ...rest } = {}) {
+export async function newLiveContext(browser, { ua, locale, viewport, authOrigin, authHeader, ...rest } = {}) {
   // F-B2 (financial-services site, 2026-08-25): the standard header set must ride on
   // DOCUMENT requests only. Forcing it via extraHTTPHeaders on every request
   // makes cross-origin CORS-mode subresource fetches (Typekit/webfont CDNs)
@@ -171,7 +172,39 @@ export async function newLiveContext(browser, { ua, locale, viewport, ...rest } 
   await ctx.addInitScript(() => {
     Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
   });
+  if (authOrigin && authHeader) await attachOriginAuth(ctx, authOrigin, authHeader);
   return ctx;
+}
+
+/**
+ * Origin-scoped site auth (protected demo origins: access allow-list + site
+ * secret). Resolve from `--auth-header "token …"` or `--token-env NAME`
+ * (process.env, then a cwd `.env`; default SITE_TOKEN). Attach through a route
+ * filter on ONE origin — never via extraHTTPHeaders: the secret would ride every
+ * third-party request and their CORS checks would fail a credentialed request,
+ * reporting a vendor error real users never see (recorded on a video vendor's
+ * playback API inside a modal). Every origin-reading instrument (stitch-shot,
+ * qa, rollout verify, dynamics-check) uses these two.
+ */
+export function resolveSiteAuth({ authHeader, tokenEnv } = {}) {
+  const idx = (k) => process.argv.indexOf(`--${k}`);
+  const direct = authHeader || (idx('auth-header') >= 0 ? process.argv[idx('auth-header') + 1] : null);
+  if (direct) return direct;
+  const name = tokenEnv || (idx('token-env') >= 0 ? process.argv[idx('token-env') + 1] : null) || 'SITE_TOKEN';
+  let v = process.env[name];
+  if (!v && existsSync('.env')) v = (readFileSync('.env', 'utf8').match(new RegExp(`^${name}=(.*)$`, 'm')) || [])[1];
+  if (!v) return null;
+  v = v.trim().replace(/^["']|["']$/g, '');
+  return /^(token|bearer) /i.test(v) ? v : `token ${v}`;
+}
+export async function attachOriginAuth(context, origin, headerValue) {
+  if (!headerValue || !origin) return;
+  const o = new URL(origin).origin;
+  await context.route('**/*', (route) => {
+    const u = route.request().url();
+    if (u === o || u.startsWith(`${o}/`)) route.continue({ headers: { ...route.request().headers(), authorization: headerValue } });
+    else route.continue();
+  });
 }
 
 // The marker that classifies a response as a bot-management challenge/block,
@@ -191,6 +224,13 @@ function challengeMarker(resp) {
     if (resp.url().includes('edgesuite.net')) return `HTTP ${status} + errors.edgesuite.net interstitial`;
     if (server.includes('big-ip') || server.includes('imperva') || h['x-iinfo']) return `HTTP ${status} + F5/Imperva edge signature`;
     // no edge signature — a genuine app-level status, not a challenge.
+  }
+  // Akamai escalates to HTTP 400 {"result":"Bad Request"} after a burst of headless
+  // probes (#125): the instruments refused to measure it but never suggested
+  // escalation. A 400 stamped by AkamaiGHost is a challenge marker.
+  if (status === 400) {
+    const server = (h.server || '').toLowerCase();
+    if (server.includes('akamaighost') || server.includes('akamai') || h['x-akamai-transformed']) return 'HTTP 400 + Akamai edge signature (bot-management escalation)';
   }
   return null;
 }
@@ -273,20 +313,46 @@ export async function gotoLive(page, url, { waitUntil = 'domcontentloaded', time
 }
 
 /**
- * Headed stealth escalation tier (crawl.mjs launchHeadedStealth semantics):
- * headed real Chrome clears TLS/H2-fingerprint blocks, and the stealth args
- * strip the automation signals Cloudflare's managed challenge probes for.
- * Pair with newLiveContext so the navigator.webdriver spoof lands on every
- * context. Takes the caller's `chromium` so this module stays import-free.
+ * Stealth escalation tier (crawl.mjs launchHeadedStealth semantics): the REAL
+ * Chrome binary (`channel: 'chrome'`) clears TLS/H2-fingerprint blocks, and the
+ * stealth args strip the automation signals Cloudflare's managed challenge
+ * probes for. Pair with newLiveContext so the navigator.webdriver spoof lands
+ * on every context. Takes the caller's `chromium` so this module stays import-free.
+ *
+ * WINDOW-FREE BY DEFAULT (#125). The window was never what cleared the block, the
+ * binary was: `channel:'chrome'` + headless gets HTTP 200 from Akamai where bundled
+ * headless Chromium gets 400. Visible windows blocked an operator's desktop under
+ * four parallel agents. A window is opt-in: `STARDUST_HEADED_WINDOW=1`, for a
+ * challenge that genuinely needs a human. Every `--headed` flag means THIS tier.
+ *
+ * `channel: 'chrome'` needs Google Chrome installed; when the launch fails the
+ * bundled Chromium is launched instead with the same stealth args and a loud
+ * stderr warning (the instrument is then the lesser tier — say so in the log).
  */
 export async function launchStealthHeaded(chromium) {
-  return chromium.launch({
-    headless: false,
+  const visible = process.env.STARDUST_HEADED_WINDOW === '1';
+  const opts = {
+    headless: !visible,
     channel: 'chrome',
     args: ['--disable-blink-features=AutomationControlled'],
     ignoreDefaultArgs: ['--enable-automation'],
-  });
+  };
+  try {
+    const b = await chromium.launch(opts);
+    b.stardustTier = visible ? 'chrome-window' : 'chrome';
+    return b;
+  } catch (e) {
+    console.error(`[live-session] WARNING: real Chrome (channel: chrome) failed to launch (${String(e.message).split('\n')[0]}) — falling back to bundled Chromium with the stealth args; bot-managed origins may still block this tier`);
+    const { channel, ...rest } = opts;
+    const b = await chromium.launch(rest);
+    b.stardustTier = 'chromium-fallback';
+    return b;
+  }
 }
+/** The tier a browser from launchStealthHeaded / chromium.launch actually runs: 'chrome' | 'chrome-window' |
+ * 'chromium-fallback' (Chrome elected, not installed) | 'chromium' (elected). Every probe records it in its
+ * evidence so a run that degraded is visible in the artifact, not only in a log line. */
+export const browserTier = (b) => b.stardustTier || 'chromium';
 
 // Consent-accept candidates (clicked, never DOM-removed, so consent-gated
 // layout settles the way a real visit does) — stitch-shot's proven list.

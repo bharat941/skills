@@ -13,7 +13,7 @@
  * itself is slow, findings are downgraded to info (a degraded measurement
  * window must not read as a site regression).
  */
-import { loadPlaywright, finding, pageUrl } from '../lib.mjs';
+import { loadPlaywright, finding, pageUrl, attachOriginAuth } from '../lib.mjs';
 
 const BUDGET_TRANSFER_KB = 800;
 const BUDGET_JS_KB = 250;
@@ -62,6 +62,7 @@ export async function run(ctx) {
 
   for (const p of reps) {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    await attachOriginAuth(context);
     const page = await context.newPage();
     const client = await context.newCDPSession(page);
     await client.send('Network.enable');
@@ -74,7 +75,7 @@ export async function run(ctx) {
     });
 
     try {
-      await page.goto(pageUrl(base, p.path), { waitUntil: 'load', timeout: 60000 });
+      await page.goto(pageUrl(base, p.url || p.path), { waitUntil: 'load', timeout: 60000 });
     } catch {
       findings.push(finding('perf', 'load-timeout', sev('warn'), p.path, 'page did not fire load within 60s'));
       await context.close();
