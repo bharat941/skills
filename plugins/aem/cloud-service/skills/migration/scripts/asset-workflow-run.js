@@ -1,7 +1,7 @@
 'use strict';
-// Branch H one-command runner: pre-flight → gate → baseline → Adobe wf-migrator (pinned JAR) →
-// verification → follow-ups → report. The tool makes every change; this runner only orchestrates,
-// gates and checks. Exit codes: 0 verified, 1 verification or tool failure, 2 stopped before
+// Branch H one-command runner: pre-flight → gate (+ read-only custom Java step review) → baseline →
+// Adobe wf-migrator 0.7.0 (--jar until it is released) → verification → follow-ups → report. The tool
+// makes every change; this runner only orchestrates, gates and checks. Exit codes: 0 verified, 1 verification or tool failure, 2 stopped before
 // changing anything (pre-flight failure or unacknowledged unsupported steps).
 //
 //   node asset-workflow-run.js <projectRoot> [--dry-run] [--verify-only] [--baseline <dir>]
@@ -16,11 +16,15 @@ const I = require('./asset-workflow-inventory.js');
 const F = require('./asset-workflow-followup.js');
 const V = require('./asset-workflow-verify.js');
 const R = require('./asset-workflow-report.js');
+const S = require('./asset-workflow-custom-steps.js');
 
+// 0.7.0 is not released yet: it is adobe/aem-cloud-migration#25 (split handling, Completed step, ImageMagick,
+// runner config, XML formatting). The published v0.6.0 has none of those fixes; do not pin it.
 const TOOL_VERSION = '0.7.0';
 const TOOL_JAR = `wf-migrator-${TOOL_VERSION}.jar`;
 const TOOL_URL = `https://github.com/adobe/aem-cloud-migration/releases/download/v${TOOL_VERSION}/${TOOL_JAR}`;
-// Set once the v0.7.0 release is published; until then the jar is never downloaded and --jar is required.
+const TOOL_PR = 'https://github.com/adobe/aem-cloud-migration/pull/25';
+// Set once Adobe publishes v0.7.0; until then the jar is never downloaded and --jar is required.
 const TOOL_SHA256 = null;
 const TOOL_DIR = path.join(__dirname, 'asset-workflow-tool');
 const MIN_JAVA = 11;
@@ -85,7 +89,7 @@ function isToolInstalled(toolDir) {
 function ensureToolInstalled(toolDir) {
   toolDir = toolDir || TOOL_DIR;
   const jar = toolJarPath(toolDir);
-  if (!TOOL_SHA256) return { installed: false, jar, error: `the checksum of ${TOOL_JAR} is not pinned yet; build or download the jar and pass --jar <path>.` };
+  if (!TOOL_SHA256) return { installed: false, jar, error: `wf-migrator ${TOOL_VERSION} is not released yet (${TOOL_PR}), so it cannot be downloaded. Build it from that PR's branch (fix/skill-workarounds) with \`mvn clean install\` and pass --jar <path to the built target/wf-migrator-*.jar>; its pom still says 0.6.0, so the file is named wf-migrator-0.6.0.jar. Do not use the published v0.6.0 release.` };
   if (isToolInstalled(toolDir)) return { installed: true, alreadyPresent: true, jar };
   fs.mkdirSync(toolDir, { recursive: true });
   const tmp = `${jar}.part`;
@@ -292,6 +296,8 @@ function runMigration(o, temps) {
 
   const pre = I.buildInventory(o.verifyOnly ? baseline : root);
   result.plan = planPreview(pre);
+  // Java sources are read from the project itself: the tool never changes them and the baseline holds no Java.
+  result.customSteps = S.reviewCustomSteps(pre, root);
   const gate = gateUnsupported(pre, o.acknowledge);
   result.gate = gate;
   if (o.dryRun) return Object.assign(result, { stage: 'dry-run', ok: true, exitCode: 0 });
@@ -342,7 +348,7 @@ function runMigration(o, temps) {
   if (tool.skipped && isFile(toolReport)) tool.reportPath = toolReport;
   const followUps = F.collectFollowUps({ pre, post, acknowledge: o.acknowledge, toolReport: isFile(toolReport) ? fs.readFileSync(toolReport, 'utf8') : '' });
   const verify = V.verifyMigration(pre, post, { followUps, acknowledge: o.acknowledge });
-  const md = R.renderReport({ pre, post, followUps, verify, tool, gate });
+  const md = R.renderReport({ pre, post, followUps, verify, tool, gate, customSteps: result.customSteps });
   result.report = R.writeReport(reportDir, md);
   Object.assign(result, { stage: 'done', ok: verify.ok, exitCode: verify.ok ? 0 : 1, tool, followUps: { workflows: followUps.workflows.map(w => w.confPath), manual: followUps.manual, runner: followUps.runner }, verify });
   fs.writeFileSync(path.join(reportDir, 'asset-workflow-result.json'), JSON.stringify(result, null, 2) + '\n');
@@ -358,6 +364,14 @@ function printText(r, log) {
       for (const l of p.launchers) log(`    launcher ${l.id}: ${l.glob}${l.conditions.length ? ` [conditions: ${l.conditions.join(' AND ')}]` : ''}`);
       log(`    keep:   ${p.keep.map(s => `${s.step}${s.inSplit ? '*' : ''}`).join(', ') || '—'}`);
       log(`    remove: ${p.remove.map(s => `${s.step}${s.inSplit ? '*' : ''} (${s.category})`).join(', ') || '—'}`);
+    }
+  }
+  if (r.customSteps && r.customSteps.steps.length) {
+    log(`Custom Java steps: ${r.customSteps.steps.length} (read-only review of each step's own class)`);
+    for (const s of r.customSteps.steps) {
+      const where = s.source ? `${s.source}${s.signals.length ? `: ${s.signals.map(x => `${x.evidence} L${x.line}`).join(', ')}` : ''}` : s.reason;
+      const hand = s.handoffs.length ? ` [hand off: ${s.handoffs.map(h => h.id).join(', ')}]` : '';
+      log(`  ${s.shortName} → ${s.outcome}${hand} (${where})`);
     }
   }
   if (r.gate) {
@@ -388,7 +402,7 @@ function main(argv, log) {
 if (require.main === module) process.exitCode = main(process.argv.slice(2));
 
 module.exports = {
-  TOOL_VERSION, TOOL_URL, TOOL_SHA256, TOOL_DIR, TOOL_JAR, MIN_JAVA, BASELINE_MARKER,
+  TOOL_VERSION, TOOL_URL, TOOL_PR, TOOL_SHA256, TOOL_DIR, TOOL_JAR, MIN_JAVA, BASELINE_MARKER,
   parseJavaVersion, checkJava, checkCleanGitTree, checkProject, isToolInstalled, ensureToolInstalled, runMigrator,
   copyTree, baselineFromGit, checkReportDir, resetBaseline, affectedWorkflows, gateUnsupported, planPreview, parseArgs, migrate, main,
 };

@@ -9,7 +9,7 @@ How each workflow step is treated. Categories are those of Adobe's tool (`workfl
 | `SUPPORTED` | Kept | Runs in a post-processing workflow. **Real work** — a reason to migrate. | `CreateVersionProcess`, `ReplicationWorkflowProcess`, `XMPWritebackProcess`, `AutoTagAssetProcess`, language-copy steps |
 | `REQUIRED` | Kept | `DamUpdateAssetWorkflowCompletedProcess` — must be the **last** step of every post-processing workflow. | — |
 | `OPTIONAL` | Kept | Kept when the model is migrated, but never a reason to migrate it. | `SendTransientWorkflowCompletedEmailProcess` |
-| `CUSTOM` | Kept | A Java process step not in the catalog — project code. **Real work.** Must be deployable on Cloud Service and must not write renditions. | `com.acme.dam.TagFromFolderProcess` |
+| `CUSTOM` | Kept | A Java process step not in the catalog — project code. **Real work.** Must be deployable on Cloud Service and must not write renditions; the runner reviews each one ([context.md](context.md#custom-java-step-review)). | `com.acme.dam.TagFromFolderProcess` |
 | `SCRIPT` | Kept | An ECMA script step (process is a path). **Real work.** Review like custom code. | `/apps/acme/workflow/scripts/notify.ecma` |
 | `NOOP` | Kept | `/libs/workflow/scripts/noop.ecma` placeholder (often an OR-split "else" branch). Not real work: a split whose branches hold only `noop` steps is removed. | — |
 | `UNNECESSARY` | Removed | The microservices handle it. No action. | `GateKeeperProcess`, `DeleteImagePreviewProcess` |

@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const C = require('./asset-workflow-catalog.js');
 const I = require('./asset-workflow-inventory.js');
+const S = require('./asset-workflow-custom-steps.js');
 
 const ADVISORY = '> **Review before production:** the migrated models, runner config and processing profiles are generated. Review the diff, deploy to a development environment or RDE, upload test assets to every mapped folder and compare renditions and metadata with the source system before promoting.';
 
@@ -33,7 +34,30 @@ function workflowRows(fu) {
   });
 }
 
-function renderReport({ pre, post, followUps, verify, tool, gate }) {
+function customStepSection(review) {
+  const steps = (review && review.steps) || [];
+  if (!steps.length) return [];
+  const L = ['## Custom Java steps', '', `Read-only review of the custom Java steps the migrated workflows keep. Nothing was changed. ${S.SCOPE}`, ''];
+  L.push('| Step | Used in | Source | Outcome | Evidence |', '|---|---|---|---|---|');
+  for (const s of steps) {
+    const used = [...new Set(s.usedIn.map(u => `\`${u.model}\`${u.inSplit ? ' (in split)' : ''}`))].join('<br>');
+    const evidence = [
+      ...s.signals.map(x => `${x.evidence} (L${x.line})`),
+      ...s.handoffs.map(h => `hand off: ${h.id}${h.pattern ? ` (\`${h.pattern}\`)` : ''}`),
+      ...s.helpers.map(h => `helper: \`${h}\``),
+    ];
+    const src = s.source ? `\`${s.source}\`` : `— ${s.reason}${s.candidates.length ? `: ${s.candidates.map(c => `\`${c}\``).join(', ')}` : ''}`;
+    L.push(`| \`${cell(s.shortName)}\` | ${cell(used)} | ${cell(src)} | ${s.outcome} | ${cell(evidence.join('<br>') || '—')} |`);
+  }
+  L.push('');
+  for (const id of [...new Set(steps.map(s => s.outcome))]) L.push(`- **${id}** — ${S.ACTIONS[id]}`);
+  const guides = [...new Map(steps.flatMap(s => s.handoffs).map(h => [h.id, h])).values()];
+  for (const h of guides) L.push(`  - \`${h.id}\`: read \`${h.guide}\`${h.pattern ? ` (pattern id \`${h.pattern}\`)` : ''}`);
+  L.push('');
+  return L;
+}
+
+function renderReport({ pre, post, followUps, verify, tool, gate, customSteps }) {
   const fu = followUps || { manual: [], workflows: [], runner: null };
   verify = verify || { ok: false, failures: [], warnings: [] };
   tool = tool || {};
@@ -51,6 +75,7 @@ function renderReport({ pre, post, followUps, verify, tool, gate }) {
   L.push(`| Post-processing workflows | ${migrated} |`);
   if ((fu.workflows || []).length > migrated) L.push(`| Not migrated (processing profile only) | ${fu.workflows.length - migrated} |`);
   if (fu.runner) L.push(`| Runner config | \`${cell(fu.runner.file)}\` — ${fu.runner.byPath.length} by path, ${fu.runner.byExpression.length} by expression |`);
+  if (customSteps && customSteps.steps.length) L.push(`| Custom Java steps reviewed | ${customSteps.steps.length} (${S.needsAction(customSteps).length} need action) |`);
   L.push(`| Verification | ${verify.ok ? '**PASS**' : `**FAIL** (${verify.failures.length})`} |`);
   L.push('');
 
@@ -59,6 +84,7 @@ function renderReport({ pre, post, followUps, verify, tool, gate }) {
     L.push('| Model | Launcher globs (before) | Steps kept | Steps removed | Processing profile |', '|---|---|---|---|---|');
     L.push(...workflowRows(fu), '');
   }
+  L.push(...customStepSection(customSteps));
 
   L.push('## Verification', '');
   if (verify.ok) L.push('- `ok`: **true** — no gate failures.');
