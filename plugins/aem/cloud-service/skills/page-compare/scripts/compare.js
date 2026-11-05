@@ -13,6 +13,7 @@ const { functionalFindings } = require('./lib/functional');
 const { visualFindings } = require('./lib/visual');
 const { createFetcher, downloadFindings, brokenLinkFindings, siteFindings, redirectFindings, pageSetCoverage } = require('./lib/completeness');
 const { renderHtml, renderJson, toCsv, summarize, exitCode } = require('./lib/report');
+const { toMarkdown } = require('./lib/markdown');
 const { normalizePath, hash } = require('./lib/util');
 const { parseCsv } = require('./lib/pairs');
 
@@ -342,12 +343,14 @@ async function main() {
     pairs: finalPairs,
   };
   fs.writeFileSync(path.join(outDir, 'report.html'), renderHtml(run));
+  fs.writeFileSync(path.join(outDir, 'report.md'), toMarkdown(run));
   fs.writeFileSync(path.join(outDir, 'report.json'), renderJson(run));
   fs.writeFileSync(path.join(outDir, 'summary.csv'), toCsv(finalPairs));
 
   const counts = summarize(finalPairs);
   console.log(Object.entries(counts).filter(([, n]) => n).map(([s, n]) => `${s}: ${n}`).join('  '));
   console.log(`Report: ${path.join(outDir, 'report.html')}`);
+  console.log(`Markdown: ${path.join(outDir, 'report.md')}`);
   if (pausedHosts.size) console.log(`Bot protection blocked ${[...pausedHosts].join(', ')}; allowlist this runner or raise --pace-ms, then rerun with --resume.`);
   process.exit(exitCode(finalPairs));
 }

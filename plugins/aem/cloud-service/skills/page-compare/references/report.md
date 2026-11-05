@@ -4,11 +4,22 @@ Everything is written under `--out` (default `./page-compare-out`).
 
 ```
 report.html          single static report; open in a browser
+report.md            clean Markdown report: content parity, visual parity, integration
 report.json          full results (same data as the HTML)
 summary.csv          one row per pair: status, counts, top finding
 pairs/<id>/result.json    stored raw findings, used by --resume
 pairs/<id>/visual/        before/after/diff PNGs, only for flagged sections
 ```
+
+## report.md
+
+The report to hand to a customer. It has an overall result, a summary table, then for each page three sections:
+
+- **Content parity**: text, headings, meta and SEO tags, images, links, buttons and forms, with before and after values.
+- **Visual parity**: how many sections are identical at each viewport, plus the sections that differ. A section that exists on both pages but has different content is shown once, with what each page says, instead of as a separate "missing" and "added" pair. Pixel differences link to the before, after and diff images under `pairs/`.
+- **Integration**: console and network errors, analytics, broken links and downloads, redirects, `robots.txt` and sitemap. Site-wide checks are listed in their own section and counted here.
+
+Long lists show the first 10 rows; the full data is in `report.json`. For many pages it adds an overview table and shows detail for the 25 worst. Keep `report.md` next to `pairs/` so the image links work.
 
 ## report.html
 

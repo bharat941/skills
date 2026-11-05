@@ -15,6 +15,7 @@ const { classifyRequest } = require('./lib/functional');
 const { normalizePath } = require('./lib/util');
 const { renderHtml, toCsv, exitCode, summarize } = require('./lib/report');
 const { robotsBlocksAll, redirectFindings } = require('./lib/completeness');
+const { toMarkdown, areaOf } = require('./lib/markdown');
 const { pairSections } = require('./lib/visual');
 
 // ---------- units ----------
@@ -153,6 +154,62 @@ test('completeness: findings keep items as a list so the report renders', async 
   assert.equal(findings[0].items.length, 1);
   const html = renderHtml({ generatedAt: 'now', viewports: [1440], pairs: [{ id: 'r-1', before: 'https://b/old', after: 'https://a/new', status: 'fail', findings }], notTested: [] });
   assert.ok(html.includes('redirect.wrong'));
+});
+
+// ---------- markdown report ----------
+
+const mdPair = (findings, extra = {}) => ({ id: 'p-1', before: 'https://b/x', after: 'https://a/x', status: 'fail', noise: 0, findings, ...extra });
+const mdRun = (pairs, completeness = {}) => ({ generatedAt: 'now', viewports: [1440, 375], pairs, completeness, notTested: ['Interactions'] });
+
+test('markdown: areaOf groups checks into content, visual and integration', () => {
+  assert.equal(areaOf('heading.missing'), 'content');
+  assert.equal(areaOf('link.target'), 'content');
+  assert.equal(areaOf('visual.section'), 'visual');
+  assert.equal(areaOf('console.error'), 'integration');
+  assert.equal(areaOf('link.broken'), 'integration');
+  assert.equal(areaOf('site.robots'), 'integration');
+});
+
+test('markdown: report has the three areas with their own result', () => {
+  const md = toMarkdown(mdRun([mdPair([
+    { check: 'heading.missing', severity: 'review', summary: '1 heading(s) missing', items: [{ text: 'About us', level: 2 }] },
+    { check: 'link.broken', severity: 'fail', summary: '1 internal link(s) return an error', items: [{ text: 'Shop', url: 'https://a/shop', status: 404 }] },
+  ])]));
+  assert.match(md, /### Content parity: ⚠️ Review/);
+  assert.match(md, /### Visual parity: ✅ Pass/);
+  assert.match(md, /### Integration: ❌ Fail/);
+  assert.match(md, /\| Content parity \| ⚠️ Review \| 0 \| 1 \|/);
+  assert.match(md, /\| About us \| 2 \|/);
+  assert.match(md, /\| Shop \| https:\/\/a\/shop \| 404 \|/);
+  assert.match(md, /## Not tested/);
+});
+
+test('markdown: a section reported missing and added at the same spot is one content change', () => {
+  const sec = (viewport, text) => ({ section: 'main-2:.section', viewport, text });
+  const md = toMarkdown(mdRun([mdPair([
+    { check: 'visual.section.missing', severity: 'fail', summary: 'missing', items: [sec('1440', 'old testimonial'), sec('375', 'old testimonial')] },
+    { check: 'visual.section.added', severity: 'info', summary: 'added', items: [sec('1440', 'new testimonial'), sec('375', 'new testimonial')] },
+  ], { visual: { rows: [{ viewport: '1440', section: 'main-1', status: 'pass' }, { viewport: '1440', section: 'main-2', status: 'missing' }, { viewport: '1440', section: 'main-2', status: 'added' }] } })]));
+  assert.match(md, /content differs/);
+  assert.match(md, /\| main-2:\.section \| 1440px, 375px \| old testimonial \| new testimonial \|/);
+  assert.match(md, /\| 1440px \| 1 \| 1 \| 0 \| 1 \| 1 \|/);
+  assert.ok(!md.includes('Section only on the before page'));
+});
+
+test('markdown: escapes table cells and caps long lists', () => {
+  const items = Array.from({ length: 12 }, (_, i) => ({ text: i === 0 ? 'a|b <script>' : `t${i}` }));
+  const md = toMarkdown(mdRun([mdPair([{ check: 'cta.missing', severity: 'review', summary: '12 missing', items }])]));
+  assert.ok(md.includes('a\\|b &lt;script&gt;'));
+  assert.ok(!md.includes('<script>'));
+  assert.match(md, /…and 2 more/);
+});
+
+test('markdown: site-wide findings count under integration and clean pages say so', () => {
+  const md = toMarkdown(mdRun([mdPair([], { status: 'pass' })], { siteFindings: [{ check: 'site.robots', severity: 'fail', summary: 'robots.txt disallows everything' }] }));
+  assert.match(md, /\| Integration \| ❌ Fail \| 1 \| 0 \|/);
+  assert.match(md, /## Site-wide checks/);
+  const clean = toMarkdown(mdRun([mdPair([], { status: 'pass' })]));
+  assert.match(clean, /\*\*Overall: ✅ Pass\*\*/);
 });
 
 // ---------- end to end (needs Chromium) ----------
