@@ -1,6 +1,6 @@
 'use strict';
 
-const { normalizeText, collapseSpace, similarity, normalizePath, imageStem, round } = require('./util');
+const { normalizeText, collapseSpace, similarity, normalizePath, imageStem, round, isPreviewHost } = require('./util');
 const { applyRewrites } = require('./rules');
 
 const MAX_ITEMS = 50;
@@ -125,7 +125,11 @@ function metaFindings(before, after, ctx) {
   if (am.canonical) {
     const canonHost = safeHost(am.canonical);
     if (canonHost && canonHost !== ctx.afterHost && bm.canonical && safeHost(bm.canonical) === ctx.beforeHost) {
-      out.push(finding('meta.canonical', 'fail', 'Canonical still points to a different host than the after page', { before: bm.canonical, after: am.canonical }));
+      if (isPreviewHost(ctx.afterHost)) {
+        out.push(finding('meta.canonical', 'review', 'Canonical points to the production host; expected on a preview host, check it again on the launch domain', { before: bm.canonical, after: am.canonical }));
+      } else {
+        out.push(finding('meta.canonical', 'fail', 'Canonical still points to a different host than the after page', { before: bm.canonical, after: am.canonical }));
+      }
     } else if (bm.canonical && ctx.canon(bm.canonical, 'before') !== ctx.canon(am.canonical, 'after')) {
       out.push(finding('meta.canonical', 'review', 'Canonical URL changed', { before: bm.canonical, after: am.canonical }));
     }
@@ -349,12 +353,20 @@ function statusFindings(before, after, ctx) {
   return { findings: out, comparable: true };
 }
 
+function consentFindings(before, after) {
+  if (before.consent && !after.consent) {
+    return [finding('consent.missing', 'review', 'Cookie consent banner found on the before page but not on the after page')];
+  }
+  return [];
+}
+
 function contentFindings(before, after, ctx) {
   const status = statusFindings(before, after, ctx);
   if (!status.comparable) return status.findings;
   return [
     ...status.findings,
     ...metaFindings(before, after, ctx),
+    ...consentFindings(before, after),
     ...headingFindings(before, after),
     ...textFindings(before, after, ctx.rules, ctx.volatile),
     ...imageFindings(before, after),

@@ -212,6 +212,69 @@ test('markdown: site-wide findings count under integration and clean pages say s
   assert.match(clean, /\*\*Overall: ✅ Pass\*\*/);
 });
 
+// ---------- accuracy fixes ----------
+
+const { contentFindings, makeCanon } = require('./lib/content');
+const { siteFindings } = require('./lib/completeness');
+const { DEFAULT_RULES, reusableResult } = require('./lib/rules');
+const { volatileSections } = require('./lib/visual');
+
+const snap = (extra = {}) => ({ status: 200, finalUrl: '', redirects: [], lang: 'en', title: 'T', meta: { canonical: '' }, hreflang: [], favicon: true, headings: [], blocks: [], images: [], links: [], nav: [], ctas: [], forms: [], jsonld: [], downloads: [], ...extra });
+const ctxFor = (beforeUrl, afterUrl) => ({ beforeUrl, afterUrl, beforeHost: new URL(beforeUrl).host, afterHost: new URL(afterUrl).host, canon: makeCanon({ beforeUrl, afterUrl }), rules: DEFAULT_RULES, volatile: [] });
+
+test('content: consent banner only on the before page is a single consent.missing finding', () => {
+  const ctx = ctxFor('https://www.b.com/', 'https://www.a.com/');
+  const out = contentFindings(snap({ consent: true }), snap({ consent: false }), ctx);
+  const consent = out.filter((f) => f.check === 'consent.missing');
+  assert.equal(consent.length, 1);
+  assert.equal(consent[0].severity, 'review');
+  assert.equal(contentFindings(snap({ consent: true }), snap({ consent: true }), ctx).filter((f) => f.check.startsWith('consent')).length, 0);
+});
+
+test('visual.volatileSections finds sections whose text changes between two loads', () => {
+  const s = (name, fp) => ({ name, fp });
+  const before = [s('main-1', 'alpha beta gamma'), s('main-2', 'great guidance and clean execution from the team')];
+  const before2 = [s('main-1', 'alpha beta gamma'), s('main-2', 'professional clean and seamless design support')];
+  assert.deepEqual([...volatileSections(before, before2)], ['main-2']);
+});
+
+test('visual.pairSections pairs a volatile section by name even when its text differs', () => {
+  const s = (name, fp) => ({ name, fp });
+  const before = [s('main-1', 'alpha beta gamma'), s('main-2', 'great guidance and clean execution from the team')];
+  const after = [s('main-1', 'alpha beta gamma'), s('main-2', 'professional clean and seamless design support')];
+  assert.equal(pairSections(before, after).missing.length, 1);
+  const r = pairSections(before, after, { byName: new Set(['main-2']) });
+  assert.equal(r.pairs.length, 2);
+  assert.equal(r.missing.length, 0);
+  assert.equal(r.added.length, 0);
+});
+
+test('report: flaky pages are flagged in csv, html and markdown even when they fail', () => {
+  const pair = { id: 'f-1', before: 'https://b/x', after: 'https://a/x', status: 'fail', flaky: true, volatilePct: 13, findings: [{ check: 'meta.title', severity: 'fail', summary: 'Title missing' }] };
+  assert.match(toCsv([pair]).split('\n')[1], /,yes,/);
+  assert.match(renderHtml({ generatedAt: 'now', viewports: [1440], pairs: [pair], notTested: [] }), /changes between loads/);
+  assert.match(toMarkdown({ generatedAt: 'now', viewports: [1440], pairs: [pair], completeness: {}, notTested: [] }), /> ⚠️ .*changes between loads/);
+});
+
+test('resume: blocked and errored results are retried, finished ones are reused', () => {
+  assert.equal(reusableResult({ id: 'a', rawFindings: [] }), true);
+  assert.equal(reusableResult({ id: 'a', blocked: 'cloudflare', rawFindings: [] }), false);
+  assert.equal(reusableResult({ id: 'a', error: 'timeout', rawFindings: [] }), false);
+  assert.equal(reusableResult(null), false);
+});
+
+test('preview hosts: robots.txt disallow and production canonical are review, not fail', async () => {
+  const fetcher = { text: async (url) => ({ status: 200, body: url.includes('aem.page') || url.includes('stage.a.com') ? 'User-agent: *\nDisallow: /\n' : 'User-agent: *\nAllow: /\n' }) };
+  const preview = await siteFindings({ beforeOrigin: 'https://www.b.com', afterOrigin: 'https://main--site--org.aem.page', fetcher });
+  assert.equal(preview.find((f) => f.check === 'site.robots').severity, 'review');
+  const prod = await siteFindings({ beforeOrigin: 'https://www.b.com', afterOrigin: 'https://stage.a.com', fetcher });
+  assert.equal(prod.find((f) => f.check === 'site.robots').severity, 'fail');
+
+  const canon = (afterUrl) => contentFindings(snap({ meta: { canonical: 'https://www.b.com/' } }), snap({ meta: { canonical: 'https://www.b.com/' } }), ctxFor('https://www.b.com/', afterUrl)).find((f) => f.check === 'meta.canonical');
+  assert.equal(canon('https://main--site--org.aem.page/').severity, 'review');
+  assert.equal(canon('https://stage.a.com/').severity, 'fail');
+});
+
 // ---------- end to end (needs Chromium) ----------
 
 function chromiumAvailable() {
@@ -266,6 +329,12 @@ e2e('end to end: fixture site comparison', { timeout: 280000 }, async () => {
     assert.equal(by['/flaky'].status, 'flaky');
     assert.ok(checks('/analytics').some((c) => c.startsWith('analytics.')));
     assert.ok(checks('/redirect').includes('redirect.temporary'));
+    assert.ok(checks('/consent').includes('consent.missing'), JSON.stringify(by['/consent'].findings));
+    for (const c of ['heading.missing', 'cta.missing', 'image.missing', 'link.missing', 'content.text.missing']) {
+      assert.ok(!checks('/consent').includes(c), `consent banner leaked into ${c}: ${JSON.stringify(by['/consent'].findings)}`);
+    }
+    assert.ok(!checks('/rotating').includes('visual.section.missing'), JSON.stringify(by['/rotating'].findings));
+    assert.deepEqual(by['/rotating'].findings.filter((f) => f.severity === 'fail'), []);
     assert.ok(fs.existsSync(path.join(out, 'report.html')));
     assert.ok(fs.existsSync(path.join(out, 'summary.csv')));
     const flagged = by['/color-change'].findings.find((f) => f.check === 'visual.section');

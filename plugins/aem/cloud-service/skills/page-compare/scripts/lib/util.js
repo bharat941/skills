@@ -120,7 +120,13 @@ function round(n, d = 2) {
   return Math.round(n * f) / f;
 }
 
+// Edge Delivery Services preview/live hosts block crawlers and keep the production canonical by design.
+function isPreviewHost(host) {
+  return /\.(aem|hlx)\.(page|live)$/i.test(String(host || '').replace(/:\d+$/, ''));
+}
+
 module.exports = {
+  isPreviewHost,
   normalizeText,
   collapseSpace,
   similarity,

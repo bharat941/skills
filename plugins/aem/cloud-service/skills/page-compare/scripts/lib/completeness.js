@@ -3,7 +3,7 @@
 // Checks that go beyond a single page load: downloads, broken links, redirects, robots/sitemap
 // and page-set coverage. HTTP only (HEAD, falling back to GET); the fetch function is injectable.
 
-const { normalizePath, hostOf, round } = require('./util');
+const { normalizePath, hostOf, round, isPreviewHost } = require('./util');
 const { finding, cap } = require('./content');
 const { loadSitemap } = require('./pairs');
 
@@ -137,7 +137,11 @@ async function siteFindings({ beforeOrigin, afterOrigin, fetcher }) {
   const out = [];
   const [bRobots, aRobots] = await Promise.all([fetcher.text(`${beforeOrigin}/robots.txt`), fetcher.text(`${afterOrigin}/robots.txt`)]);
   if (aRobots.status === 200 && robotsBlocksAll(aRobots.body) && !(bRobots.status === 200 && robotsBlocksAll(bRobots.body))) {
-    out.push(finding('site.robots', 'fail', 'robots.txt on the after site disallows everything (Disallow: / for all agents)'));
+    if (isPreviewHost(hostOf(afterOrigin))) {
+      out.push(finding('site.robots', 'review', 'robots.txt on the after site disallows everything; expected on a preview host, check it again on the launch domain'));
+    } else {
+      out.push(finding('site.robots', 'fail', 'robots.txt on the after site disallows everything (Disallow: / for all agents)'));
+    }
   } else if (bRobots.status === 200 && aRobots.status !== 200) {
     out.push(finding('site.robots', 'review', `robots.txt exists on the before site but returns ${aRobots.status || 'an error'} on the after site`));
   }
