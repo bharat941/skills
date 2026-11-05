@@ -14,7 +14,8 @@ Pages are only loaded (GET); nothing is clicked, submitted or sent to another se
 ```bash
 cd scripts && npm run setup
 node compare.js --before https://www.example.com/en/page --after https://stage.example.com/en/page --out ./out
-open out/report.html
+open out/report.md      # clean summary: content, visual, integration
+open out/report.html    # interactive version
 ```
 
 For many pages use `--pairs pages.csv` (`before,after[,label]`) or `--sitemap <url> --map www.example.com=stage.example.com`.

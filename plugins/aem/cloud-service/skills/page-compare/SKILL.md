@@ -55,7 +55,7 @@ Exit code: `0` no fail/error/blocked, `1` at least one, `2` usage or setup error
 
 ## Read the report
 
-Open `out/report.html` (also `report.json`, `summary.csv`). Pages are ordered worst first. Statuses:
+Open `out/report.md` for the customer-facing summary (content parity, visual parity, integration), or `out/report.html` for the interactive version with the **Accept** buttons (also `report.json`, `summary.csv`). Pages are ordered worst first. Statuses:
 
 | Status | Meaning |
 |---|---|
