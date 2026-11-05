@@ -206,7 +206,7 @@ test('markdown: escapes table cells and caps long lists', () => {
 
 test('markdown: site-wide findings count under integration and clean pages say so', () => {
   const md = toMarkdown(mdRun([mdPair([], { status: 'pass' })], { siteFindings: [{ check: 'site.robots', severity: 'fail', summary: 'robots.txt disallows everything' }] }));
-  assert.match(md, /\| Integration \| ❌ Fail \| 1 \| 0 \|/);
+  assert.match(md, /\| Integration \| ❌ Fail \| 0 \| 0 \| 1 \| 1 \|/);
   assert.match(md, /## Site-wide checks/);
   const clean = toMarkdown(mdRun([mdPair([], { status: 'pass' })]));
   assert.match(clean, /\*\*Overall: ✅ Pass\*\*/);
@@ -249,6 +249,17 @@ test('visual.pairSections pairs a volatile section by name even when its text di
   assert.equal(r.added.length, 0);
 });
 
+test('visual.pairSections treats a same-named section with the same heading as changed, not missing', () => {
+  const s = (name, fp) => ({ name, fp });
+  const before = [s('main-1', 'alpha beta gamma'), s('main-10', 'what ourclients say about us great guidance and clean execution the bhps team explained the full process clearly and the supervisor guided me on current design trends and colour choices that suited our home')];
+  const after = [s('main-1', 'alpha beta gamma'), s('main-10', 'what ourclients say about us professional clean and seamlessbhps stood out with execution excellence and design support that truly brought our vision alive we would recommend them to every homeowner')];
+  const r = pairSections(before, after);
+  assert.equal(r.pairs.length, 2);
+  assert.equal(r.missing.length, 0);
+  const other = pairSections([s('main-3', 'pricing plans for every team size')], [s('main-3', 'security reviews and audit logging')]);
+  assert.equal(other.missing.length, 1, 'different heading means a different section');
+});
+
 test('report: flaky pages are flagged in csv, html and markdown even when they fail', () => {
   const pair = { id: 'f-1', before: 'https://b/x', after: 'https://a/x', status: 'fail', flaky: true, volatilePct: 13, findings: [{ check: 'meta.title', severity: 'fail', summary: 'Title missing' }] };
   assert.match(toCsv([pair]).split('\n')[1], /,yes,/);
@@ -273,6 +284,81 @@ test('preview hosts: robots.txt disallow and production canonical are review, no
   const canon = (afterUrl) => contentFindings(snap({ meta: { canonical: 'https://www.b.com/' } }), snap({ meta: { canonical: 'https://www.b.com/' } }), ctxFor('https://www.b.com/', afterUrl)).find((f) => f.check === 'meta.canonical');
   assert.equal(canon('https://main--site--org.aem.page/').severity, 'review');
   assert.equal(canon('https://stage.a.com/').severity, 'fail');
+});
+
+// ---------- markdown at scale ----------
+
+const { renderMarkdownFiles } = require('./lib/markdown');
+
+function scaleRun(n) {
+  const pairs = Array.from({ length: n }, (_, i) => {
+    const pass = i % 10 === 0;
+    return {
+      id: `p${i}-abc`, before: `https://www.b.com/p${i}`, after: `https://www.a.com/p${i}`, status: pass ? 'pass' : 'fail', noise: 0,
+      findings: pass ? [] : [
+        { check: 'meta.canonical', severity: 'fail', summary: 'Canonical still points to a different host than the after page', before: `https://www.b.com/p${i}`, after: `https://www.b.com/p${i}` },
+        { check: 'link.broken', severity: 'fail', summary: '2 internal link(s) on the after page return an error', items: [{ text: 'Store', url: 'https://www.a.com/store.html', status: 404 }, { text: 'Own', url: `https://www.a.com/own-${i}.html`, status: 404 }] },
+        { check: 'console.error', severity: 'review', summary: '1 new console error(s) on the after page', items: [{ message: `Access to fetch at 'https://api.x/cart.json?_=${1793874404668 + i}' blocked by CORS policy` }] },
+      ],
+    };
+  });
+  return { generatedAt: 'now', viewports: [1440], pairs, completeness: { siteFindings: [] }, notTested: ['Interactions'] };
+}
+
+const csvRows = (text) => text.trim().split('\n');
+
+test('markdown scale: report.md stays about the same size from 10 to 1000 pages', () => {
+  const small = renderMarkdownFiles(scaleRun(10))['report.md'];
+  const big = renderMarkdownFiles(scaleRun(1000))['report.md'];
+  assert.ok(big.length < 20000, `report.md is ${big.length} chars at 1000 pages`);
+  assert.ok(big.length - small.length < 4000, `report.md grew by ${big.length - small.length} chars`);
+});
+
+test('markdown scale: the same issue on many pages is one issue with a page count', () => {
+  const files = renderMarkdownFiles(scaleRun(100));
+  const rows = csvRows(files['issues.csv']);
+  assert.match(rows[0], /^severity,area,check,issue,pages_affected,example_page/);
+  const store = rows.filter((r) => r.includes('https://www.a.com/store.html'));
+  assert.equal(store.length, 1);
+  assert.match(store[0], /,90,/);
+  assert.equal(rows.filter((r) => r.includes('meta.canonical')).length, 1);
+  assert.equal(rows.filter((r) => r.includes('console.error')).length, 1, 'cache-buster numbers must not split one console error into many');
+  assert.match(files['report.md'], /Canonical still points to a different host[^\n]*\| 90 \|/);
+});
+
+test('markdown scale: every page is in pages.csv and each page with problems gets its own file', () => {
+  const files = renderMarkdownFiles(scaleRun(500));
+  const rows = csvRows(files['pages.csv']);
+  assert.match(rows[0], /^page,status,flaky,content,visual,integration,fail,review,top_issue,detail,before,after/);
+  assert.equal(rows.length, 501);
+  const pageFiles = Object.keys(files).filter((k) => k.startsWith('pages/'));
+  assert.equal(pageFiles.length, 450);
+  assert.match(files[pageFiles[0]], /### Content parity/);
+  assert.match(files['report.md'], /pages\.csv/);
+});
+
+test('markdown scale: long lists say what was left out', () => {
+  const files = renderMarkdownFiles(scaleRun(500));
+  assert.match(files['issues.md'], /more in issues\.csv/);
+  assert.match(files['report.md'], /and \d+ more/);
+});
+
+// ---------- per-group sampling ----------
+
+test('pairs: --per-group keeps N pages from each CSV group', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-group-'));
+  const csv = path.join(dir, 'p.csv');
+  fs.writeFileSync(csv, 'before,after,label,group\nhttps://b/a1,https://a/a1,,article\nhttps://b/a2,https://a/a2,,article\nhttps://b/a3,https://a/a3,,article\nhttps://b/p1,https://a/p1,,product\nhttps://b/p2,https://a/p2,,product\n');
+  const { pairs } = await loadPairs({ pairs: csv, perGroup: '2' });
+  assert.deepEqual(pairs.map((p) => p.before), ['https://b/a1', 'https://b/a2', 'https://b/p1', 'https://b/p2']);
+  await assert.rejects(loadPairs({ pairs: csv, perGroup: 'all' }), /--per-group/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('pairs: --per-group falls back to the first path segment of the before URL', async () => {
+  const fetchText = async () => '<urlset><url><loc>https://b.com/</loc></url><url><loc>https://b.com/blog/a</loc></url><url><loc>https://b.com/blog/b</loc></url><url><loc>https://b.com/products/x</loc></url><url><loc>https://b.com/products/y</loc></url></urlset>';
+  const { pairs } = await loadPairs({ sitemap: 'https://b.com/sitemap.xml', map: ['b.com=a.com'], perGroup: '1' }, fetchText);
+  assert.deepEqual(pairs.map((p) => p.before), ['https://b.com/', 'https://b.com/blog/a', 'https://b.com/products/x']);
 });
 
 // ---------- end to end (needs Chromium) ----------
@@ -337,6 +423,10 @@ e2e('end to end: fixture site comparison', { timeout: 280000 }, async () => {
     assert.deepEqual(by['/rotating'].findings.filter((f) => f.severity === 'fail'), []);
     assert.ok(fs.existsSync(path.join(out, 'report.html')));
     assert.ok(fs.existsSync(path.join(out, 'summary.csv')));
+    for (const f of ['report.md', 'issues.md', 'issues.csv', 'pages.csv']) assert.ok(fs.existsSync(path.join(out, f)), `${f} missing`);
+    assert.equal(fs.readFileSync(path.join(out, 'pages.csv'), 'utf8').trim().split('\n').length, paths.length + 1);
+    assert.ok(fs.existsSync(path.join(out, 'pages', `${by['/text-removed'].id}.md`)));
+    assert.ok(!fs.existsSync(path.join(out, 'pages', `${by['/identical'].id}.md`)), 'passing pages get no detail file');
     const flagged = by['/color-change'].findings.find((f) => f.check === 'visual.section');
     assert.ok(fs.existsSync(path.join(out, 'pairs', by['/color-change'].id, 'visual', flagged.items[0].files.diff)));
 

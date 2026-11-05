@@ -34,7 +34,7 @@ Needs Node 18.3 or newer. If `compare.js` reports a missing browser, run the set
 
 Ask only for what is missing:
 
-1. **Pages**: one `--before`/`--after` pair, a `--pairs` CSV (`before,after[,label]`), or `--sitemap <before sitemap> --map <beforeHost=afterHost>` (add `--path-map /old/=/new/` when paths change).
+1. **Pages**: one `--before`/`--after` pair, a `--pairs` CSV (`before,after[,label][,group]`), or `--sitemap <before sitemap> --map <beforeHost=afterHost>` (add `--path-map /old/=/new/` when paths change). For 100+ pages ask for a `group` column (template or section) so a sample per group can be run first.
 2. **Access**: if either site needs a login, a Playwright storage state file (`--storage-state`). Without it, login pages are compared as they appear to a visitor.
 3. **Bot protection**: sites behind a WAF may block the runner. The run reports those pages as `blocked`, not as failures. Ask the customer to allowlist the runner IP or the `page-compare/1.0` user agent, or raise `--pace-ms`.
 4. **Known volatile areas**: `--mask <selector>` for clocks, rotating promos and other content that changes on every load.
@@ -51,23 +51,38 @@ Useful options: `--viewports 1440,768,375` (default), `--concurrency 2`, `--pace
 
 Run a small sample (`--limit 5`) first on large sets, check it with the user, then run the full set.
 
+For 100+ pages, work in three steps:
+
+1. **Smoke test**: `--limit 5` to confirm access, bot protection and the URL mapping.
+2. **Sample per template**: `--per-group 2` keeps 2 pages from each group (the CSV `group` column, else the first path segment). This usually shows every template-level issue in a fraction of the time.
+3. **Full run** only when needed (for example go-live sign-off): add `--noise-sample 20%`, split by section with `--include`, and use `--resume` after an interruption. About 25–30 minutes per 100 pages at the defaults.
+
+`--resume` reuses pages that were captured and retries pages that were blocked or errored, so after an allowlist change rerun the same command with `--resume`.
+
 Exit code: `0` no fail/error/blocked, `1` at least one, `2` usage or setup error.
 
 ## Read the report
 
-Open `out/report.md` for the customer-facing summary (content parity, visual parity, integration), or `out/report.html` for the interactive version with the **Accept** buttons (also `report.json`, `summary.csv`). Pages are ordered worst first. Statuses:
+Open `out/report.md` first. It is a one-page summary at any number of pages: result per area (content parity, visual parity, integration) counted in pages, the top issues with how many pages each affects, and the pages that need attention. Alongside it:
+
+- `issues.md` / `issues.csv`: every distinct issue once, with the pages it affects. The same broken link or wrong canonical on 400 pages is one row.
+- `pages.csv`: one row per page with a result per area; open it in a spreadsheet to sort and filter.
+- `pages/<page>.md`: full before/after detail for each page that did not pass.
+- `report.html`: interactive version with the **Accept** buttons (also `report.json`, `summary.csv`).
+
+Pages are ordered worst first. Statuses:
 
 | Status | Meaning |
 |---|---|
 | `fail` | A finding that most likely needs a fix |
 | `review` | Needs a human look; may be intended |
-| `flaky` | Needed a retry, or its text changes between two loads of the before page |
+| `flaky` | Needed a retry, or its text changes between two loads of the before page. A flaky page that also fails keeps status `fail`, and is still marked flaky in every report |
 | `unstable` | The before page itself changes too much between loads for pixel comparison to be trusted |
 | `blocked` | Bot protection answered; not a site defect |
 | `error` | The page could not be captured |
 | `pass` | No unaccepted fail or review findings |
 
-Go through `fail` first, then `review`. For each finding say what changed and whether it looks like a regression or an intended change. See `references/checks.md` for what each check means and `references/report.md` for the report layout.
+Go through `fail` first, then `review`. For each finding say what changed and whether it looks like a regression or an intended change. When the after site is an Edge Delivery preview host (`*.aem.page`, `*.aem.live`), robots.txt blocking crawlers and a production canonical are expected there and reported as `review`; say they must be checked again on the launch domain. See `references/checks.md` for what each check means and `references/report.md` for the report layout.
 
 ## Accepting differences
 

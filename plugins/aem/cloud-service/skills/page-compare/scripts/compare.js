@@ -13,7 +13,7 @@ const { functionalFindings } = require('./lib/functional');
 const { visualFindings } = require('./lib/visual');
 const { createFetcher, downloadFindings, brokenLinkFindings, siteFindings, redirectFindings, pageSetCoverage } = require('./lib/completeness');
 const { renderHtml, renderJson, toCsv, summarize, exitCode } = require('./lib/report');
-const { toMarkdown } = require('./lib/markdown');
+const { renderMarkdownFiles } = require('./lib/markdown');
 const { normalizePath, hash } = require('./lib/util');
 const { parseCsv } = require('./lib/pairs');
 
@@ -39,6 +39,7 @@ Options:
   --redirects <file.csv>    CSV with header: from,to; checks the before URL redirects to the target
   --noise-sample <pct>      Run the noise baseline on this share of pages (default 100%)
   --include <regex> / --exclude <regex> / --limit <n>   Filter the page list (matched on before URL)
+  --per-group <n>           Keep n pages per group: the CSV "group" column, else the first path segment
   --resume                  Reuse stored captures in --out and only reapply --accept
   --no-link-check           Skip HTTP checks of links and downloads
   --ua <suffix>             User-agent suffix (default page-compare/1.0)
@@ -85,6 +86,7 @@ function parseOptions(argv) {
       include: { type: 'string' },
       exclude: { type: 'string' },
       limit: { type: 'string' },
+      'per-group': { type: 'string' },
       resume: { type: 'boolean', default: false },
       'no-link-check': { type: 'boolean', default: false },
       ua: { type: 'string', default: 'page-compare/1.0' },
@@ -253,6 +255,7 @@ async function main() {
       include: opts.include,
       exclude: opts.exclude,
       limit: opts.limit,
+      perGroup: opts['per-group'],
     });
   } catch (e) {
     fail(e.message);
@@ -344,14 +347,18 @@ async function main() {
     pairs: finalPairs,
   };
   fs.writeFileSync(path.join(outDir, 'report.html'), renderHtml(run));
-  fs.writeFileSync(path.join(outDir, 'report.md'), toMarkdown(run));
+  fs.rmSync(path.join(outDir, 'pages'), { recursive: true, force: true });
+  for (const [rel, content] of Object.entries(renderMarkdownFiles(run))) {
+    fs.mkdirSync(path.dirname(path.join(outDir, rel)), { recursive: true });
+    fs.writeFileSync(path.join(outDir, rel), content);
+  }
   fs.writeFileSync(path.join(outDir, 'report.json'), renderJson(run));
   fs.writeFileSync(path.join(outDir, 'summary.csv'), toCsv(finalPairs));
 
   const counts = summarize(finalPairs);
   console.log(Object.entries(counts).filter(([, n]) => n).map(([s, n]) => `${s}: ${n}`).join('  '));
   console.log(`Report: ${path.join(outDir, 'report.html')}`);
-  console.log(`Markdown: ${path.join(outDir, 'report.md')}`);
+  console.log(`Markdown: ${path.join(outDir, 'report.md')} (issues.csv, pages.csv and pages/ alongside)`);
   if (pausedHosts.size) console.log(`Bot protection blocked ${[...pausedHosts].join(', ')}; allowlist this runner or raise --pace-ms, then rerun with --resume.`);
   process.exit(exitCode(finalPairs));
 }

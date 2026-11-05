@@ -3,23 +3,41 @@
 Everything is written under `--out` (default `./page-compare-out`).
 
 ```
-report.html          single static report; open in a browser
-report.md            clean Markdown report: content parity, visual parity, integration
-report.json          full results (same data as the HTML)
-summary.csv          one row per pair: status, counts, top finding
+report.md                 one-page summary at any number of pages; start here
+issues.md, issues.csv     every distinct issue once, with how many pages it affects
+pages.csv                 one row per page: result per area, counts, top issue, link to detail
+pages/<id>.md             full detail for each page that did not pass
+report.html               interactive report with Accept buttons
+report.json               full results (same data as the HTML)
+summary.csv               one row per pair: status, counts, top finding
 pairs/<id>/result.json    stored raw findings, used by --resume
 pairs/<id>/visual/        before/after/diff PNGs, only for flagged sections
 ```
 
+Share the whole output folder: the Markdown files link to screenshots under `pairs/`.
+
 ## report.md
 
-The report to hand to a customer. It has an overall result, a summary table, then for each page three sections:
+The report to hand to a customer. Its size does not grow with the number of pages:
 
-- **Content parity**: text, headings, meta and SEO tags, images, links, buttons and forms, with before and after values.
-- **Visual parity**: how many sections are identical at each viewport, plus the sections that differ. A section that exists on both pages but has different content is shown once, with what each page says, instead of as a separate "missing" and "added" pair. Pixel differences link to the before, after and diff images under `pairs/`.
-- **Integration**: console and network errors, analytics, broken links and downloads, redirects, `robots.txt` and sitemap. Site-wide checks are listed in their own section and counted here.
+- Overall result, pages compared by status, and a summary table per area (**content parity**, **visual parity**, **integration**) counted in pages: failing, to review, passing, plus site-wide issues.
+- **Top issues**: the 10 most important distinct issues, each with the number of pages it affects and an example page.
+- A note when pages are flaky (text changes between loads), so their findings are read with care.
+- Site-wide checks: robots.txt, sitemap, redirects, page-set coverage.
+- **Pages that need attention**: the 10 worst pages with a link to their detail file.
+- For a single page, the full page detail follows inline.
 
-Long lists show the first 10 rows; the full data is in `report.json`. For many pages it adds an overview table and shows detail for the 25 worst. Keep `report.md` next to `pairs/` so the image links work.
+Every list that is cut says how many rows were left out and which file has them.
+
+## issues.md and issues.csv
+
+Open fail and review findings from all pages are grouped into issues. Findings with items (broken links, missing headings, console errors) become one issue per item; others become one issue per finding. Numbers that change on every page load (cache busters such as `?_=1793874404668`, long ids) are ignored when grouping, so the same console error on 300 pages is one issue. Info-level findings are not listed.
+
+`issues.csv` columns: `severity, area, check, issue, pages_affected, example_page, pages` (up to 20 page paths). `issues.md` shows the first 200 issues and points to the CSV for the rest.
+
+## pages.csv and pages/
+
+`pages.csv` has one row per compared page: `page, status, flaky, content, visual, integration, fail, review, top_issue, detail, before, after`. Each area is `pass`, `review`, `fail` or `not compared` (blocked or error). `detail` points to `pages/<id>.md`, which has the page's content parity, visual parity and integration sections with before/after tables and screenshot links. Pages that pass get no detail file.
 
 ## report.html
 
@@ -61,3 +79,6 @@ Priority when a page has several: `blocked`, `error`, `fail`, `flaky`, `unstable
 - About nine page loads per pair (before twice and after, at three viewports): roughly 25 to 30 minutes per 100 pairs at the default concurrency. `--noise-sample 20%` runs the second before load on a fifth of the pages.
 - Requests to each host are spaced by `--pace-ms`. If more than 20% of a host's pages (after at least five) are blocked, the run stops loading that host and reports the rest as blocked.
 - A page that loads only after a retry is marked `flaky` rather than hidden.
+- `--per-group <n>` keeps n pages per template or section (the CSV `group` column, else the first path segment of the before URL). A sample of 2 per group usually surfaces every template-level issue.
+- `--resume` reuses captured pages and retries pages that were blocked or errored.
+- The report stays readable at any size: `report.md` is a fixed-size summary, and the per-page detail lives in `pages.csv` and `pages/`.
