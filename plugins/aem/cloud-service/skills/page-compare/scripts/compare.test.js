@@ -14,7 +14,7 @@ const { classifyBlock, createPacer, withRetry } = require('./lib/guard');
 const { classifyRequest } = require('./lib/functional');
 const { normalizePath } = require('./lib/util');
 const { renderHtml, toCsv, exitCode, summarize } = require('./lib/report');
-const { robotsBlocksAll } = require('./lib/completeness');
+const { robotsBlocksAll, redirectFindings } = require('./lib/completeness');
 const { pairSections } = require('./lib/visual');
 
 // ---------- units ----------
@@ -143,6 +143,16 @@ test('report: renders escaped html, csv and exit code', () => {
   assert.equal(exitCode([pairs[1]]), 0);
   assert.equal(summarize(pairs).fail, 1);
   assert.match(toCsv(pairs), /^status,before,after/);
+});
+
+test('completeness: findings keep items as a list so the report renders', async () => {
+  const fetcher = { redirectOf: async () => ({ status: 404, location: '' }) };
+  const { findings } = await redirectFindings([{ from: 'https://b/old', to: 'https://a/new' }], fetcher, 'https://a');
+  assert.equal(findings.length, 1);
+  assert.ok(Array.isArray(findings[0].items));
+  assert.equal(findings[0].items.length, 1);
+  const html = renderHtml({ generatedAt: 'now', viewports: [1440], pairs: [{ id: 'r-1', before: 'https://b/old', after: 'https://a/new', status: 'fail', findings }], notTested: [] });
+  assert.ok(html.includes('redirect.wrong'));
 });
 
 // ---------- end to end (needs Chromium) ----------

@@ -77,8 +77,8 @@ async function downloadFindings(before, after, ctx) {
     }
   }
   const out = [];
-  if (bad.length) out.push(finding('download.broken', 'fail', `${bad.length} download link(s) on the after page do not resolve`, { items: cap(bad) }));
-  if (changed.length) out.push(finding('download.changed', 'review', `${changed.length} download(s) differ in type or size from the before page`, { items: cap(changed) }));
+  if (bad.length) out.push(finding('download.broken', 'fail', `${bad.length} download link(s) on the after page do not resolve`, cap(bad)));
+  if (changed.length) out.push(finding('download.changed', 'review', `${changed.length} download(s) differ in type or size from the before page`, cap(changed)));
   return out;
 }
 
@@ -115,8 +115,8 @@ async function brokenLinkFindings(before, after, ctx) {
     }
   }
   const out = [];
-  if (broken.length) out.push(finding('link.broken', 'fail', `${broken.length} internal link(s) on the after page return an error`, { items: cap(broken) }));
-  if (preExisting.length) out.push(finding('link.broken.preexisting', 'info', `${preExisting.length} link(s) were already broken on the before page`, { items: cap(preExisting) }));
+  if (broken.length) out.push(finding('link.broken', 'fail', `${broken.length} internal link(s) on the after page return an error`, cap(broken)));
+  if (preExisting.length) out.push(finding('link.broken.preexisting', 'info', `${preExisting.length} link(s) were already broken on the before page`, cap(preExisting)));
   if (targets.length > limit) out.push(finding('link.unchecked', 'info', `${targets.length - limit} internal link(s) were not checked (limit ${limit} per page)`));
   return out;
 }
@@ -179,8 +179,8 @@ async function redirectFindings(rows, fetcher, afterOrigin) {
   const failing = results.filter((r) => r.status === 'fail');
   const review = results.filter((r) => r.status === 'review');
   const out = [];
-  if (failing.length) out.push(finding('redirect.wrong', 'fail', `${failing.length} of ${results.length} redirect(s) are missing or wrong`, { items: cap(failing) }));
-  if (review.length) out.push(finding('redirect.temporary', 'review', `${review.length} redirect(s) are temporary`, { items: cap(review) }));
+  if (failing.length) out.push(finding('redirect.wrong', 'fail', `${failing.length} of ${results.length} redirect(s) are missing or wrong`, cap(failing)));
+  if (review.length) out.push(finding('redirect.temporary', 'review', `${review.length} redirect(s) are temporary`, cap(review)));
   return { results, findings: out, afterOrigin };
 }
 
