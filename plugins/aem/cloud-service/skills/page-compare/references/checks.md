@@ -26,7 +26,8 @@ When either page is not 2xx, the remaining checks are skipped for that pair.
 | `content.text.added` | review above 2% of before text, otherwise info | New text on after |
 | `content.text.format` | info | Same words, different spacing |
 | `heading.missing` / `heading.level` / `heading.added` | review / review / info | Heading text and level changes |
-| `meta.title`, `meta.description`, `meta.canonical`, `meta.robots`, `meta.lang`, `meta.hreflang`, `meta.social`, `meta.favicon` | fail or review | Head metadata. A missing title, a canonical pointing to the wrong host and `noindex` appearing are fails |
+| `meta.title`, `meta.description`, `meta.canonical`, `meta.robots`, `meta.lang`, `meta.hreflang`, `meta.social`, `meta.favicon` | fail or review | Head metadata. A missing title, a canonical pointing to the wrong host and `noindex` appearing are fails. On an Edge Delivery preview host (`*.aem.page`/`.live`, `*.hlx.page`/`.live`) a canonical that still points to production is review, since preview pages keep it by design |
+| `consent.missing` | review | A cookie consent banner (OneTrust, Cookiebot, TrustArc, ...) is on the before page but not on the after page. Consent dialogs are otherwise left out of every content check and screenshot, so their headings, buttons and logos never show up as missing content |
 | `image.missing`, `image.broken` | fail | Content images missing or failing to load |
 | `image.alt`, `image.alt.changed` | review | Alt text lost or changed |
 | `image.missing.chrome`, `image.broken.chrome` | review | Same, for header/footer images |
@@ -41,7 +42,7 @@ Text that differs between two loads of the before page (for example a counter) i
 
 ## Visual
 
-Pages are split into sections (header, footer, and the children of `main`; override with `--sections`). Sections are paired by text, then by order, and compared at each viewport. The before page is loaded twice; pixels that differ between those loads are masked out of the comparison. One-pixel shifts caused by content above a section are tolerated.
+Pages are split into sections (header, footer, and the children of `main`; override with `--sections`). Sections are paired by text, then by order, and compared at each viewport. The before page is loaded twice; pixels that differ between those loads are masked out of the comparison. A section whose text differs between the two before loads (rotating testimonials, carousels) is paired by its position name instead of its text and compared with that mask, so it is never reported as missing. A section with the same name and the same opening words (usually its heading) on both pages is also treated as the same section with changed content, so a carousel that starts on a different slide is a visual difference with screenshots, not a missing section. Add `--mask <selector>` for carousels to leave them out entirely. One-pixel shifts caused by content above a section are tolerated.
 
 | Check | Severity | Meaning |
 |---|---|---|
@@ -87,7 +88,7 @@ Not covered: interaction events (clicks, form submits), consent behaviour, and w
 
 | Check | Severity | Meaning |
 |---|---|---|
-| `site.robots` | fail / review | After robots.txt disallows everything, or is missing when before has one |
+| `site.robots` | fail / review | After robots.txt disallows everything, or is missing when before has one. Review instead of fail on an Edge Delivery preview host, where blocking crawlers is by design |
 | `site.sitemap` | review | sitemap.xml missing on after |
 | `redirect.wrong` / `redirect.temporary` | fail / review | From `--redirects`: before URL does not redirect to the expected target, or uses a temporary redirect |
 | Page-set coverage | shown in summary | With `--after-sitemap`: after pages not in the compared set |

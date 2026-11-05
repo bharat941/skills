@@ -48,11 +48,23 @@ function pairsFromCsv(text) {
   const ai = header.indexOf('after');
   if (bi < 0 || ai < 0) throw new Error('CSV needs a header row with "before" and "after" columns');
   const li = header.indexOf('label');
+  const gi = header.indexOf('group');
   return rows.slice(1).map((r) => ({
     before: (r[bi] || '').trim(),
     after: (r[ai] || '').trim(),
     label: li >= 0 ? (r[li] || '').trim() : '',
+    ...(gi >= 0 && (r[gi] || '').trim() ? { group: r[gi].trim() } : {}),
   })).filter((p) => p.before && p.after);
+}
+
+// Template or section a page belongs to: the CSV "group" column, else the first path segment.
+function groupOf(pair) {
+  if (pair.group) return pair.group;
+  try {
+    return new URL(pair.before).pathname.split('/').filter(Boolean)[0] || '/';
+  } catch (e) {
+    return '/';
+  }
 }
 
 function parseMap(spec) {
@@ -151,8 +163,18 @@ async function loadPairs(opts, fetchText = defaultFetchText) {
     if (exclude && exclude.test(p.before)) return false;
     return true;
   });
+  if (opts.perGroup) {
+    const per = Number(opts.perGroup);
+    if (!Number.isInteger(per) || per < 1) throw new Error(`--per-group needs a whole number of 1 or more, got "${opts.perGroup}"`);
+    const taken = new Map();
+    pairs = pairs.filter((p) => {
+      const g = groupOf(p);
+      taken.set(g, (taken.get(g) || 0) + 1);
+      return taken.get(g) <= per;
+    });
+  }
   if (opts.limit) pairs = pairs.slice(0, Number(opts.limit));
   return { pairs: pairs.map((p) => ({ ...p, id: pairId(p) })), beforeUrls, hostMap, pathMap };
 }
 
-module.exports = { parseCsv, pairsFromCsv, parseMap, mapUrl, parseSitemapXml, loadSitemap, loadPairs, pairId };
+module.exports = { parseCsv, pairsFromCsv, parseMap, mapUrl, parseSitemapXml, loadSitemap, loadPairs, pairId, groupOf };

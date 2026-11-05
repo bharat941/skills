@@ -114,6 +114,13 @@ function kindOf(name) {
   return name === 'header' || name === 'footer' ? name : 'main';
 }
 
+// Same opening words (usually the section heading): the same section with changed content, such as a carousel on another slide.
+function sameLead(a, b) {
+  const lead = (s) => normalizeText(s || '').split(' ').slice(0, 4).join(' ');
+  const x = lead(a);
+  return x.length >= 12 && x === lead(b);
+}
+
 // Pair sections by text fingerprint first, then by order within the same kind.
 // Sections named in `byName` (their text changes between loads) are paired by name as a last resort.
 function pairSections(before, after, { byName = new Set() } = {}) {
@@ -145,8 +152,8 @@ function pairSections(before, after, { byName = new Set() } = {}) {
     }
   }
   for (const [i, b] of before.entries()) {
-    if (usedB.has(i) || !byName.has(b.name)) continue;
-    const k = after.findIndex((a, n) => !usedA.has(n) && a.name === b.name);
+    if (usedB.has(i)) continue;
+    const k = after.findIndex((a, n) => !usedA.has(n) && a.name === b.name && (byName.has(b.name) || sameLead(b.fp, a.fp)));
     if (k >= 0) {
       usedB.add(i);
       usedA.add(k);

@@ -3,7 +3,7 @@
 Compares live **before** and **after** pages after an AEM migration or redesign and writes a static report. Handles one pair or 100+ (CSV or sitemap).
 
 - **Content**: text (including text hidden in tabs), headings, meta, images, links, navigation, forms, structured data
-- **Visual**: per-section screenshots at 1440/768/375 with a noise baseline so animated or volatile areas do not cause false failures
+- **Visual**: per-section screenshots at 1440/768/375 with a noise baseline so animated, rotating or volatile areas do not cause false failures
 - **Functional**: JavaScript and console errors, failed assets, load/LCP timing, accessibility deltas, Adobe Analytics / Web SDK / GA4 / Launch values and data layer
 - **Cut-over**: downloads, broken links, redirects, robots.txt, sitemap, and pages on the after site that were not compared
 
@@ -14,11 +14,11 @@ Pages are only loaded (GET); nothing is clicked, submitted or sent to another se
 ```bash
 cd scripts && npm run setup
 node compare.js --before https://www.example.com/en/page --after https://stage.example.com/en/page --out ./out
-open out/report.md      # clean summary: content, visual, integration
+open out/report.md      # one-page summary: content, visual, integration, top issues
 open out/report.html    # interactive version
 ```
 
-For many pages use `--pairs pages.csv` (`before,after[,label]`) or `--sitemap <url> --map www.example.com=stage.example.com`.
+For many pages use `--pairs pages.csv` (`before,after[,label][,group]`) or `--sitemap <url> --map www.example.com=stage.example.com`, and start with `--per-group 2` to sample each template. The run also writes `issues.csv` (each issue once, with pages affected), `pages.csv` (one row per page) and `pages/<page>.md` (detail per page).
 
 See [SKILL.md](SKILL.md) for how an agent runs and triages it, [references/checks.md](references/checks.md) for every check and threshold, and [references/report.md](references/report.md) for the report, `accepted.json` and scaling notes.
 
