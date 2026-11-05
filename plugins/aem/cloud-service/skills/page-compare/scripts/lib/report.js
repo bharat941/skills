@@ -35,7 +35,7 @@ function toCsv(pairs) {
       open.filter((f) => f.severity === 'review').length,
       (p.findings || []).filter((f) => f.accepted).length,
       p.noise ?? '',
-      p.retried ? 'yes' : '',
+      p.flaky || p.retried ? 'yes' : '',
       top ? top.summary : p.error || p.blocked || '',
     ].map(csvCell).join(',');
   });
@@ -92,12 +92,13 @@ function renderPair(p) {
   const findings = [...(p.findings || [])].sort((a, b) => Number(!!a.accepted) - Number(!!b.accepted) || ({ fail: 0, review: 1, info: 2 }[a.severity] - { fail: 0, review: 1, info: 2 }[b.severity]));
   const note = p.blocked ? `<div class="note">Blocked by bot protection: ${esc(p.blocked)}. Not a site defect; allowlist the runner or slow down, then rerun.</div>` : p.error ? `<div class="note">${esc(p.error)}</div>` : '';
   const flaky = p.retried ? '<div class="note">Needed a retry to load: treat as flaky.</div>' : '';
+  const volatile = p.flaky && p.volatilePct ? `<div class="note">${esc(p.volatilePct)}% of this page's text changes between loads: some findings may be noise.</div>` : '';
   const noise = p.noise != null ? ` <span class="k">noise</span> ${esc(p.noise)}%` : '';
   const rows = (p.visual && p.visual.rows) || [];
   const table = rows.length
     ? `<table><tr><th>viewport</th><th>section</th><th>diff %</th><th>height before/after</th><th>status</th></tr>${rows.map((r) => `<tr class="${esc(r.status)}"><td>${esc(r.viewport)}</td><td>${esc(r.section)}</td><td>${esc(r.pct ?? '')}</td><td>${esc(r.heightBefore ?? '')}/${esc(r.heightAfter ?? '')}</td><td>${esc(r.status)}</td></tr>`).join('')}</table>`
     : '';
-  return `<details class="pair ${esc(p.status)}" data-status="${esc(p.status)}"><summary><span class="badge ${esc(p.status)}">${esc(p.status)}</span> ${esc(pageKey(p))}${noise}<span class="urls">${esc(p.before)} &rarr; ${esc(p.after)}</span></summary>${note}${flaky}${findings.map((f) => renderFinding(p, f)).join('') || '<p>No findings.</p>'}${table}</details>`;
+  return `<details class="pair ${esc(p.status)}" data-status="${esc(p.status)}"><summary><span class="badge ${esc(p.status)}">${esc(p.status)}</span> ${esc(pageKey(p))}${noise}<span class="urls">${esc(p.before)} &rarr; ${esc(p.after)}</span></summary>${note}${flaky}${volatile}${findings.map((f) => renderFinding(p, f)).join('') || '<p>No findings.</p>'}${table}</details>`;
 }
 
 function renderCompleteness(c) {

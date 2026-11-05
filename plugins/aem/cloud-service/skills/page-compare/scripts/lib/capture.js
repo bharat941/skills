@@ -3,9 +3,12 @@
 const { classifyBlock } = require('./guard');
 const { classifyRequest, flattenDataLayer } = require('./functional');
 
+// Cookie/consent dialogs: hidden from screenshots and left out of every content check.
+const CONSENT_SELECTORS = ['#onetrust-consent-sdk', '#onetrust-banner-sdk', '#truste-consent-track', '#CybotCookiebotDialog', '.cc-window', '.cookie-banner', '.cookie-consent', '.cmp-cookie-banner', '[id^="sp_message_container"]', '.evidon-banner'];
+
 const HIDE_CSS = `
 *,*::before,*::after{animation:none!important;transition:none!important;caret-color:transparent!important;scroll-behavior:auto!important}
-#onetrust-consent-sdk,#onetrust-banner-sdk,#truste-consent-track,#CybotCookiebotDialog,.cc-window,.cookie-banner,.cookie-consent,.cmp-cookie-banner,[id^="sp_message_container"],.evidon-banner{display:none!important}
+${CONSENT_SELECTORS.join(',')}{display:none!important}
 `;
 
 function loadPlaywright() {
@@ -29,9 +32,9 @@ async function launchBrowser() {
 }
 
 // Runs inside the page. Must stay self-contained.
-function extractInPage({ masks, sectionSelectors }) {
+function extractInPage({ masks, sectionSelectors, consentSel = '' }) {
   const maskSel = masks.join(',');
-  const isMasked = (el) => !!maskSel && !!el.closest(maskSel);
+  const isMasked = (el) => (!!maskSel && !!el.closest(maskSel)) || (!!consentSel && !!el.closest(consentSel));
   const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'HEAD', 'IFRAME', 'SVG', 'CANVAS', 'VIDEO', 'AUDIO']);
   const INLINE = new Set(['A', 'SPAN', 'STRONG', 'B', 'EM', 'I', 'U', 'SMALL', 'SUP', 'SUB', 'ABBR', 'CODE', 'MARK', 'TIME', 'CITE', 'Q', 'S', 'DEL', 'INS', 'FONT', 'BDI', 'BDO', 'DATA', 'DFN', 'KBD', 'SAMP', 'VAR', 'WBR', 'BR', 'LABEL']);
   const visible = (el) => {
@@ -178,6 +181,7 @@ function extractInPage({ masks, sectionSelectors }) {
     meta,
     hreflang: [...document.querySelectorAll('link[rel=alternate][hreflang]')].map((l) => ({ lang: l.getAttribute('hreflang'), href: l.href })),
     favicon: !!document.querySelector('link[rel~=icon]'),
+    consent: !!consentSel && !!document.querySelector(consentSel),
     headings,
     blocks,
     images,
@@ -302,7 +306,7 @@ async function capturePage(browser, url, opts) {
     await settle(page);
     if (settleMs) await page.waitForTimeout(settleMs);
 
-    const extracted = await page.evaluate(extractInPage, { masks, sectionSelectors });
+    const extracted = await page.evaluate(extractInPage, { masks, sectionSelectors, consentSel: CONSENT_SELECTORS.join(',') });
     const { sections: rects, pageHeight, ...rest } = extracted;
 
     const sections = [];

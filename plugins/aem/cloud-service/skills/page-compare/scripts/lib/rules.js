@@ -125,8 +125,14 @@ function deriveStatus({ error, blocked, flaky, unstable, findings = [] }) {
   return worst === 'review' ? 'review' : 'pass';
 }
 
+/** A stored pair result can be reused by --resume only when the page was actually captured. */
+function reusableResult(result) {
+  return !!result && !result.blocked && !result.error;
+}
+
 module.exports = {
   deriveStatus,
+  reusableResult,
   DEFAULT_RULES,
   loadRules,
   loadAccepted,

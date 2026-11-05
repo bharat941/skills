@@ -197,6 +197,7 @@ function pairSection(p) {
     .filter(Boolean).join(' · ');
   if (reliability) head.push(`- **Reliability:** ${reliability}`);
   if (p.blocked || p.error) return [...head, '', `> This page could not be compared: ${cell(p.blocked || p.error, 300)}`].join('\n');
+  if (p.flaky && p.volatilePct) head.push('', `> ⚠️ ${cell(p.volatilePct)}% of this page's text changes between loads (rotating or random content), so some findings may be noise.`);
   const by = groupByArea(sortFindings(p.findings || []));
   const parts = [head.join('\n')];
   for (const area of AREAS) {

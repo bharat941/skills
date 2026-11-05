@@ -68,7 +68,18 @@ const scenarios = {
     after: doc({ body: standard(), script: '<script>fetch("/b/ss/stagesuite/1/JS-2.0/s1?pageName=home-new&rsid=stagesuite").catch(function(){});</script>' }),
   },
   '/redirect': { before: base(), after: { status: 302, headers: { location: '/identical' } } },
+  '/consent': {
+    before: doc({ body: standard(), script: '<div id="onetrust-consent-sdk"><div id="onetrust-banner-sdk"><h2>Privacy Preference Center</h2><img src="/img.png" alt="Company Logo" width="40" height="40"><a href="/about">More information</a><button>Accept All Cookies</button></div></div>' }),
+    after: base(),
+  },
+  '/rotating': { before: { rotate: true }, after: { rotate: true } },
 };
+
+const TESTIMONIALS = [
+  'Great guidance and clean execution. The team explained the full process clearly and the supervisor guided us on every colour decision.',
+  'Professional, clean and seamless. They stood out with execution excellence and design support that truly brought our vision alive.',
+];
+const rotating = (n) => doc({ body: standard(4, `<section class="quotes"><h2>What our clients say</h2><p>${TESTIMONIALS[n % 2]}</p></section>`) });
 
 const statics = { '/': 'Home', '/about': 'About us', '/other': 'Other page' };
 
@@ -104,6 +115,7 @@ function start() {
     }
     let entry = sc[host];
     if (typeof entry === 'string') entry = { status: 200, html: entry };
+    if (entry.rotate) entry = { status: 200, html: rotating(n) };
     if (entry.flaky) {
       if (n === 1) {
         res.writeHead(500, { 'content-type': 'text/html' });

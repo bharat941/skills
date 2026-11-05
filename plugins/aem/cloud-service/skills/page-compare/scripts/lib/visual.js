@@ -115,7 +115,8 @@ function kindOf(name) {
 }
 
 // Pair sections by text fingerprint first, then by order within the same kind.
-function pairSections(before, after) {
+// Sections named in `byName` (their text changes between loads) are paired by name as a last resort.
+function pairSections(before, after, { byName = new Set() } = {}) {
   const usedB = new Set();
   const usedA = new Set();
   const pairs = [];
@@ -143,11 +144,28 @@ function pairSections(before, after) {
       }
     }
   }
+  for (const [i, b] of before.entries()) {
+    if (usedB.has(i) || !byName.has(b.name)) continue;
+    const k = after.findIndex((a, n) => !usedA.has(n) && a.name === b.name);
+    if (k >= 0) {
+      usedB.add(i);
+      usedA.add(k);
+      pairs.push([b, after[k]]);
+    }
+  }
   return {
     pairs,
     missing: before.filter((_, i) => !usedB.has(i)),
     added: after.filter((_, i) => !usedA.has(i)),
   };
+}
+
+/** Names of before-page sections whose text differs between two loads of the before page (carousels, rotating quotes). */
+function volatileSections(before, before2) {
+  if (!before2 || !before2.length) return new Set();
+  const { missing } = pairSections(before, before2);
+  const names = new Set(before2.map((s) => s.name));
+  return new Set(missing.filter((s) => names.has(s.name)).map((s) => s.name));
 }
 
 function safeName(s) {
@@ -173,13 +191,14 @@ function visualFindings({ viewport, before, after, before2, rules, outDir, secti
   const v = rules.visual;
   const findings = [];
   const rows = [];
-  const pairing = pairSections(before, after);
+  const volatile = volatileSections(before, before2);
+  const pairing = pairSections(before, after, { byName: volatile });
 
   let noiseWeighted = 0;
   let noiseArea = 0;
   const masks = new Map();
   if (before2 && before2.length) {
-    const noisePairs = pairSections(before, before2).pairs;
+    const noisePairs = pairSections(before, before2, { byName: volatile }).pairs;
     for (const [b, b2] of noisePairs) {
       const n = compareImages(b.png, b2.png);
       masks.set(b.name, buildMask(b.png, b2.png));
@@ -198,7 +217,7 @@ function visualFindings({ viewport, before, after, before2, rules, outDir, secti
     const r = compareImages(b.png, a.png, masks.get(b.name), { tolerantAbovePct: v.reviewPct });
     const heightDelta = r.heightAfter - r.heightBefore;
     const status = r.pct > v.failPct ? 'fail' : r.pct > v.reviewPct ? 'review' : 'pass';
-    const row = { viewport, section: a.name, before: b.name, pct: r.pct, maskedPct: r.maskedPct, heightBefore: r.heightBefore, heightAfter: r.heightAfter, heightDelta, status };
+    const row = { viewport, section: a.name, before: b.name, pct: r.pct, maskedPct: r.maskedPct, heightBefore: r.heightBefore, heightAfter: r.heightAfter, heightDelta, status, ...(volatile.has(b.name) ? { volatile: true } : {}) };
     if (status !== 'pass' || Math.abs(heightDelta) > r.heightBefore * (v.heightReviewPct / 100)) {
       row.files = writeFiles(outDir, `${viewport}-${safeName(a.name)}`, { before: b.png, after: a.png, diff: r.diffPng() });
     }
@@ -224,4 +243,4 @@ function visualFindings({ viewport, before, after, before2, rules, outDir, secti
   return { findings, rows, noise, unstable: false };
 }
 
-module.exports = { buildMask, compareImages, pairSections, visualFindings };
+module.exports = { buildMask, compareImages, pairSections, volatileSections, visualFindings };

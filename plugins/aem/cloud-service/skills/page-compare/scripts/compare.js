@@ -6,7 +6,7 @@ const path = require('path');
 const { parseArgs } = require('node:util');
 
 const { loadPairs } = require('./lib/pairs');
-const { loadRules, loadAccepted, rewritesFrom, applyAccepted, deriveStatus } = require('./lib/rules');
+const { loadRules, loadAccepted, rewritesFrom, applyAccepted, deriveStatus, reusableResult } = require('./lib/rules');
 const { createPacer, runPool, withRetry } = require('./lib/guard');
 const { contentFindings, diffBlocks, makeCanon, safeHost } = require('./lib/content');
 const { functionalFindings } = require('./lib/functional');
@@ -264,7 +264,8 @@ async function main() {
     const f = path.join(outDir, 'pairs', p.id, 'result.json');
     if (opts.resume && fs.existsSync(f)) {
       try {
-        return readJson(f);
+        const r = readJson(f);
+        return reusableResult(r) ? r : null;
       } catch (e) {
         return null;
       }
