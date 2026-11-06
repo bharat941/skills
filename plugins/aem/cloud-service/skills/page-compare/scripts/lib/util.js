@@ -125,8 +125,16 @@ function isPreviewHost(host) {
   return /\.(aem|hlx)\.(page|live)$/i.test(String(host || '').replace(/:\d+$/, ''));
 }
 
+// A CSV cell for a spreadsheet: text that starts with = + - @ tab or CR would run as a formula in Excel, so it gets a leading quote.
+function csvCell(v) {
+  let s = typeof v === 'number' ? String(v) : String(v ?? '');
+  if (typeof v !== 'number' && /^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
 module.exports = {
   isPreviewHost,
+  csvCell,
   normalizeText,
   collapseSpace,
   similarity,

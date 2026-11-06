@@ -343,6 +343,66 @@ test('markdown scale: long lists say what was left out', () => {
   assert.match(files['report.md'], /and \d+ more/);
 });
 
+// ---------- review fixes: safe output, csv injection, locale groups ----------
+
+const { writeReportFiles } = require('./lib/markdown');
+const { groupOf } = require('./lib/pairs');
+
+test('output: stale page details are removed one file at a time and user files in pages/ survive', () => {
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-out-'));
+  fs.mkdirSync(path.join(out, 'pages', 'notes'), { recursive: true });
+  fs.mkdirSync(path.join(out, 'pairs', 'old-1'), { recursive: true });
+  fs.writeFileSync(path.join(out, 'pages', 'my-notes.md'), 'keep me');
+  fs.writeFileSync(path.join(out, 'pages', 'notes', 'deep.txt'), 'keep me too');
+  fs.writeFileSync(path.join(out, 'pages', 'old-1.md'), 'stale detail from a previous run');
+  writeReportFiles(out, { 'report.md': 'new', 'pages/new-1.md': 'detail' });
+  assert.equal(fs.readFileSync(path.join(out, 'pages', 'my-notes.md'), 'utf8'), 'keep me');
+  assert.equal(fs.readFileSync(path.join(out, 'pages', 'notes', 'deep.txt'), 'utf8'), 'keep me too');
+  assert.ok(!fs.existsSync(path.join(out, 'pages', 'old-1.md')), 'stale detail of a page from this tool is removed');
+  assert.equal(fs.readFileSync(path.join(out, 'pages', 'new-1.md'), 'utf8'), 'detail');
+  fs.rmSync(out, { recursive: true, force: true });
+});
+
+test('csv: cells that start with a formula character are neutralised in every csv', () => {
+  const hostile = ['=HYPERLINK("http://evil","x")', '+1+1', '-2+3', '@SUM(A1)', '\tcmd', '\rcmd'];
+  const findings = hostile.map((t, i) => ({ check: 'cta.missing', severity: 'review', summary: t, items: [{ text: t }] }));
+  const run = { generatedAt: 'now', viewports: [1440], completeness: {}, notTested: [], pairs: [{ id: 'x-1', before: 'https://b/x', after: 'https://a/x', label: hostile[0], status: 'fail', findings }] };
+  const files = renderMarkdownFiles(run);
+  const firstChar = (csv) => csv.split('\n').flatMap((l) => l.split(',')).map((c) => c.replace(/^"/, '')[0]);
+  for (const name of ['issues.csv', 'pages.csv']) {
+    for (const c of firstChar(files[name])) assert.ok(!['=', '+', '-', '@', '\t', '\r'].includes(c), `${name} has a cell starting with ${JSON.stringify(c)}: ${files[name]}`);
+  }
+  const summary = toCsv(run.pairs);
+  for (const c of firstChar(summary)) assert.ok(!['=', '+', '-', '@', '\t', '\r'].includes(c), `summary.csv has a cell starting with ${JSON.stringify(c)}`);
+  assert.ok(files['issues.csv'].includes("'=HYPERLINK"));
+});
+
+test('csv: ordinary values and numbers are not altered', () => {
+  const run = { generatedAt: 'now', viewports: [1440], completeness: {}, notTested: [], pairs: [{ id: 'x-1', before: 'https://b/x', after: 'https://a/x', status: 'fail', findings: [{ check: 'meta.title', severity: 'fail', summary: 'Title missing' }] }] };
+  const rows = renderMarkdownFiles(run)['pages.csv'].trim().split('\n');
+  assert.match(rows[1], /^\/x,fail,,fail,pass,pass,1,0,Title missing,pages\/x-1\.md,https:\/\/b\/x,https:\/\/a\/x$/);
+});
+
+test('pairs: groupOf skips locale and AEM /content/<site> prefixes', () => {
+  const g = (u) => groupOf({ before: u });
+  assert.equal(g('https://b.com/en/blog/a'), 'blog');
+  assert.equal(g('https://b.com/en-us/products/x'), 'products');
+  assert.equal(g('https://b.com/en_GB/products/x'), 'products');
+  assert.equal(g('https://b.com/content/site/en/blog/a'), 'blog');
+  assert.equal(g('https://b.com/content/site/blog/a'), 'blog');
+  assert.equal(g('https://b.com/blog/a'), 'blog');
+  assert.equal(g('https://b.com/en'), '/');
+  assert.equal(g('https://b.com/'), '/');
+  assert.equal(g('https://b.com/about'), 'about');
+  assert.equal(groupOf({ before: 'https://b.com/en/blog/a', group: 'article' }), 'article');
+});
+
+test('pairs: --per-group on a locale-prefixed site samples each section, not each locale', async () => {
+  const fetchText = async () => '<urlset>' + ['en/blog/a', 'en/blog/b', 'en/blog/c', 'en/products/x', 'en/products/y', 'fr/blog/d'].map((p) => `<url><loc>https://b.com/${p}</loc></url>`).join('') + '</urlset>';
+  const { pairs } = await loadPairs({ sitemap: 'https://b.com/sitemap.xml', map: ['b.com=a.com'], perGroup: '1' }, fetchText);
+  assert.deepEqual(pairs.map((p) => p.before), ['https://b.com/en/blog/a', 'https://b.com/en/products/x']);
+});
+
 // ---------- per-group sampling ----------
 
 test('pairs: --per-group keeps N pages from each CSV group', async () => {
@@ -380,6 +440,8 @@ e2e('end to end: fixture site comparison', { timeout: 280000 }, async () => {
     const pairsFile = path.join(dir, 'pairs.csv');
     fs.writeFileSync(pairsFile, csv);
     const out = path.join(dir, 'out');
+    fs.mkdirSync(path.join(out, 'pages'), { recursive: true });
+    fs.writeFileSync(path.join(out, 'pages', 'my-notes.md'), 'keep me');
     const run = (extra, standalone = false) =>
       new Promise((resolve) => {
         const args = standalone ? ['--pace-ms', '0', ...extra] : ['--pairs', pairsFile, '--out', out, '--viewports', '1440,375', '--pace-ms', '0', '--concurrency', '4', ...extra];
@@ -392,6 +454,7 @@ e2e('end to end: fixture site comparison', { timeout: 280000 }, async () => {
 
     const first = await run([]);
     assert.equal(first.code, 1, first.output);
+    assert.equal(fs.readFileSync(path.join(out, 'pages', 'my-notes.md'), 'utf8'), 'keep me', 'a user file in <out>/pages must survive a run');
     const report = JSON.parse(fs.readFileSync(path.join(out, 'report.json'), 'utf8'));
     const by = Object.fromEntries(report.pairs.map((p) => [new URL(p.after).pathname, p]));
     const checks = (p) => by[p].findings.map((f) => f.check);

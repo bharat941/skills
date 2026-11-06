@@ -1,5 +1,7 @@
 'use strict';
 
+const { csvCell } = require('./util');
+
 const STATUS_ORDER = ['blocked', 'error', 'fail', 'flaky', 'unstable', 'review', 'pass'];
 
 function esc(s) {
@@ -14,11 +16,6 @@ function summarize(pairs) {
 
 function exitCode(pairs) {
   return pairs.some((p) => ['fail', 'error', 'blocked'].includes(p.status)) ? 1 : 0;
-}
-
-function csvCell(v) {
-  const s = String(v ?? '');
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
 function toCsv(pairs) {

@@ -1,6 +1,9 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const { STATUS_ORDER } = require('./report');
+const { csvCell } = require('./util');
 
 const SEVERITY_ORDER = { fail: 0, review: 1, info: 2 };
 const SEVERITY_LABEL = { fail: '❌ Fail', review: '⚠️ Review', info: 'ℹ️ Info' };
@@ -259,11 +262,6 @@ function issueRow(e) {
   return [SEVERITY_LABEL[e.severity], AREA_TITLE[e.area], cell(e.issue, 180), e.siteWide ? 'site-wide' : e.pages.length, e.siteWide ? '' : cell(e.pages[0])];
 }
 
-function csvCell(v) {
-  const s = String(v ?? '');
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
-
 function toCsvText(header, rows) {
   return `${[header, ...rows].map((r) => r.map(csvCell).join(',')).join('\n')}\n`;
 }
@@ -400,4 +398,24 @@ function toMarkdown(run) {
   return renderMarkdownFiles(run)['report.md'];
 }
 
-module.exports = { toMarkdown, renderMarkdownFiles, areaOf };
+/**
+ * Writes the report files under outDir. Page detail files of pages that no longer need one
+ * (pairs/<id>/ exists, so this tool made that page) are removed one file at a time.
+ * Nothing else under outDir is deleted, so --out can point at a folder that holds other files.
+ */
+function writeReportFiles(outDir, files) {
+  const pagesDir = path.join(outDir, 'pages');
+  if (fs.existsSync(pagesDir)) {
+    for (const entry of fs.readdirSync(pagesDir, { withFileTypes: true })) {
+      const id = entry.name.replace(/\.md$/, '');
+      const ours = entry.isFile() && entry.name.endsWith('.md') && fs.existsSync(path.join(outDir, 'pairs', id));
+      if (ours && !(`pages/${entry.name}` in files)) fs.unlinkSync(path.join(pagesDir, entry.name));
+    }
+  }
+  for (const [rel, content] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(outDir, rel)), { recursive: true });
+    fs.writeFileSync(path.join(outDir, rel), content);
+  }
+}
+
+module.exports = { toMarkdown, renderMarkdownFiles, writeReportFiles, areaOf };

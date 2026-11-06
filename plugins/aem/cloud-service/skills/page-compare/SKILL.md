@@ -54,8 +54,8 @@ Run a small sample (`--limit 5`) first on large sets, check it with the user, th
 For 100+ pages, work in three steps:
 
 1. **Smoke test**: `--limit 5` to confirm access, bot protection and the URL mapping.
-2. **Sample per template**: `--per-group 2` keeps 2 pages from each group (the CSV `group` column, else the first path segment). This usually shows every template-level issue in a fraction of the time.
-3. **Full run** only when needed (for example go-live sign-off): add `--noise-sample 20%`, split by section with `--include`, and use `--resume` after an interruption. About 25–30 minutes per 100 pages at the defaults.
+2. **Sample per template**: `--per-group 2` keeps 2 pages from each group (the CSV `group` column, else the first path segment after any locale such as `/en/` or `/content/<site>/en/`). A CSV `group` column is the reliable option; without it, two-letter sections are read as locales. This usually shows every template-level issue in a fraction of the time.
+3. **Full run** only when needed (for example go-live sign-off): add `--noise-sample 20%`, split by section with `--include`, and use `--resume` after an interruption. Run time depends on the sites and has not been measured on a large run: each pair needs about nine page loads (before twice, after, at three viewports), so time a `--limit 10` run and multiply before committing to a long run.
 
 `--resume` reuses pages that were captured and retries pages that were blocked or errored, so after an allowlist change rerun the same command with `--resume`.
 

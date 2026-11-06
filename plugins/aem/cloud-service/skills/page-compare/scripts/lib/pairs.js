@@ -57,11 +57,19 @@ function pairsFromCsv(text) {
   })).filter((p) => p.before && p.after);
 }
 
-// Template or section a page belongs to: the CSV "group" column, else the first path segment.
+// A leading locale such as en, en-us, en_GB or zh-Hans.
+const LOCALE_SEGMENT = /^[a-z]{2}([-_][a-zA-Z]{2,4})?$/;
+
+// Template or section a page belongs to: the CSV "group" column, else the first path segment after
+// any AEM /content/<site> prefix and locale segment (/en/blog/a and /content/site/en/blog/a are both "blog").
+// Two-letter sections are read as locales, so use a CSV "group" column when a site has them.
 function groupOf(pair) {
   if (pair.group) return pair.group;
   try {
-    return new URL(pair.before).pathname.split('/').filter(Boolean)[0] || '/';
+    let segments = new URL(pair.before).pathname.split('/').filter(Boolean);
+    if (segments[0] === 'content' && segments.length > 1) segments = segments.slice(2);
+    for (let i = 0; i < 2 && segments.length && LOCALE_SEGMENT.test(segments[0]); i++) segments.shift();
+    return segments[0] || '/';
   } catch (e) {
     return '/';
   }

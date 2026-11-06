@@ -13,7 +13,7 @@ const { functionalFindings } = require('./lib/functional');
 const { visualFindings } = require('./lib/visual');
 const { createFetcher, downloadFindings, brokenLinkFindings, siteFindings, redirectFindings, pageSetCoverage } = require('./lib/completeness');
 const { renderHtml, renderJson, toCsv, summarize, exitCode } = require('./lib/report');
-const { renderMarkdownFiles } = require('./lib/markdown');
+const { renderMarkdownFiles, writeReportFiles } = require('./lib/markdown');
 const { normalizePath, hash } = require('./lib/util');
 const { parseCsv } = require('./lib/pairs');
 
@@ -39,7 +39,7 @@ Options:
   --redirects <file.csv>    CSV with header: from,to; checks the before URL redirects to the target
   --noise-sample <pct>      Run the noise baseline on this share of pages (default 100%)
   --include <regex> / --exclude <regex> / --limit <n>   Filter the page list (matched on before URL)
-  --per-group <n>           Keep n pages per group: the CSV "group" column, else the first path segment
+  --per-group <n>           Keep n pages per group: the CSV "group" column, else the first path segment after any /content/<site> and locale (/en/)
   --resume                  Reuse stored captures in --out and only reapply --accept
   --no-link-check           Skip HTTP checks of links and downloads
   --ua <suffix>             User-agent suffix (default page-compare/1.0)
@@ -347,11 +347,7 @@ async function main() {
     pairs: finalPairs,
   };
   fs.writeFileSync(path.join(outDir, 'report.html'), renderHtml(run));
-  fs.rmSync(path.join(outDir, 'pages'), { recursive: true, force: true });
-  for (const [rel, content] of Object.entries(renderMarkdownFiles(run))) {
-    fs.mkdirSync(path.dirname(path.join(outDir, rel)), { recursive: true });
-    fs.writeFileSync(path.join(outDir, rel), content);
-  }
+  writeReportFiles(outDir, renderMarkdownFiles(run));
   fs.writeFileSync(path.join(outDir, 'report.json'), renderJson(run));
   fs.writeFileSync(path.join(outDir, 'summary.csv'), toCsv(finalPairs));
 

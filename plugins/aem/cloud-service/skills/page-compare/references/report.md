@@ -76,9 +76,9 @@ Priority when a page has several: `blocked`, `error`, `fail`, `flaky`, `unstable
 
 ## Running at scale
 
-- About nine page loads per pair (before twice and after, at three viewports): roughly 25 to 30 minutes per 100 pairs at the default concurrency. `--noise-sample 20%` runs the second before load on a fifth of the pages.
+- About nine page loads per pair (before twice and after, at three viewports). The original sizing estimate was roughly 25 to 30 minutes per 100 pairs at the default concurrency, but that has not been measured on a large run: time a `--limit 10` run first and extrapolate. `--noise-sample 20%` runs the second before load on a fifth of the pages.
 - Requests to each host are spaced by `--pace-ms`. If more than 20% of a host's pages (after at least five) are blocked, the run stops loading that host and reports the rest as blocked.
 - A page that loads only after a retry is marked `flaky` rather than hidden.
-- `--per-group <n>` keeps n pages per template or section (the CSV `group` column, else the first path segment of the before URL). A sample of 2 per group usually surfaces every template-level issue.
+- `--per-group <n>` keeps n pages per template or section (the CSV `group` column, else the first path segment of the before URL after any `/content/<site>` prefix and locale such as `/en/` or `/en-us/`; two-letter sections are read as locales, so use a `group` column when a site has them). A sample of 2 per group usually surfaces every template-level issue.
 - `--resume` reuses captured pages and retries pages that were blocked or errored.
 - The report stays readable at any size: `report.md` is a fixed-size summary, and the per-page detail lives in `pages.csv` and `pages/`.
