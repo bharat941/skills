@@ -8,7 +8,7 @@ const { parseArgs } = require('node:util');
 const { loadPairs } = require('./lib/pairs');
 const { loadRules, loadAccepted, rewritesFrom, applyAccepted, deriveStatus, reusableResult } = require('./lib/rules');
 const { createPacer, runPool, withRetry } = require('./lib/guard');
-const { contentFindings, diffBlocks, makeCanon, safeHost } = require('./lib/content');
+const { contentFindings, diffBlocks, makeCanon, beforeBase, safeHost } = require('./lib/content');
 const { functionalFindings } = require('./lib/functional');
 const { visualFindings } = require('./lib/visual');
 const { createFetcher, downloadFindings, brokenLinkFindings, siteFindings, redirectFindings, pageSetCoverage } = require('./lib/completeness');
@@ -32,6 +32,9 @@ Options:
   --pace-ms <n>             Minimum gap between requests per host (default 500)
   --mask <selector>         Hide matching elements in screenshots and text (repeatable)
   --sections <selector>     Override section detection (repeatable)
+  --cdp-url <url>           Capture with an already running Chrome (started with --remote-debugging-port=9222) instead of
+                            a headless browser, e.g. for sites whose bot protection turns headless browsers away.
+                            The browser's own user agent is used
   --storage-state <file>    Playwright storage state for authenticated pages
   --accept <file>           accepted.json with reviewed differences
   --rules <file>            JSON overrides for thresholds
@@ -78,6 +81,7 @@ function parseOptions(argv) {
       mask: { type: 'string', multiple: true },
       sections: { type: 'string', multiple: true },
       'storage-state': { type: 'string' },
+      'cdp-url': { type: 'string' },
       accept: { type: 'string' },
       rules: { type: 'string' },
       'expect-analytics': { type: 'string' },
@@ -137,7 +141,7 @@ async function processPair(pair, env) {
       withRetry(() =>
         capturePage(browser, url, {
           viewport,
-          userAgent: `Mozilla/5.0 (compatible; ${opts.ua})`,
+          userAgent: opts['cdp-url'] ? undefined : `Mozilla/5.0 (compatible; ${opts.ua})`,
           storageState: opts['storage-state'],
           masks: opts.mask || [],
           sectionSelectors: opts.sections || [],
@@ -155,14 +159,15 @@ async function processPair(pair, env) {
   };
 
   try {
-    const canon = makeCanon({ beforeUrl: pair.before, afterUrl: pair.after, hostMap: env.hostMap, pathMap: env.pathMap, rewrites: env.rewrites, page });
-    const beforeHost = safeHost(pair.before);
     const afterHost = safeHost(pair.after);
     const doNoise = sampled(pair.id, env.noiseSample);
     const primary = viewports[0];
 
     const b1 = await load(pair.before, primary);
     const a1 = await load(pair.after, primary);
+    const beforeUrl = beforeBase(pair.before, b1.snapshot.finalUrl);
+    const beforeHost = safeHost(beforeUrl);
+    const canon = makeCanon({ beforeUrl, afterUrl: pair.after, hostMap: env.hostMap, pathMap: env.pathMap, rewrites: env.rewrites, page });
     const comparable = a1.snapshot.status >= 200 && a1.snapshot.status < 300 && b1.snapshot.status >= 200 && b1.snapshot.status < 300;
 
     let b2 = null;
@@ -175,7 +180,7 @@ async function processPair(pair, env) {
       volatilePct = Math.max(d.missingPct, d.addedPct);
     }
 
-    const ctx = { beforeUrl: pair.before, afterUrl: pair.after, beforeHost, afterHost, canon, rules, volatile, expect: env.expect, fetcher };
+    const ctx = { beforeUrl, afterUrl: pair.after, beforeHost, afterHost, canon, rules, volatile, expect: env.expect, fetcher };
     const findings = [...contentFindings(b1.snapshot, a1.snapshot, ctx)];
     let unstable = false;
     const rows = [];
@@ -291,7 +296,7 @@ async function main() {
   if (todo.length) {
     const { launchBrowser } = require('./lib/capture');
     try {
-      browser = await launchBrowser();
+      browser = await launchBrowser({ cdpUrl: opts['cdp-url'] });
     } catch (e) {
       fail(e.message);
     }

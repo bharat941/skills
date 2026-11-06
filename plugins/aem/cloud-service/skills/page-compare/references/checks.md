@@ -25,10 +25,11 @@ When either page is not 2xx, the remaining checks are skipped for that pair.
 | `content.text.changed` | review | Reworded text (85% or more similar) |
 | `content.text.added` | review above 2% of before text, otherwise info | New text on after |
 | `content.text.format` | info | Same words, different spacing |
+| `content.text.regrouped` | info | Text that is on the after page but split into or merged from other blocks by new markup (for example a nav line `Owners Careers Investors` that became three items). Not counted as missing or added |
 | `heading.missing` / `heading.level` / `heading.added` | review / review / info | Heading text and level changes |
 | `meta.title`, `meta.description`, `meta.canonical`, `meta.robots`, `meta.lang`, `meta.hreflang`, `meta.social`, `meta.favicon` | fail or review | Head metadata. A missing title, a canonical pointing to the wrong host and `noindex` appearing are fails. On an Edge Delivery preview host (`*.aem.page`/`.live`, `*.hlx.page`/`.live`) a canonical that still points to production is review, since preview pages keep it by design |
 | `consent.missing` | review | A cookie consent banner (OneTrust, Cookiebot, TrustArc, ...) is on the before page but not on the after page. Consent dialogs are otherwise left out of every content check and screenshot, so their headings, buttons and logos never show up as missing content |
-| `image.missing`, `image.broken` | fail | Content images missing or failing to load |
+| `image.missing`, `image.broken` | fail | Content images missing or failing to load. Images are matched by file name, then by alt text, since Edge Delivery and DAM moves rename images (`media_<hash>.jpg`). An image with no alt text and a new name cannot be matched and shows as missing |
 | `image.alt`, `image.alt.changed` | review | Alt text lost or changed |
 | `image.missing.chrome`, `image.broken.chrome` | review | Same, for header/footer images |
 | `link.missing`, `link.target`, `link.added` | review / review / info | Links compared after mapping before hosts and paths to the after site |
@@ -42,7 +43,7 @@ Text that differs between two loads of the before page (for example a counter) i
 
 ## Visual
 
-Pages are split into sections (header, footer, and the children of `main`; override with `--sections`). Sections are paired by text, then by order, and compared at each viewport. The before page is loaded twice; pixels that differ between those loads are masked out of the comparison. A section whose text differs between the two before loads (rotating testimonials, carousels) is paired by its position name instead of its text and compared with that mask, so it is never reported as missing. A section with the same name and the same opening words (usually its heading) on both pages is also treated as the same section with changed content, so a carousel that starts on a different slide is a visual difference with screenshots, not a missing section. Add `--mask <selector>` for carousels to leave them out entirely. One-pixel shifts caused by content above a section are tolerated.
+Pages are split into sections (header, footer, and the children of `main`, looking through wrappers that hold a single element such as AEM's `.page-body > .parsys`; override with `--sections`). A section is identified by its visible text; inline CSS and scripts inside it are ignored. Sections are paired by text, then by order, and compared at each viewport. The before page is loaded twice; pixels that differ between those loads are masked out of the comparison. A section whose text differs between the two before loads (rotating testimonials, carousels) is paired by its position name instead of its text and compared with that mask, so it is never reported as missing. A section with the same name and the same opening words (usually its heading) on both pages is also treated as the same section with changed content, so a carousel that starts on a different slide is a visual difference with screenshots, not a missing section. Add `--mask <selector>` for carousels to leave them out entirely. One-pixel shifts caused by content above a section are tolerated.
 
 | Check | Severity | Meaning |
 |---|---|---|

@@ -627,6 +627,11 @@ e2e('end to end: fixture site comparison', { timeout: 280000 }, async () => {
     }
     assert.ok(!checks('/rotating').includes('visual.section.missing'), JSON.stringify(by['/rotating'].findings));
     assert.deepEqual(by['/rotating'].findings.filter((f) => f.severity === 'fail'), []);
+    for (const p of ['/wrapped', '/inline-style']) {
+      assert.ok(!checks(p).includes('visual.section.missing'), `${p}: ${JSON.stringify(by[p].findings)}`);
+      assert.deepEqual(by[p].findings.filter((f) => f.severity === 'fail'), [], p);
+    }
+    assert.ok(by['/wrapped'].visual.rows.filter((r) => r.viewport === '1440' && r.status === 'pass').length >= 5, 'sections inside single-child wrappers are compared one by one');
     assert.ok(fs.existsSync(path.join(out, 'report.html')));
     assert.ok(fs.existsSync(path.join(out, 'summary.csv')));
     for (const f of ['report.md', 'issues.md', 'issues.csv', 'pages.csv']) assert.ok(fs.existsSync(path.join(out, f)), `${f} missing`);
@@ -652,6 +657,84 @@ e2e('end to end: fixture site comparison', { timeout: 280000 }, async () => {
   } finally {
     server.close();
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---------- AEM to Edge Delivery markup changes ----------
+
+test('diffBlocks: text split into or merged from other blocks is not reported as missing or added', () => {
+  const d = diffBlocks(
+    [{ text: 'Owners Careers Investors', region: 'header' }, { text: 'Pricing details are listed for every region.', region: 'main' }],
+    [{ text: 'Owners', region: 'header' }, { text: 'Careers', region: 'header' }, { text: 'Investors', region: 'header' }],
+  );
+  assert.deepEqual(d.missing.map((m) => m.text), ['Pricing details are listed for every region.']);
+  assert.deepEqual(d.added, []);
+  assert.equal(d.regrouped, 1);
+  const merged = diffBlocks([{ text: 'Owners' }, { text: 'Careers' }], [{ text: 'Owners Careers' }]);
+  assert.deepEqual([merged.missing, merged.added], [[], []]);
+});
+
+test('content: an image renamed on the after page is matched by its alt text', () => {
+  const ctx = ctxFor('https://www.b.com/', 'https://www.a.com/');
+  const img = (src, alt) => ({ src, alt, inMain: true, broken: false });
+  const before = snap({ images: [img('https://www.b.com/content/x/jcr:content/image.img.jpg/1764614500750.jpg', 'Orange Corvette from above'), img('https://www.b.com/content/y/gone.jpg', 'Old banner')] });
+  const after = snap({ images: [img('https://www.a.com/media_1a2b3c.jpg?width=750&format=webply', 'Orange Corvette from above')] });
+  const missing = contentFindings(before, after, ctx).find((f) => f.check === 'image.missing');
+  assert.deepEqual(missing.items.map((i) => i.alt), ['Old banner']);
+});
+
+// ---------- real browser over CDP ----------
+
+const { beforeBase } = require('./lib/content');
+
+test('content.beforeBase follows a before-page redirect to another host', () => {
+  assert.equal(beforeBase('https://gm.com/heritage', 'https://www.gm.com/heritage'), 'https://www.gm.com/heritage');
+  assert.equal(beforeBase('https://www.b.com/x', 'https://www.b.com/x'), 'https://www.b.com/x');
+  assert.equal(beforeBase('https://www.b.com/x', ''), 'https://www.b.com/x');
+  assert.equal(beforeBase('https://www.b.com/x', 'about:blank'), 'https://www.b.com/x');
+});
+
+test('cli: --cdp-url that cannot be reached exits 2 and says how to start Chrome', () => {
+  const r = spawnSync(process.execPath, [path.join(__dirname, 'compare.js'), '--before', 'https://b.invalid/', '--after', 'https://a.invalid/', '--cdp-url', 'http://127.0.0.1:9', '--out', path.join(os.tmpdir(), 'pc-cdp-bad')], { encoding: 'utf8', timeout: 60000 });
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  assert.match(r.stderr, /remote-debugging-port/);
+});
+
+// Starts the Playwright Chromium as a separate process with a DevTools port, the way a user would start Chrome.
+async function startDebugChromium() {
+  const exe = require('playwright').chromium.executablePath();
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-cdp-profile-'));
+  const proc = require('child_process').spawn(exe, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', 'about:blank'], { stdio: 'ignore' });
+  const portFile = path.join(profile, 'DevToolsActivePort');
+  for (let i = 0; i < 100 && !fs.existsSync(portFile); i++) await new Promise((r) => setTimeout(r, 100));
+  const port = fs.readFileSync(portFile, 'utf8').split('\n')[0].trim();
+  return { url: `http://127.0.0.1:${port}`, stop: () => { proc.kill(); fs.rmSync(profile, { recursive: true, force: true }); } };
+}
+
+const e2eCdp = chromiumAvailable() ? test : test.skip;
+
+e2eCdp('end to end: --cdp-url drives an already running browser', { timeout: 180000 }, async () => {
+  const { start } = require('./fixtures/server');
+  const { server, port } = await start();
+  const chrome = await startDebugChromium();
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-cdp-out-'));
+  try {
+    const r = await new Promise((resolve) => {
+      const p = require('child_process').spawn(process.execPath, [path.join(__dirname, 'compare.js'), '--cdp-url', chrome.url, '--before', `http://127.0.0.1:${port}/identical`, '--after', `http://localhost:${port}/identical`, '--out', out, '--viewports', '1440', '--pace-ms', '0'], { stdio: 'pipe' });
+      let output = '';
+      p.stdout.on('data', (d) => (output += d));
+      p.stderr.on('data', (d) => (output += d));
+      p.on('close', (code) => resolve({ code, output }));
+    });
+    assert.equal(r.code, 0, r.output);
+    const report = JSON.parse(fs.readFileSync(path.join(out, 'report.json'), 'utf8'));
+    assert.equal(report.pairs[0].status, 'pass', JSON.stringify(report.pairs[0]));
+    const version = await (await fetch(`${chrome.url}/json/version`)).json();
+    assert.ok(version.Browser, 'the external browser is still running after the run');
+  } finally {
+    chrome.stop();
+    server.close();
+    fs.rmSync(out, { recursive: true, force: true });
   }
 });
 

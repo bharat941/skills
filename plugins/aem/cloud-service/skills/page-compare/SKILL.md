@@ -36,7 +36,7 @@ Ask only for what is missing:
 
 1. **Pages**: one `--before`/`--after` pair, a `--pairs` file, or `--sitemap <before sitemap> --map <beforeHost=afterHost>` (add `--path-map /old/=/new/` when paths change). The pairs file is a `.csv` or an Excel `.xlsx` (first sheet): before URLs in column A, after URLs in column B, then optional label and group. A header row (`before,after[,label][,group]`, columns in any order) is optional. Old `.xls` files must be saved as `.xlsx` or `.csv`. For 100+ pages ask for a `group` column (template or section) so a sample per group can be run first.
 2. **Access**: if either site needs a login, a Playwright storage state file (`--storage-state`). Without it, login pages are compared as they appear to a visitor.
-3. **Bot protection**: sites behind a WAF may block the runner. The run reports those pages as `blocked`, not as failures. Ask the customer to allowlist the runner IP or the `page-compare/1.0` user agent, or raise `--pace-ms`.
+3. **Bot protection**: sites behind a WAF (Akamai, Cloudflare, ...) may turn the headless runner away. The run reports those pages as `blocked`, not as failures. First ask the customer to allowlist the runner IP or the `page-compare/1.0` user agent. If that is not possible and the customer agrees to the testing, capture with a real Chrome instead (`--cdp-url`, see below).
 4. **Known volatile areas**: `--mask <selector>` for clocks, rotating promos and other content that changes on every load.
 5. **Expected analytics** (optional): `--expect-analytics file.json` with `{ "rsid": "...", "datastreamId": "...", "launch": "..." }`.
 
@@ -96,6 +96,18 @@ Chromium only; pages are loaded, never interacted with; analytics checks cover p
 
 ## Troubleshooting
 
-- Many `blocked` pages: slow down (`--pace-ms 2000 --concurrency 1`) or get an allowlist, then `--resume`.
+- Many `blocked` pages: slow down (`--pace-ms 2000 --concurrency 1`) or get an allowlist, then `--resume`. If the site still turns the headless browser away, use a real Chrome (next section).
+
+## Capturing with a real Chrome (`--cdp-url`)
+
+Some bot protection rejects headless browsers but accepts a normal Chrome. With the customer's agreement, start a separate Chrome with its own empty profile and a DevTools port, then point the run at it:
+
+```bash
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --remote-debugging-port=9222 --user-data-dir=/tmp/page-compare-chrome --no-first-run   # macOS
+node scripts/compare.js --pairs pages.xlsx --out ./out --cdp-url http://127.0.0.1:9222
+```
+
+Use a separate `--user-data-dir`: never point the run at the user's everyday profile, which holds their logins and cookies. The run opens its own windows in that Chrome, uses Chrome's own user agent instead of `page-compare/1.0`, and leaves Chrome running when it finishes; close it afterwards. All checks, the noise baseline and the reports are the same as a headless run. Expect it to be slower: on a heavy site a 5-page run took about 9 minutes.
 - Many `unstable`/`flaky` pages: add `--mask` selectors for the moving parts.
 - Everything fails visually after a redesign: that is expected; rely on the content and functional findings, or accept the visual checks in bulk with `{ "check": "visual", "reason": "..." }`.

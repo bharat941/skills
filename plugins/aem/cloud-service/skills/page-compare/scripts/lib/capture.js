@@ -19,8 +19,19 @@ function loadPlaywright() {
   }
 }
 
-async function launchBrowser() {
+/**
+ * The browser to capture pages with. By default a fresh headless Chromium. With cdpUrl, an already running
+ * Chrome is driven over the DevTools protocol instead (start it with --remote-debugging-port=9222).
+ */
+async function launchBrowser({ cdpUrl } = {}) {
   const { chromium } = loadPlaywright();
+  if (cdpUrl) {
+    try {
+      return await chromium.connectOverCDP(cdpUrl, { timeout: 15000 });
+    } catch (e) {
+      throw Object.assign(new Error(`Could not connect to a browser at ${cdpUrl} (${String(e.message).split('\n')[0]}). Start Chrome with --remote-debugging-port=9222 and a separate --user-data-dir, then pass --cdp-url http://127.0.0.1:9222.`), { code: 'NO_CDP' });
+    }
+  }
   try {
     return await chromium.launch({ headless: true });
   } catch (e) {
@@ -157,20 +168,35 @@ function extractInPage({ masks, sectionSelectors, consentSel = '' }) {
   let sections = [];
   const norm = (s) => clean(s).toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, '').replace(/\s+/g, ' ').trim();
   const describe = (el) => (el.id ? `#${el.id}` : el.classList.length ? `.${el.classList[0]}` : el.tagName.toLowerCase());
+  // Visible-text fingerprint: CSS and scripts inside a section are not its content.
+  const textOf = (el) => {
+    let s = '';
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {
+      acceptNode: (n) => (n.parentElement && n.parentElement.closest('script,style,noscript,template') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+    });
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) s += ` ${n.nodeValue}`;
+    return clean(s);
+  };
   const add = (name, el) => {
     const r = el.getBoundingClientRect();
     if (r.width < 1 || r.height < 1) return;
     const idx = sections.length;
     el.setAttribute('data-pc-section', String(idx));
-    const t = clean(el.textContent);
+    const t = textOf(el);
     sections.push({ index: idx, name, fp: norm(t).slice(0, 200), chars: t.length, x: Math.max(0, r.left + scrollX), y: r.top + scrollY, width: r.width, height: r.height });
   };
   if (header && visible(header)) add('header', header);
   if (sectionSelectors.length) {
     sectionSelectors.forEach((sel) => [...document.querySelectorAll(sel)].filter(visible).forEach((el, i) => add(`${sel}[${i}]`, el)));
   } else {
+    const contentKids = (el) => [...el.children].filter((e) => !SKIP.has(e.tagName.toUpperCase()) && visible(e));
     let kids = [...(main || document.body).children].filter((e) => !SKIP.has(e.tagName.toUpperCase()) && e !== header && e !== footer && !e.contains(header || document.createElement('i')) && visible(e));
-    for (let depth = 0; depth < 2 && kids.length === 1 && kids[0].children.length > 1; depth++) kids = [...kids[0].children].filter((e) => !SKIP.has(e.tagName.toUpperCase()) && visible(e));
+    // Look through wrappers that hold a single element (AEM: .page-body > .parsys > sections).
+    for (let depth = 0; depth < 6 && kids.length === 1; depth++) {
+      const next = contentKids(kids[0]);
+      if (!next.length) break;
+      kids = next;
+    }
     kids.filter((e) => e.getBoundingClientRect().height >= 40).forEach((el, i) => add(`main-${i + 1}:${describe(el)}`, el));
   }
   if (footer && visible(footer)) add('footer', footer);
@@ -238,7 +264,7 @@ async function capturePage(browser, url, opts) {
   if (pacer) await pacer.wait(new URL(url).host);
   const context = await browser.newContext({
     viewport,
-    userAgent,
+    ...(userAgent ? { userAgent } : {}),
     storageState: storageState || undefined,
     reducedMotion: 'reduce',
     serviceWorkers: 'block',

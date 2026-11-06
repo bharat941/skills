@@ -30,6 +30,8 @@ function doc({ title = 'Product overview', body, head = '', script = '', nav = '
 const standard = (n = 5, extra = '') => PARA.slice(0, n).map((t, i) => sec(i + 1, t)).join('') + extra;
 const base = () => doc({ body: standard() });
 
+const CSS_BLOCK = '.preload-screen,.hero-preloader{position:absolute;inset:0;background:#000;z-index:100;display:flex;align-items:center;justify-content:center;transition:opacity .5s ease}.hero-preloader .bar{width:40%;height:2px;background:#fff;animation:none}.hero-preloader.done{opacity:0;pointer-events:none}';
+
 // Each entry: { before, after } where a value is html, or { status, html, headers, onRequest(count) }.
 const scenarios = {
   '/identical': { before: base(), after: base() },
@@ -73,7 +75,16 @@ const scenarios = {
     after: base(),
   },
   '/rotating': { before: { rotate: true }, after: { rotate: true } },
+  // AEM 6.5 style: sections two single-child wrappers deep (gm.com: .gbs-page-body > .par.parsys > sections)
+  '/wrapped': { before: page(`<div class="page-body"><div class="parsys"><h1>Product overview</h1>${standard()}</div></div>`), after: base() },
+  // a section that carries a long inline <style> must be fingerprinted by its visible text, not its CSS
+  '/inline-style': { before: page(`<div><h1>Product overview</h1><section class="s1"><style>${CSS_BLOCK}</style><h2>Section 1</h2><p>${PARA[0]}</p></section>${PARA.slice(1).map((t, i) => sec(i + 2, t)).join('')}</div>`), after: base() },
 };
+
+// Same head, header and footer as doc(), with the main content given as raw markup.
+function page(mainHtml) {
+  return doc({ body: '' }).replace(/<main>[\s\S]*<\/main>/, `<main>${mainHtml}</main>`);
+}
 
 const TESTIMONIALS = [
   'Great guidance and clean execution. The team explained the full process clearly and the supervisor guided us on every colour decision.',

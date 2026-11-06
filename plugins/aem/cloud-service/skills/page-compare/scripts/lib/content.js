@@ -50,6 +50,10 @@ function diffBlocks(beforeBlocks, afterBlocks, volatile = []) {
   const missing = [];
   const changed = [];
   const available = new Set(unmatchedAfter);
+  // The whole text of each page, so a block that was only split or merged by new markup is still found.
+  const allAfter = ` ${al.map((a) => a.norm).join(' ')} `;
+  const allBefore = ` ${bl.map((b) => b.norm).join(' ')} `;
+  let regrouped = 0;
   for (const b of unmatchedBefore) {
     let best = null;
     let bestSim = 0;
@@ -64,11 +68,13 @@ function diffBlocks(beforeBlocks, afterBlocks, volatile = []) {
     if (best && bestSim >= 0.85) {
       available.delete(best);
       changed.push({ before: b.text, after: best.text, similarity: round(bestSim), region: b.region, hidden: !!b.hidden });
+    } else if (allAfter.includes(` ${b.norm} `)) {
+      regrouped++;
     } else {
       missing.push({ text: b.text, region: b.region, hidden: !!b.hidden, chars: b.norm.length });
     }
   }
-  const added = [...available].map((a) => ({ text: a.text, region: a.region, chars: a.norm.length }));
+  const added = [...available].filter((a) => !allBefore.includes(` ${a.norm} `)).map((a) => ({ text: a.text, region: a.region, chars: a.norm.length }));
 
   const totalChars = bl.reduce((n, b) => n + b.norm.length, 0);
   const lost = missing.reduce((n, m) => n + m.chars, 0) + changed.reduce((n, c) => n + (1 - c.similarity) * normalizeText(c.before).length, 0);
@@ -77,6 +83,7 @@ function diffBlocks(beforeBlocks, afterBlocks, volatile = []) {
     missing,
     changed,
     added,
+    regrouped,
     formatOnly,
     totalChars,
     missingPct: totalChars ? round((lost / totalChars) * 100) : 0,
@@ -99,6 +106,9 @@ function textFindings(before, after, rules, volatile) {
   }
   if (d.formatOnly) {
     out.push(finding('content.text.format', 'info', `${d.formatOnly} block(s) differ only in spacing`));
+  }
+  if (d.regrouped) {
+    out.push(finding('content.text.regrouped', 'info', `${d.regrouped} text block(s) are on the after page but split or merged differently by the new markup`));
   }
   return out;
 }
@@ -205,15 +215,28 @@ function imageFindings(before, after) {
   const missing = [];
   const altChanged = [];
   const altLost = [];
+  const byName = [];
   for (const img of before.images || []) {
     const hits = aMap.get(imageStem(img.src));
     if (!hits || !hits.length) {
-      missing.push({ src: img.src, alt: img.alt, inMain: img.inMain });
+      byName.push(img);
       continue;
     }
     const match = hits.shift();
     if (img.alt && !match.alt) altLost.push({ src: match.src, before: img.alt, after: '' });
     else if (img.alt && normalizeText(img.alt) !== normalizeText(match.alt)) altChanged.push({ src: match.src, before: img.alt, after: match.alt });
+  }
+  // Edge Delivery and DAM moves rename images (media_<hash>.jpg) but keep the alt text: match those by alt.
+  const byAlt = counter([...aMap.values()].flat().filter((i) => normalizeText(i.alt)), (i) => normalizeText(i.alt));
+  for (const img of byName) {
+    const hits = normalizeText(img.alt) ? byAlt.get(normalizeText(img.alt)) : null;
+    if (hits && hits.length) {
+      const match = hits.shift();
+      const left = aMap.get(imageStem(match.src));
+      left.splice(left.indexOf(match), 1);
+    } else {
+      missing.push({ src: img.src, alt: img.alt, inMain: img.inMain });
+    }
   }
   const missingMain = missing.filter((m) => m.inMain);
   const missingOther = missing.filter((m) => !m.inMain);
@@ -378,6 +401,11 @@ function contentFindings(before, after, ctx) {
   ];
 }
 
+/** The before URL to compare against: where the before page actually ended up, when it redirected (gm.com -> www.gm.com). */
+function beforeBase(requested, finalUrl) {
+  return /^https?:\/\//i.test(String(finalUrl || '')) ? finalUrl : requested;
+}
+
 // canon(href, side): comparable key for a link/URL in "after space".
 function makeCanon({ beforeUrl, afterUrl, hostMap = [], pathMap = [], rewrites = [], page = {} }) {
   const afterHost = safeHost(afterUrl);
@@ -417,4 +445,4 @@ function makeCanon({ beforeUrl, afterUrl, hostMap = [], pathMap = [], rewrites =
   };
 }
 
-module.exports = { diffBlocks, contentFindings, makeCanon, finding, cap, counter, safeHost, MAX_ITEMS };
+module.exports = { diffBlocks, contentFindings, makeCanon, beforeBase, finding, cap, counter, safeHost, MAX_ITEMS };
