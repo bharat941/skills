@@ -21,7 +21,8 @@ const USAGE = `Usage: node compare.js [options]
 
 Pages (one of):
   --before <url> --after <url>        Compare one pair
-  --pairs <file.csv>                  CSV with header: before,after[,label]
+  --pairs <file.csv|file.xlsx>        Pairs from a CSV or the first sheet of an Excel workbook: before in column A, after in column B,
+                                      optional label and group. A header row (before,after[,label][,group]) is optional
   --sitemap <url> --map <b=a>         Compare every URL in a before sitemap; --path-map <old=new> rewrites paths
 
 Options:

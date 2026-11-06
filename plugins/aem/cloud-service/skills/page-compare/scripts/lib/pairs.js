@@ -1,7 +1,9 @@
 'use strict';
 
 const fs = require('fs');
+const path = require('path');
 const { hash, slug } = require('./util');
+const { readXlsxRows } = require('./xlsx');
 
 function parseCsv(text) {
   const rows = [];
@@ -40,21 +42,49 @@ function parseCsv(text) {
   return rows.filter((r) => !String(r[0]).trim().startsWith('#'));
 }
 
-function pairsFromCsv(text) {
-  const rows = parseCsv(text);
-  if (!rows.length) return [];
-  const header = rows[0].map((h) => h.trim().toLowerCase());
-  const bi = header.indexOf('before');
-  const ai = header.indexOf('after');
-  if (bi < 0 || ai < 0) throw new Error('CSV needs a header row with "before" and "after" columns');
-  const li = header.indexOf('label');
-  const gi = header.indexOf('group');
-  return rows.slice(1).map((r) => ({
-    before: (r[bi] || '').trim(),
-    after: (r[ai] || '').trim(),
-    label: li >= 0 ? (r[li] || '').trim() : '',
-    ...(gi >= 0 && (r[gi] || '').trim() ? { group: r[gi].trim() } : {}),
+const isUrl = (s) => /^https?:\/\//i.test(String(s || '').trim());
+
+/**
+ * Pairs from table rows (a CSV or the first sheet of a workbook). The first row is either a header naming
+ * "before" and "after" (plus optional "label" and "group", in any order), or already the first pair:
+ * before in column A, after in column B, then optional label and group.
+ */
+function pairsFromRows(rows) {
+  const cell = (r, i) => String((r && r[i]) ?? '').trim();
+  const data = rows.filter((r) => r.some((c) => String(c ?? '').trim() !== '') && !cell(r, 0).startsWith('#'));
+  if (!data.length) return [];
+  const header = data[0].map((h) => String(h ?? '').trim().toLowerCase());
+  let body;
+  let bi = header.indexOf('before');
+  let ai = header.indexOf('after');
+  let li = header.indexOf('label');
+  let gi = header.indexOf('group');
+  if (bi >= 0 && ai >= 0) {
+    body = data.slice(1);
+  } else if (isUrl(cell(data[0], 0)) && isUrl(cell(data[0], 1))) {
+    [bi, ai, li, gi] = [0, 1, 2, 3];
+    body = data;
+  } else {
+    throw new Error('The first row needs a header with "before" and "after" columns, or two URLs (before in column A, after in column B)');
+  }
+  return body.map((r) => ({
+    before: cell(r, bi),
+    after: cell(r, ai),
+    label: li >= 0 ? cell(r, li) : '',
+    ...(gi >= 0 && cell(r, gi) ? { group: cell(r, gi) } : {}),
   })).filter((p) => p.before && p.after);
+}
+
+function pairsFromCsv(text) {
+  return pairsFromRows(parseCsv(text));
+}
+
+/** Pairs from a .csv or .xlsx file (the first sheet of the workbook). */
+function readPairsFile(file) {
+  const ext = path.extname(file).toLowerCase();
+  if (ext === '.xlsx' || ext === '.xlsm') return pairsFromRows(readXlsxRows(file));
+  if (ext === '.xls') throw new Error(`${file} is an old Excel format. Save it as .xlsx or .csv and try again.`);
+  return pairsFromCsv(fs.readFileSync(file, 'utf8'));
 }
 
 // A leading locale such as en, en-us, en_GB or zh-Hans.
@@ -145,7 +175,7 @@ async function loadPairs(opts, fetchText = defaultFetchText) {
     pairs.push({ before: opts.before, after: opts.after, label: '' });
   }
   if (opts.pairs) {
-    pairs.push(...pairsFromCsv(fs.readFileSync(opts.pairs, 'utf8')));
+    pairs.push(...readPairsFile(opts.pairs));
   }
   if (opts.sitemap) {
     if (!hostMap.length && !pathMap.length) {
@@ -185,4 +215,4 @@ async function loadPairs(opts, fetchText = defaultFetchText) {
   return { pairs: pairs.map((p) => ({ ...p, id: pairId(p) })), beforeUrls, hostMap, pathMap };
 }
 
-module.exports = { parseCsv, pairsFromCsv, parseMap, mapUrl, parseSitemapXml, loadSitemap, loadPairs, pairId, groupOf };
+module.exports = { parseCsv, pairsFromCsv, pairsFromRows, readPairsFile, parseMap, mapUrl, parseSitemapXml, loadSitemap, loadPairs, pairId, groupOf };

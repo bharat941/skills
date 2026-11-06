@@ -343,6 +343,149 @@ test('markdown scale: long lists say what was left out', () => {
   assert.match(files['report.md'], /and \d+ more/);
 });
 
+// ---------- spreadsheet input ----------
+
+const zlib = require('zlib');
+const { pairsFromRows, readPairsFile } = require('./lib/pairs');
+const { readXlsxRows } = require('./lib/xlsx');
+
+const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
+const crc32 = (buf) => {
+  let c = 0xffffffff;
+  for (const b of buf) c = CRC_TABLE[(c ^ b) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+};
+
+// Minimal zip writer so the tests can build workbooks laid out the way Excel stores them.
+function makeZip(entries) {
+  const locals = [];
+  const central = [];
+  let offset = 0;
+  for (const [name, text, method = 8] of entries) {
+    const raw = Buffer.from(text);
+    const data = method === 8 ? zlib.deflateRawSync(raw) : raw;
+    const nameBuf = Buffer.from(name);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(method, 8);
+    local.writeUInt32LE(crc32(raw), 14);
+    local.writeUInt32LE(data.length, 18);
+    local.writeUInt32LE(raw.length, 22);
+    local.writeUInt16LE(nameBuf.length, 26);
+    local.writeUInt16LE(4, 28);
+    const extra = Buffer.alloc(4);
+    locals.push(local, nameBuf, extra, data);
+    const cd = Buffer.alloc(46);
+    cd.writeUInt32LE(0x02014b50, 0);
+    cd.writeUInt16LE(20, 4);
+    cd.writeUInt16LE(20, 6);
+    cd.writeUInt16LE(method, 10);
+    cd.writeUInt32LE(crc32(raw), 16);
+    cd.writeUInt32LE(data.length, 20);
+    cd.writeUInt32LE(raw.length, 24);
+    cd.writeUInt16LE(nameBuf.length, 28);
+    cd.writeUInt32LE(offset, 42);
+    central.push(cd, nameBuf);
+    offset += 30 + nameBuf.length + 4 + data.length;
+  }
+  const cdBuf = Buffer.concat(central);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(cdBuf.length, 12);
+  end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locals, cdBuf, end]);
+}
+
+const XML = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+const NS = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"';
+
+// rows: arrays of strings, written as shared strings (t="s") like Excel does.
+function makeXlsx(rows, { sheetNames = ['in'], extraEntries = [] } = {}) {
+  const strings = [];
+  const idx = (s) => (strings.includes(s) ? strings.indexOf(s) : strings.push(s) - 1);
+  const col = (i) => String.fromCharCode(65 + i);
+  const sheetRows = rows.map((r, ri) => `<row r="${ri + 1}">${r.map((v, ci) => `<c r="${col(ci)}${ri + 1}" t="s"><v>${idx(v)}</v></c>`).join('')}</row>`).join('');
+  const sst = `${XML}<sst ${NS} count="${strings.length}" uniqueCount="${strings.length}">${strings.map((s) => `<si><t>${s.replace(/&/g, '&amp;')}</t></si>`).join('')}</sst>`;
+  const sheets = sheetNames.map((n, i) => `<sheet name="${n}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('');
+  const rels = sheetNames.map((n, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('');
+  return makeZip([
+    ['[Content_Types].xml', `${XML}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>`],
+    ['xl/workbook.xml', `${XML}<workbook ${NS} xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheets}</sheets></workbook>`],
+    ['xl/_rels/workbook.xml.rels', `${XML}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${rels}</Relationships>`],
+    ['xl/sharedStrings.xml', sst],
+    ['xl/worksheets/sheet1.xml', `${XML}<worksheet ${NS}><sheetData>${sheetRows}</sheetData></worksheet>`],
+    ...sheetNames.slice(1).map((n, i) => [`xl/worksheets/sheet${i + 2}.xml`, `${XML}<worksheet ${NS}><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>https://other.example/</t></is></c></row></sheetData></worksheet>`]),
+    ...extraEntries,
+  ]);
+}
+
+const tmpFile = (name, content) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-sheet-'));
+  const file = path.join(dir, name);
+  fs.writeFileSync(file, content);
+  return file;
+};
+
+test('xlsx: reads rows from the first sheet, columns in order', () => {
+  const file = tmpFile('p.xlsx', makeXlsx([['before', 'after', 'label'], ['https://b/a', 'https://a/a', 'Home']], { sheetNames: ['in', 'second'] }));
+  assert.deepEqual(readXlsxRows(file), [['before', 'after', 'label'], ['https://b/a', 'https://a/a', 'Home']]);
+});
+
+test('xlsx: handles rich text, inline strings, entities, stored entries and gaps in columns', () => {
+  const sst = `${XML}<sst ${NS}><si><r><t>https://b/a?x=1&amp;</t></r><r><t>y=2</t></r></si><si><t>https://a/a</t><rPh><t>ignored</t></rPh></si></sst>`;
+  const sheet = `${XML}<worksheet ${NS}><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c><c r="D1" t="inlineStr"><is><t>section</t></is></c></row><row r="2"><c r="A2" t="str"><v>https://b/z</v></c><c r="B2"><v>7</v></c></row></sheetData></worksheet>`;
+  const zip = makeZip([['xl/workbook.xml', `${XML}<workbook ${NS}><sheets><sheet name="s" sheetId="1" r:id="rId9" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/></sheets></workbook>`, 0], ['xl/_rels/workbook.xml.rels', `${XML}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId9" Target="/xl/worksheets/sheet1.xml"/></Relationships>`], ['xl/sharedStrings.xml', sst, 0], ['xl/worksheets/sheet1.xml', sheet]]);
+  assert.deepEqual(readXlsxRows(tmpFile('r.xlsx', zip)), [['https://b/a?x=1&y=2', 'https://a/a', '', 'section'], ['https://b/z', '7']]);
+});
+
+test('xlsx: a file that is not a workbook gives a clear error', () => {
+  assert.throws(() => readXlsxRows(tmpFile('bad.xlsx', 'not a zip at all')), /not an \.xlsx workbook/);
+  assert.throws(() => readXlsxRows(tmpFile('empty.xlsx', makeZip([['hello.txt', 'hi']]))), /workbook/);
+});
+
+test('pairs: a sheet without a header row (before in column A, after in column B) is accepted', () => {
+  const file = tmpFile('gm.xlsx', makeXlsx([['https://gm.com/', 'https://main--x--y.aem.live/'], ['https://gm.com/heritage', 'https://main--x--y.aem.live/heritage']]));
+  assert.deepEqual(readPairsFile(file), [
+    { before: 'https://gm.com/', after: 'https://main--x--y.aem.live/', label: '' },
+    { before: 'https://gm.com/heritage', after: 'https://main--x--y.aem.live/heritage', label: '' },
+  ]);
+});
+
+test('pairs: a sheet with a header row can name label and group columns in any order', () => {
+  const file = tmpFile('h.xlsx', makeXlsx([['Group', 'After', 'Before', 'Label'], ['blog', 'https://a/1', 'https://b/1', 'One'], ['', 'https://a/2', 'https://b/2', '']]));
+  assert.deepEqual(readPairsFile(file), [
+    { before: 'https://b/1', after: 'https://a/1', label: 'One', group: 'blog' },
+    { before: 'https://b/2', after: 'https://a/2', label: '' },
+  ]);
+});
+
+test('pairs: a csv without a header row is accepted too', () => {
+  const file = tmpFile('p.csv', 'https://b/1,https://a/1\n# a comment\nhttps://b/2,https://a/2,Two\n');
+  assert.deepEqual(readPairsFile(file).map((p) => [p.before, p.after, p.label]), [['https://b/1', 'https://a/1', ''], ['https://b/2', 'https://a/2', 'Two']]);
+});
+
+test('pairs: a first row that is neither a header nor two URLs is rejected with what to fix', () => {
+  assert.throws(() => pairsFromRows([['page', 'new page'], ['https://b/1', 'https://a/1']]), /"before" and "after"/);
+  assert.throws(() => pairsFromRows([['https://b/1', 'not a url']]), /"before" and "after"/);
+});
+
+test('pairs: old .xls files and unreadable spreadsheets say to save as .xlsx or .csv', () => {
+  assert.throws(() => readPairsFile(tmpFile('old.xls', 'x')), /\.xlsx or \.csv/);
+});
+
+test('pairs: loadPairs reads an .xlsx given to --pairs and applies per-group', async () => {
+  const file = tmpFile('lp.xlsx', makeXlsx([['https://b/en/blog/a', 'https://a/en/blog/a'], ['https://b/en/blog/b', 'https://a/en/blog/b'], ['https://b/en/products/x', 'https://a/en/products/x']]));
+  const { pairs } = await loadPairs({ pairs: file, perGroup: '1' });
+  assert.deepEqual(pairs.map((p) => p.before), ['https://b/en/blog/a', 'https://b/en/products/x']);
+});
+
 // ---------- review fixes: safe output, csv injection, locale groups ----------
 
 const { writeReportFiles } = require('./lib/markdown');

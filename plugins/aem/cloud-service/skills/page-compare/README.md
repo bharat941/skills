@@ -18,7 +18,7 @@ open out/report.md      # one-page summary: content, visual, integration, top is
 open out/report.html    # interactive version
 ```
 
-For many pages use `--pairs pages.csv` (`before,after[,label][,group]`) or `--sitemap <url> --map www.example.com=stage.example.com`, and start with `--per-group 2` to sample each template. The run also writes `issues.csv` (each issue once, with pages affected), `pages.csv` (one row per page) and `pages/<page>.md` (detail per page).
+For many pages use `--pairs pages.xlsx` or `--pairs pages.csv` (before URLs in column A, after URLs in column B, optional label and group; a header row `before,after[,label][,group]` is optional) or `--sitemap <url> --map www.example.com=stage.example.com`, and start with `--per-group 2` to sample each template. The run also writes `issues.csv` (each issue once, with pages affected), `pages.csv` (one row per page) and `pages/<page>.md` (detail per page).
 
 See [SKILL.md](SKILL.md) for how an agent runs and triages it, [references/checks.md](references/checks.md) for every check and threshold, and [references/report.md](references/report.md) for the report, `accepted.json` and scaling notes.
 
