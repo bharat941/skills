@@ -725,6 +725,68 @@ test('content: "Learn more" alone is never flagged as placeholder or empty state
   assert.ok(!out.some((f) => f.check === 'content.placeholder' || f.check === 'content.empty_state'));
 });
 
+// ---------- priority rubric ----------
+
+const { priorityOf, ownerOf, DEFAULT_RULES: RULES } = require('./lib/rules');
+const prod = { previewHost: false };
+const preview = { previewHost: true };
+const f = (check, severity = 'fail', extra = {}) => ({ check, severity, summary: check, ...extra });
+
+test('priority: content loss is P1', () => {
+  for (const c of ['content.text.missing', 'image.broken', 'image.missing', 'content.facts.changed', 'content.placeholder', 'heading.h1', 'form.field.missing']) {
+    assert.equal(priorityOf(f(c), prod), 'P1', c);
+  }
+  assert.equal(priorityOf(f('content.text.missing', 'review'), prod), 'P1', 'missing content is P1 even when only a little text is gone');
+});
+
+test('priority: production robots stays P1, preview robots is expected', () => {
+  assert.equal(priorityOf(f('site.robots'), prod), 'P1');
+  assert.equal(priorityOf(f('site.robots', 'review'), preview), 'expected');
+  assert.equal(priorityOf(f('meta.canonical', 'review'), preview), 'expected');
+  assert.equal(priorityOf(f('meta.canonical'), prod), 'P1');
+  assert.equal(priorityOf(f('site.sitemap', 'review'), preview), 'expected');
+  assert.equal(priorityOf(f('site.sitemap', 'review'), prod), 'P3');
+});
+
+test('priority: analytics on preview is expected, on production P2', () => {
+  assert.equal(priorityOf(f('analytics.rsid', 'review'), preview), 'expected');
+  assert.equal(priorityOf(f('analytics.beacon'), prod), 'P2');
+});
+
+test('priority: header section missing is P3, main section missing is P1', () => {
+  assert.equal(priorityOf(f('visual.section.missing', 'fail', { items: [{ section: 'header', viewport: '1440' }] }), prod), 'P3');
+  assert.equal(priorityOf(f('visual.section.missing', 'fail', { items: [{ section: 'footer' }, { section: 'main-4:.faq' }] }), prod), 'P1');
+  assert.equal(priorityOf(f('visual.section', 'fail'), prod), 'P2');
+  assert.equal(priorityOf(f('visual.section', 'review'), prod), 'P3');
+});
+
+test('priority: info and accepted are not listed', () => {
+  assert.equal(priorityOf(f('content.text.regrouped', 'info'), prod), null);
+  assert.equal(priorityOf(f('content.text.missing', 'fail', { accepted: { reason: 'retired' } }), prod), null);
+});
+
+test('priority: unknown check fail→P2 review→P3', () => {
+  assert.equal(priorityOf(f('brand.new.check', 'fail'), prod), 'P2');
+  assert.equal(priorityOf(f('brand.new.check', 'review'), prod), 'P3');
+});
+
+test('priority: --rules override wins', () => {
+  const rules = { ...RULES, priority: { ...RULES.priority, 'nav.item': 'P1' } };
+  assert.equal(priorityOf(f('nav.item', 'review'), prod, rules), 'P1');
+  assert.equal(priorityOf(f('nav.item', 'review'), prod), 'P3');
+});
+
+test('ownerOf maps check prefixes to a likely owner', () => {
+  assert.equal(ownerOf('content.facts.changed'), 'Content / authoring');
+  assert.equal(ownerOf('image.broken'), 'Dev / assets');
+  assert.equal(ownerOf('link.broken'), 'Dev / assets');
+  assert.equal(ownerOf('link.target'), 'Content / dev');
+  assert.equal(ownerOf('perf.lcp'), 'Dev (front end)');
+  assert.equal(ownerOf('meta.canonical'), 'SEO');
+  assert.equal(ownerOf('analytics.rsid'), 'Analytics');
+  assert.equal(ownerOf('page.missing'), 'Dev');
+});
+
 // ---------- preview hosts ----------
 
 test('isPreviewHost knows AEM Cloud publish and preview hosts', () => {

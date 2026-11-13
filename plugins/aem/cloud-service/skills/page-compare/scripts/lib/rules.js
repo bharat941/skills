@@ -23,6 +23,90 @@ const DEFAULT_RULES = {
   },
   timing: { slowerRatio: 1.5, minDeltaMs: 1000 },
   links: { maxPerPage: 50 },
+  // What a finding means for a launch. A check id or a prefix ending in "." maps to
+  // P1 (blocker: content loss, broken page), P2 (major), P3 (minor), or an object
+  // { preview, production } for checks that are expected to differ before launch.
+  // "auto" is decided from the finding itself (see priorityOf).
+  priority: {
+    'content.facts.changed': 'P1',
+    'content.placeholder': 'P1',
+    'content.text.missing': 'P1',
+    'image.missing': 'P1',
+    'image.broken': 'P1',
+    'heading.h1': 'P1',
+    'form.field.missing': 'P1',
+    'page.missing': 'P1',
+    'http.status': 'P1',
+    'js.error': 'P1',
+    'visual.section.missing': 'auto',
+    'content.text.rewritten': 'P2',
+    'content.text.changed': 'P2',
+    'content.empty_state': 'P2',
+    'heading.h1.reworded': 'P2',
+    'heading.missing': 'P2',
+    'cta.missing': 'P2',
+    'form.field.changed': 'P2',
+    'form.action': 'P2',
+    'link.broken': 'P2',
+    'download.broken': 'P2',
+    'download.changed': 'P2',
+    'resource.missing': 'P2',
+    'visual.section': 'auto',
+    'perf.': 'P2',
+    'jsonld.type': 'P2',
+    'redirect.wrong': 'P2',
+    'meta.title': 'P2',
+    'meta.description': 'P2',
+    'image.alt': 'P2',
+    'a11y.delta': 'P2',
+    'nav.item': 'P3',
+    'link.missing': 'P3',
+    'link.target': 'P3',
+    'image.missing.chrome': 'P3',
+    'image.broken.chrome': 'P3',
+    'image.alt.changed': 'P3',
+    'heading.level': 'P3',
+    'visual.height': 'P3',
+    'meta.social': 'P3',
+    'meta.lang': 'P3',
+    'meta.hreflang': 'P3',
+    'meta.favicon': 'P3',
+    'console.error': 'P3',
+    'request.': 'P3',
+    'redirect.': 'P3',
+    'consent.missing': 'P3',
+    'content.text.added': 'P3',
+    'site.robots': { preview: 'expected', production: 'P1' },
+    'meta.robots': { preview: 'expected', production: 'P1' },
+    'meta.canonical': { preview: 'expected', production: 'P1' },
+    'site.sitemap': { preview: 'expected', production: 'P3' },
+    'analytics.': { preview: 'expected', production: 'P2' },
+  },
+  // Who most likely fixes it, by check-id prefix (longest prefix wins). A suggestion, not an assignment.
+  owner: {
+    'content.': 'Content / authoring',
+    'heading.': 'Content / authoring',
+    'cta.': 'Content / authoring',
+    'form.': 'Content / authoring',
+    'image.': 'Dev / assets',
+    'download.': 'Dev / assets',
+    'link.broken': 'Dev / assets',
+    'resource.': 'Dev / assets',
+    'request.': 'Dev / assets',
+    'visual.': 'Dev (front end)',
+    'perf.': 'Dev (front end)',
+    'js.': 'Dev (front end)',
+    'console.': 'Dev (front end)',
+    'a11y.': 'Dev (front end)',
+    'nav.': 'Content / dev',
+    'link.': 'Content / dev',
+    'meta.': 'SEO',
+    'site.': 'SEO',
+    'jsonld.': 'SEO',
+    'redirect.': 'SEO',
+    'analytics.': 'Analytics',
+    'consent.': 'Privacy / dev',
+  },
 };
 
 function mergeDeep(base, extra) {
@@ -138,9 +222,45 @@ function reusableResult(result) {
   return !!result && !result.blocked && !result.error;
 }
 
+// Exact check id first, then the longest "prefix." entry.
+function lookup(map, check) {
+  if (!map) return undefined;
+  if (map[check] !== undefined) return map[check];
+  const prefix = Object.keys(map).filter((k) => k.endsWith('.') && check.startsWith(k)).sort((a, b) => b.length - a.length)[0];
+  return prefix ? map[prefix] : undefined;
+}
+
+const CHROME_SECTIONS = new Set(['header', 'footer']);
+
+/**
+ * Launch priority of a finding: 'P1' | 'P2' | 'P3' | 'expected' (fine before launch, recheck on the launch
+ * domain), or null for info-level and accepted findings, which are not action items.
+ */
+function priorityOf(finding, { previewHost = false } = {}, rules = DEFAULT_RULES) {
+  if (!finding || finding.accepted || !['fail', 'review'].includes(finding.severity)) return null;
+  let p = lookup(rules.priority, finding.check);
+  if (p && typeof p === 'object') p = previewHost ? p.preview : p.production;
+  if (p === 'auto') {
+    if (finding.check === 'visual.section.missing') {
+      const items = Array.isArray(finding.items) ? finding.items : [];
+      return items.some((it) => it && !CHROME_SECTIONS.has(it.section)) ? 'P1' : 'P3';
+    }
+    return finding.severity === 'fail' ? 'P2' : 'P3';
+  }
+  if (p) return p;
+  return finding.severity === 'fail' ? 'P2' : 'P3';
+}
+
+/** Who most likely fixes a finding, from its check id. */
+function ownerOf(check, rules = DEFAULT_RULES) {
+  return lookup(rules.owner, check) || 'Dev';
+}
+
 module.exports = {
   deriveStatus,
   reusableResult,
+  priorityOf,
+  ownerOf,
   DEFAULT_RULES,
   loadRules,
   loadAccepted,
