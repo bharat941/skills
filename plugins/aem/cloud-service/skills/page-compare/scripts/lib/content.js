@@ -515,4 +515,4 @@ function makeCanon({ beforeUrl, afterUrl, hostMap = [], pathMap = [], rewrites =
   };
 }
 
-module.exports = { diffBlocks, numbersIn, contentFindings, makeCanon, beforeBase, finding, cap, counter, safeHost, MAX_ITEMS };
+module.exports = { diffBlocks, numbersIn, NUMBER, contentFindings, makeCanon, beforeBase, finding, cap, counter, safeHost, MAX_ITEMS };

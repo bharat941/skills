@@ -3,8 +3,10 @@
 const fs = require('fs');
 const path = require('path');
 const { STATUS_ORDER } = require('./report');
-const { csvCell } = require('./util');
-const { areaOf, pathOf, subjectOf, normalizeSubject, issueTitle } = require('./actions');
+const { csvCell, isPreviewHost, hostOf } = require('./util');
+const { priorityOf } = require('./rules');
+const { NUMBER, numbersIn } = require('./content');
+const { areaOf, pathOf, subjectOf, normalizeSubject, issueTitle, buildActions, verdictOf, PRIORITY_ORDER } = require('./actions');
 
 const SEVERITY_ORDER = { fail: 0, review: 1, info: 2 };
 const SEVERITY_LABEL = { fail: '❌ Fail', review: '⚠️ Review', info: 'ℹ️ Info' };
@@ -201,33 +203,39 @@ function siteSection(run) {
 
 // ---------- issues across pages ----------
 
-/** Groups open fail/review findings from all pages into distinct issues with the pages they affect. */
+/** Groups open fail/review findings from all pages into item-level issues with the pages they affect and their priority. */
 function groupIssues(pairs, run) {
   const map = new Map();
-  const add = (f, issue, page) => {
+  const add = (f, issue, page, previewHost) => {
     const key = `${f.check}\u0000${issue}`;
-    const e = map.get(key) || { severity: f.severity, area: areaOf(f.check), check: f.check, issue, pages: [], siteWide: page === null };
+    const priority = priorityOf(f, { previewHost });
+    const e = map.get(key) || { priority, action: issueTitle(f), severity: f.severity, area: areaOf(f.check), check: f.check, issue, pages: [], siteWide: page === null };
     if (SEVERITY_ORDER[f.severity] < SEVERITY_ORDER[e.severity]) e.severity = f.severity;
+    if (PRIORITY_ORDER.indexOf(priority) < PRIORITY_ORDER.indexOf(e.priority)) e.priority = priority;
     if (page !== null && e.pages[e.pages.length - 1] !== page) e.pages.push(page);
     map.set(key, e);
   };
   for (const p of pairs) {
     const page = pathOf(p);
+    const previewHost = isPreviewHost(hostOf(p.after));
     for (const f of p.findings || []) {
       if (f.accepted || !['fail', 'review'].includes(f.severity)) continue;
       const items = Array.isArray(f.items) ? f.items : [];
-      if (items.length) for (const it of items) add(f, `${issueTitle(f)}: ${normalizeSubject(subjectOf(it))}`, page);
-      else add(f, normalizeSubject(issueTitle(f)), page);
+      if (items.length) for (const it of items) add(f, `${issueTitle(f)}: ${normalizeSubject(subjectOf(it))}`, page, previewHost);
+      else add(f, normalizeSubject(issueTitle(f)), page, previewHost);
     }
   }
-  for (const f of siteFindingsOf(run)) if (!f.accepted && ['fail', 'review'].includes(f.severity)) add(f, f.summary, null);
-  return [...map.values()].sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity] || Number(b.siteWide) - Number(a.siteWide) || b.pages.length - a.pages.length || a.issue.localeCompare(b.issue));
+  const sitePreview = pairs.length ? isPreviewHost(hostOf(pairs[0].after)) : false;
+  for (const f of siteFindingsOf(run)) if (!f.accepted && ['fail', 'review'].includes(f.severity)) add(f, f.summary, null, sitePreview);
+  return [...map.values()].sort((a, b) => PRIORITY_ORDER.indexOf(a.priority) - PRIORITY_ORDER.indexOf(b.priority)
+    || SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity] || Number(b.siteWide) - Number(a.siteWide) || b.pages.length - a.pages.length || a.issue.localeCompare(b.issue));
 }
 
 const AREA_TITLE = Object.fromEntries(AREAS.map((a) => [a.id, a.title]));
+const PRIORITY_LABEL = { P1: '🔴 P1', P2: '🟠 P2', P3: '🟡 P3', expected: '⚪ Expected' };
 
 function issueRow(e) {
-  return [SEVERITY_LABEL[e.severity], AREA_TITLE[e.area], cell(e.issue, 180), e.siteWide ? 'site-wide' : e.pages.length, e.siteWide ? '' : cell(e.pages[0])];
+  return [PRIORITY_LABEL[e.priority] || '', SEVERITY_LABEL[e.severity], AREA_TITLE[e.area], cell(e.issue, 180), e.siteWide ? 'site-wide' : e.pages.length, e.siteWide ? '' : cell(e.pages[0])];
 }
 
 function toCsvText(header, rows) {
@@ -235,14 +243,14 @@ function toCsvText(header, rows) {
 }
 
 function issuesCsv(issues) {
-  return toCsvText(['severity', 'area', 'check', 'issue', 'pages_affected', 'example_page', 'pages'],
-    issues.map((e) => [e.severity, AREA_TITLE[e.area], e.check, e.issue, e.siteWide ? 'site-wide' : e.pages.length, e.siteWide ? '' : e.pages[0], e.pages.slice(0, MAX_ISSUE_PAGES).join(' ') + (e.pages.length > MAX_ISSUE_PAGES ? ` (+${e.pages.length - MAX_ISSUE_PAGES} more)` : '')]));
+  return toCsvText(['priority', 'action', 'severity', 'area', 'check', 'issue', 'pages_affected', 'example_page', 'pages'],
+    issues.map((e) => [e.priority, e.action, e.severity, AREA_TITLE[e.area], e.check, e.issue, e.siteWide ? 'site-wide' : e.pages.length, e.siteWide ? '' : e.pages[0], e.pages.slice(0, MAX_ISSUE_PAGES).join(' ') + (e.pages.length > MAX_ISSUE_PAGES ? ` (+${e.pages.length - MAX_ISSUE_PAGES} more)` : '')]));
 }
 
 function issuesMd(issues, run) {
   const shown = issues.slice(0, MAX_ISSUE_ROWS);
-  const out = ['# Issues across all pages', `${issues.length} distinct issue(s) on ${(run.pairs || []).length} page(s). The same problem on many pages is listed once, with how many pages it affects. Info-level findings are left out.`];
-  out.push(shown.length ? table(['Severity', 'Area', 'Issue', 'Pages affected', 'Example page'], shown.map(issueRow)) : '_No open issues._');
+  const out = ['# Issues across all pages', `Every item behind the action items in report.md: ${issues.length} row(s) on ${(run.pairs || []).length} page(s), highest priority first. The same item on many pages is listed once, with how many pages it affects. Info-level findings are left out.`];
+  out.push(shown.length ? table(['Priority', 'Severity', 'Area', 'Issue', 'Pages affected', 'Example page'], shown.map(issueRow)) : '_No open issues._');
   if (issues.length > shown.length) out.push(`_…and ${issues.length - shown.length} more in issues.csv (every issue, with up to ${MAX_ISSUE_PAGES} affected pages each)._`);
   return `${out.join('\n\n')}\n`;
 }
@@ -264,11 +272,13 @@ function detailPath(p) {
 }
 
 function pagesCsv(pairs) {
-  return toCsvText(['page', 'status', 'flaky', 'content', 'visual', 'integration', 'fail', 'review', 'top_issue', 'detail', 'before', 'after'],
+  return toCsvText(['page', 'status', 'flaky', 'content', 'visual', 'integration', 'fail', 'review', 'p1', 'p2', 'p3', 'top_issue', 'detail', 'before', 'after'],
     pairs.map((p) => {
       const a = pageAreas(p);
       const c = counts(p.findings || []);
-      return [pathOf(p), p.status, p.flaky || p.retried ? 'yes' : '', a.content, a.visual, a.integration, c.fail, c.review, topIssueOf(p), p.status === 'pass' ? '' : detailPath(p), p.before, p.after];
+      const previewHost = isPreviewHost(hostOf(p.after));
+      const pr = (want) => (p.findings || []).filter((f) => priorityOf(f, { previewHost }) === want).length;
+      return [pathOf(p), p.status, p.flaky || p.retried ? 'yes' : '', a.content, a.visual, a.integration, c.fail, c.review, pr('P1'), pr('P2'), pr('P3'), topIssueOf(p), p.status === 'pass' ? '' : detailPath(p), p.before, p.after];
     }));
 }
 
@@ -303,26 +313,123 @@ function worstPages(pairs, single) {
   return out.join('\n\n');
 }
 
-function verdictOf(pairs, issues) {
-  if (pairs.some((p) => ['fail', 'error', 'blocked'].includes(p.status)) || issues.some((e) => e.severity === 'fail')) return 'fail';
-  return pairs.some((p) => p.status !== 'pass') || issues.length ? 'review' : 'pass';
+const MAX_ACTIONS = 15;
+const MAX_DIFFS = 10;
+
+function plural(n, word) {
+  return `${n} ${word}${n === 1 ? '' : 's'}`;
+}
+
+function verdictLine(v) {
+  const head = v.label === 'Not ready' ? `**Not ready: ${plural(v.p1, 'blocker')}**`
+    : v.label === 'Incomplete' ? `**Incomplete: ${plural(v.notCompared, 'page')} could not be compared**`
+      : v.label === 'Ready after fixes' ? `**Ready after fixes: ${plural(v.p2, 'major issue')}**`
+        : '**No blocking differences found**';
+  return `${head}. ${v.p1} P1 · ${v.p2} P2 · ${v.p3} P3 action item(s) · ${v.expected} to recheck at launch.`;
+}
+
+function howMany(a) {
+  if (a.siteWide) return 'site-wide';
+  if (a.pages.length > 1) return a.count === a.pages.length ? `on ${a.pages.length} pages` : `${a.count} on ${a.pages.length} pages`;
+  return String(a.count);
+}
+
+function exampleCell(a, multiPage) {
+  if (a.siteWide) return 'site-wide';
+  const ex = a.example || {};
+  let text = ex.before !== undefined || ex.after !== undefined ? `${cell(ex.before, 70)} → ${cell(ex.after, 70)}` : cell(ex.detail || '', 90);
+  if (multiPage && ex.page) text = `${cell(ex.page, 50)}: ${text}`;
+  if (ex.files && ex.pairId) text += ` (${imageLinks(ex.files, ex.pairId)})`;
+  return text;
+}
+
+function actionTable(actions, multiPage) {
+  const rows = actions.filter((a) => a.priority !== 'expected');
+  if (!rows.length) return '_No action items._';
+  const shown = rows.slice(0, MAX_ACTIONS);
+  const out = [table(['#', 'Priority', 'Area', 'Problem', 'How many', 'Example', 'Likely owner'],
+    shown.map((a, i) => [i + 1, PRIORITY_LABEL[a.priority], AREA_TITLE[a.area], cell(a.title, 120), howMany(a), exampleCell(a, multiPage), a.owner]))];
+  if (rows.length > shown.length) out.push(`_…and ${rows.length - shown.length} more action item(s) in issues.csv._`);
+  return out.join('\n\n');
+}
+
+// Bold the figures in `text` that the other side does not have.
+function boldFigures(text, own, other) {
+  const left = [...other];
+  const differ = own.filter((n) => {
+    const i = left.indexOf(n);
+    if (i >= 0) left.splice(i, 1);
+    return i < 0;
+  });
+  if (!differ.length) return cell(text, 200);
+  return cell(text, 200).replace(new RegExp(NUMBER.source, NUMBER.flags), (m) => {
+    const key = m.toLowerCase().replace(/\s+/g, '');
+    const i = differ.indexOf(key);
+    if (i < 0) return m;
+    differ.splice(i, 1);
+    return `**${m}**`;
+  });
+}
+
+const DIFF_CHECKS = ['content.facts.changed', 'content.text.changed', 'content.text.rewritten'];
+
+function contentDiffs(pairs) {
+  const rows = [];
+  const seen = new Set();
+  for (const check of DIFF_CHECKS) {
+    for (const p of pairs) {
+      for (const f of p.findings || []) {
+        if (f.check !== check || f.accepted) continue;
+        for (const it of Array.isArray(f.items) ? f.items : []) {
+          const key = `${it.before}\u0000${it.after}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          const nb = it.numbersBefore || numbersIn(it.before);
+          const na = it.numbersAfter || numbersIn(it.after);
+          rows.push({ facts: check === 'content.facts.changed', page: pathOf(p), before: boldFigures(it.before, nb, na), after: boldFigures(it.after, na, nb) });
+        }
+      }
+    }
+  }
+  if (!rows.length) return '';
+  const multi = new Set(rows.map((r) => r.page)).size > 1;
+  const shown = rows.slice(0, MAX_DIFFS);
+  const head = multi ? ['', 'Page', 'Before says', 'After says'] : ['', 'Before says', 'After says'];
+  const out = ['## Content differences', 'Text that says something different on the after page. 🔴 marks changed figures (speeds, sizes, percentages), shown in bold.',
+    table(head, shown.map((r) => (multi ? [r.facts ? '🔴' : '', cell(r.page, 50), r.before, r.after] : [r.facts ? '🔴' : '', r.before, r.after])))];
+  if (rows.length > shown.length) out.push(`_…and ${rows.length - shown.length} more in issues.csv and pages/._`);
+  return out.join('\n\n');
+}
+
+function expectedSection(actions) {
+  const list = actions.filter((a) => a.priority === 'expected');
+  if (!list.length) return '';
+  const line = (a) => {
+    const ex = a.example || {};
+    const ba = ex.before !== undefined || ex.after !== undefined ? `: ${cell(ex.before, 80)} → ${cell(ex.after, 80)}` : '';
+    return `- ${cell(a.title, 160)}${ba}${a.siteWide || a.pages.length <= 1 ? '' : ` (on ${a.pages.length} pages)`}`;
+  };
+  return ['## Expected on preview — recheck at launch', 'The after site is a preview or publish host, where these usually differ by design. Check them again on the launch domain.', list.map(line).join('\n')].join('\n\n');
 }
 
 function summaryMd(run, pairs, issues) {
   const single = pairs.length === 1;
   const siteIssues = issues.filter((e) => e.siteWide);
-  const top = issues.slice(0, MAX_TOP);
+  const actions = buildActions(run);
+  const notCompared = pairs.filter((p) => p.blocked || p.error).length;
+  const verdict = verdictOf(actions, { notCompared });
   const out = [
     '# Page comparison report',
     [`- **Generated:** ${cell(run.generatedAt)}`, `- **Pages compared:** ${pairs.length} (${statusLine(pairs)})`, `- **Viewports:** ${(run.viewports || []).map((v) => `${v}px`).join(', ')}`].join('\n'),
-    `**Overall: ${RESULT_LABEL[verdictOf(pairs, issues)]}**. ${issues.length} distinct issue(s): ${issues.filter((e) => e.severity === 'fail').length} fail, ${issues.filter((e) => e.severity === 'review').length} review.`,
-    '## Summary',
-    areaPageTable(pairs, siteIssues),
+    verdictLine(verdict),
   ];
-  if (top.length) {
-    out.push('## Top issues', table(['Severity', 'Area', 'Issue', 'Pages affected', 'Example page'], top.map(issueRow)));
-    if (issues.length > top.length) out.push(`_…and ${issues.length - top.length} more in issues.md / issues.csv._`);
-  }
+  if (notCompared) out.push(`> ⚠️ ${plural(notCompared, 'page')} could not be compared (blocked or failed to load); see "Pages that need attention".`);
+  out.push('## Action items', 'One row per problem, highest priority first. 🔴 P1 must be fixed before launch (content loss and broken pages come first), 🟠 P2 should be, 🟡 P3 is polish.', actionTable(actions, !single));
+  const diffs = contentDiffs(pairs);
+  if (diffs) out.push(diffs);
+  const expected = expectedSection(actions);
+  if (expected) out.push(expected);
+  out.push('## Summary', areaPageTable(pairs, siteIssues));
   const flaky = pairs.filter((p) => p.flaky).length;
   if (flaky) out.push(`> ⚠️ ${flaky} page(s) change between loads (rotating or random content); their findings may include noise. They are marked "flaky" in pages.csv.`);
   const site = siteSection(run);
@@ -332,12 +439,17 @@ function summaryMd(run, pairs, issues) {
   if (single) out.push(pairSection(pairs[0]));
   out.push('## Files in this report', [
     '- `report.md`: this summary.',
-    '- `issues.md` / `issues.csv`: every distinct issue, with how many pages it affects.',
-    '- `pages.csv`: one row per page with a result for content, visual and integration. Open it in a spreadsheet to sort and filter.',
+    '- `issues.md` / `issues.csv`: every item behind the action items, with its priority and how many pages it affects. Use it as the work list.',
+    '- `pages.csv`: one row per page with a result for content, visual and integration and its P1/P2/P3 counts. Open it in a spreadsheet to sort and filter.',
     '- `pages/<page>.md`: full detail for each page that did not pass. Screenshots are linked from `pairs/`.',
   ].join('\n'));
   out.push('## How to read this', [
-    '- **Fail**: most likely needs a fix. **Review**: needs a human look and may be intended. **Info**: for awareness, not listed as an issue.',
+    '- **🔴 P1 Blocker**: must be fixed before launch: content lost or changed (text, figures, images, sections, forms), broken pages, and robots/canonical on a production host.',
+    '- **🟠 P2 Major**: should be fixed before launch: rewritten copy, broken links and downloads, large visual or speed differences.',
+    '- **🟡 P3 Minor**: polish: header, footer and navigation differences, small visual shifts, alt text.',
+    '- **⚪ Expected**: differs by design on a preview or publish host; recheck on the launch domain.',
+    '- "Likely owner" is a suggestion from the type of check, not an assignment.',
+    '- **Fail / Review / Info** in the page detail say how sure the check is that something changed; the priority says how much it matters.',
     '- A pass means no differences were found by these checks, not proof that the page is correct.',
   ].join('\n'));
   if ((run.notTested || []).length) out.push('## Not tested', run.notTested.map((n) => `- ${cell(n, 300)}`).join('\n'));

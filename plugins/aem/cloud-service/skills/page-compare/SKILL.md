@@ -63,10 +63,17 @@ Exit code: `0` no fail/error/blocked, `1` at least one, `2` usage or setup error
 
 ## Read the report
 
-Open `out/report.md` first. It is a one-page summary at any number of pages: result per area (content parity, visual parity, integration) counted in pages, the top issues with how many pages each affects, and the pages that need attention. Alongside it:
+Open `out/report.md` first. It reads in a minute at any number of pages and is what to share with a customer or leadership:
 
-- `issues.md` / `issues.csv`: every distinct issue once, with the pages it affects. The same broken link or wrong canonical on 400 pages is one row.
-- `pages.csv`: one row per page with a result per area; open it in a spreadsheet to sort and filter.
+1. A one-line **verdict**: `Not ready: N blockers`, `Ready after fixes`, `Incomplete` (pages could not be compared) or `No blocking differences found`.
+2. **Action items**: one row per problem (ten broken images are one row), with a priority, how many items and pages, an example and a likely owner.
+3. **Content differences**: `Before says / After says`, with changed figures in bold.
+4. **Expected on preview**: robots.txt, canonical and analytics differences that are normal before launch on a preview or publish host.
+
+Priorities: 🔴 **P1** must be fixed before launch. Content is non-negotiable: lost or changed text, figures, images, sections and forms are P1, as are broken pages and robots/canonical on a production host. 🟠 **P2** should be fixed (rewritten copy, broken links, large visual or speed differences). 🟡 **P3** is polish (navigation, header/footer, small visual shifts). ⚪ **Expected** is fine on a preview host and must be rechecked on the launch domain. The map is `priority` in `scripts/lib/rules.js` and can be changed per customer with `--rules`. Alongside the summary:
+
+- `issues.md` / `issues.csv`: the work list, every item with its priority and the pages it affects. The same broken link or wrong canonical on 400 pages is one row.
+- `pages.csv`: one row per page with a result per area and its P1/P2/P3 counts; open it in a spreadsheet to sort and filter.
 - `pages/<page>.md`: full before/after detail for each page that did not pass.
 - `report.html`: interactive version with the **Accept** buttons (also `report.json`, `summary.csv`).
 
@@ -82,7 +89,7 @@ Pages are ordered worst first. Statuses:
 | `error` | The page could not be captured |
 | `pass` | No unaccepted fail or review findings |
 
-Go through `fail` first, then `review`. For each finding say what changed and whether it looks like a regression or an intended change. When the after site is an Edge Delivery preview host (`*.aem.page`, `*.aem.live`), robots.txt blocking crawlers and a production canonical are expected there and reported as `review`; say they must be checked again on the launch domain. See `references/checks.md` for what each check means and `references/report.md` for the report layout.
+Work through the action items top down: P1 first, then P2. For each, say what changed and whether it looks like a regression or an intended change, using the example and the page detail. Never call an action item fixed or intended without checking it. When the after site is a preview or publish host (`*.aem.page`, `*.aem.live`, `author/publish/preview-p…-e….adobeaemcloud.com`), the robots.txt, canonical, sitemap and analytics differences listed under "Expected on preview" are normal there; say they must be checked again on the launch domain. See `references/checks.md` for what each check means and `references/report.md` for the report layout and the full priority table.
 
 ## Accepting differences
 

@@ -52,10 +52,11 @@ function countKey(item) {
   return normalizeSubject(subjectOf(item));
 }
 
-function exampleOf(f, page) {
+function exampleOf(f, pair) {
+  const page = pair ? pathOf(pair) : '';
   const items = Array.isArray(f.items) ? f.items : [];
   const first = items[0];
-  const ex = { page };
+  const ex = { page, pairId: pair ? pair.id : '' };
   if (f.before !== undefined || f.after !== undefined) Object.assign(ex, { before: f.before, after: f.after });
   else if (first && typeof first === 'object' && (first.before !== undefined || first.after !== undefined)) Object.assign(ex, { before: first.before, after: first.after });
   else if (first !== undefined) ex.detail = subjectOf(first);
@@ -77,7 +78,7 @@ function buildActions(run, rules = DEFAULT_RULES) {
     const key = `${f.check}\u0000${priority}`;
     let a = map.get(key);
     if (!a) {
-      a = { priority, area: areaOf(f.check), check: f.check, title: issueTitle(f), count: 0, pages: [], siteWide: !pair, example: exampleOf(f, pair ? pathOf(pair) : ''), owner: ownerOf(f.check, rules), keys: new Set(), extra: 0, plain: 0 };
+      a = { priority, area: areaOf(f.check), check: f.check, title: issueTitle(f), count: 0, pages: [], siteWide: !pair, example: exampleOf(f, pair), owner: ownerOf(f.check, rules), keys: new Set(), extra: 0, plain: 0 };
       map.set(key, a);
     }
     if (pair && !a.pages.includes(pathOf(pair))) a.pages.push(pathOf(pair));

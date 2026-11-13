@@ -3,8 +3,8 @@
 Everything is written under `--out` (default `./page-compare-out`).
 
 ```
-report.md                 one-page summary at any number of pages; start here
-issues.md, issues.csv     every distinct issue once, with how many pages it affects
+report.md                 one-page summary at any number of pages: verdict and prioritised action items; start here
+issues.md, issues.csv     the work list: every item with its priority and how many pages it affects
 pages.csv                 one row per page: result per area, counts, top issue, link to detail
 pages/<id>.md             full detail for each page that did not pass
 report.html               interactive report with Accept buttons
@@ -18,26 +18,38 @@ Share the whole output folder: the Markdown files link to screenshots under `pai
 
 ## report.md
 
-The report to hand to a customer. Its size does not grow with the number of pages:
+The report to hand to a customer or to leadership. Its size does not grow with the number of pages. Top to bottom:
 
-- Overall result, pages compared by status, and a summary table per area (**content parity**, **visual parity**, **integration**) counted in pages: failing, to review, passing, plus site-wide issues.
-- **Top issues**: the 10 most important distinct issues, each with the number of pages it affects and an example page.
-- A note when pages are flaky (text changes between loads), so their findings are read with care.
-- Site-wide checks: robots.txt, sitemap, redirects, page-set coverage.
-- **Pages that need attention**: the 10 worst pages with a link to their detail file.
-- For a single page, the full page detail follows inline.
+1. **Verdict**, one line: `Not ready: N blockers` (any P1), `Ready after fixes: N major issues` (P2 only), `Incomplete: N pages could not be compared` (pages blocked or failed and nothing blocking found), or `No blocking differences found`, followed by the count of P1, P2 and P3 action items and of items to recheck at launch.
+2. **Action items**: one row per problem, not per item. Ten broken images are one row with "How many: 10"; the same broken link on 90 pages is one row "on 90 pages". Columns: `#, Priority, Area, Problem, How many, Example, Likely owner`. Sorted by priority, content before visual before integration, then by reach. At most 15 rows; the rest are in `issues.csv`.
+3. **Content differences**: `Before says / After says` for text that says something different on the after page. Changed figures (speeds, sizes, percentages) are bold and marked 🔴. At most 10 rows.
+4. **Expected on preview — recheck at launch**: robots.txt, canonical, sitemap and analytics differences on a preview or publish host, which are expected before launch.
+5. Area summary (content, visual, integration counted in pages), a note on flaky pages, site-wide checks, **Pages that need attention** (the 10 worst pages, linked to their detail), and for a single page the full page detail.
 
 Every list that is cut says how many rows were left out and which file has them.
 
+### Priorities
+
+| Priority | Meaning | Typical checks |
+|---|---|---|
+| 🔴 P1 Blocker | Must be fixed before launch. Content is non-negotiable and comes first | changed figures, placeholder text, missing text, missing or broken content images, missing main sections, H1, form fields, page missing or erroring, robots/canonical on a production host |
+| 🟠 P2 Major | Should be fixed before launch | rewritten or reworded copy, empty components, missing headings or CTAs, broken links and downloads, large visual differences, slower load, analytics on a production host |
+| 🟡 P3 Minor | Polish | navigation and header/footer differences, link targets, alt text changes, small visual shifts, console errors |
+| ⚪ Expected | Differs by design on a preview or publish host (`*.aem.page/live`, `*.hlx.page/live`, `author/publish/preview-p…-e….adobeaemcloud.com`) | robots.txt, canonical, sitemap, analytics |
+
+The full map is `priority` in `scripts/lib/rules.js` (check id or `prefix.` → priority). Override it per customer with `--rules`, for example `{"priority": {"nav.item": "P1"}}`. "Likely owner" comes from `owner` in the same file and is a suggestion.
+
+Priority is not severity. Fail / review / info, shown in the page detail and in `report.json`, say how sure a check is that something changed; the priority says how much it matters for the launch.
+
 ## issues.md and issues.csv
 
-Open fail and review findings from all pages are grouped into issues. Findings with items (broken links, missing headings, console errors) become one issue per item; others become one issue per finding. Numbers that change on every page load (cache busters such as `?_=1793874404668`, long ids) are ignored when grouping, so the same console error on 300 pages is one issue. Info-level findings are not listed.
+The work list behind the action items: every item, one row each, highest priority first. Findings with items (broken links, missing headings, console errors) become one row per item; others become one row per finding. Numbers that change on every page load (cache busters such as `?_=1793874404668`, long ids) are ignored when grouping, so the same console error on 300 pages is one row. Info-level findings are not listed.
 
-`issues.csv` columns: `severity, area, check, issue, pages_affected, example_page, pages` (up to 20 page paths). `issues.md` shows the first 200 issues and points to the CSV for the rest.
+`issues.csv` columns: `priority, action, severity, area, check, issue, pages_affected, example_page, pages` (up to 20 page paths). `action` is the action item the row belongs to. `issues.md` shows the first 200 rows and points to the CSV for the rest.
 
 ## pages.csv and pages/
 
-`pages.csv` has one row per compared page: `page, status, flaky, content, visual, integration, fail, review, top_issue, detail, before, after`. Each area is `pass`, `review`, `fail` or `not compared` (blocked or error). `detail` points to `pages/<id>.md`, which has the page's content parity, visual parity and integration sections with before/after tables and screenshot links. Pages that pass get no detail file.
+`pages.csv` has one row per compared page: `page, status, flaky, content, visual, integration, fail, review, p1, p2, p3, top_issue, detail, before, after`. Each area is `pass`, `review`, `fail` or `not compared` (blocked or error); `p1`/`p2`/`p3` count the page's findings by priority. `detail` points to `pages/<id>.md`, which has the page's content parity, visual parity and integration sections with before/after tables and screenshot links. Pages that pass get no detail file.
 
 ## report.html
 

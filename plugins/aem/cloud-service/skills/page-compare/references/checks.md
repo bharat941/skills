@@ -4,6 +4,8 @@ Every finding has a `check` id, a severity (`fail`, `review`, `info`) and, where
 
 Thresholds live in `scripts/lib/rules.js` and can be overridden with `--rules file.json`.
 
+Every fail or review finding also gets a launch **priority** (P1 blocker, P2 major, P3 minor, or expected on a preview host) that decides where it appears in `report.md`; the table is in [report.md](report.md#priorities) and the map is `priority` in `scripts/lib/rules.js`. Severity says how sure a check is that something changed; priority says how much it matters.
+
 ## Page status and redirects
 
 | Check | Severity | Meaning |
@@ -21,19 +23,23 @@ When either page is not 2xx, the remaining checks are skipped for that pair.
 
 | Check | Severity | Meaning |
 |---|---|---|
-| `content.text.missing` | fail above 10% of before text lost, otherwise review | Text blocks on before that have no match on after. Blocks hidden on load (tabs, accordions) are included and flagged `hidden` |
-| `content.text.changed` | review | Reworded text (85% or more similar) |
+| `content.text.missing` | fail above 10% of before text lost, otherwise review | Text blocks on before that have no match on after. Blocks hidden on load in the main content (tabs, accordions, FAQ answers) are included and flagged `hidden`; hidden header and footer text (menus) is not counted |
+| `content.facts.changed` | fail | Reworded or rewritten text that states different figures: speeds, sizes, percentages (`1.25x` vs `1.3x`, `25%` vs `20%`, `12nm` vs `14nm`, `32GB` vs `64GB`). Digits inside names (LPDDR5X, AEC-Q100, 5G) are not figures |
+| `content.text.changed` | review | Reworded text (85% or more similar) with the same figures |
+| `content.text.rewritten` | review | A block that is missing and a new block in the same region that still say much the same thing (50% or more similar), with the same figures. Reported as one pair instead of one missing and one added block |
+| `content.placeholder` | fail | Visible text only on the after page that is left-over authoring copy: lorem ipsum, "Disclaimer text 1", placeholder, sample text, text goes here, TBD, dummy text. Patterns are `text.placeholder` in the rules |
+| `content.empty_state` | review | A list or search component on the after page that came back empty ("No results found", "No items found", "Nothing to show"). Patterns are `text.emptyState` in the rules |
 | `content.text.added` | review above 2% of before text, otherwise info | New text on after |
 | `content.text.format` | info | Same words, different spacing |
 | `content.text.regrouped` | info | Text that is on the after page but split into or merged from other blocks by new markup (for example a nav line `Owners Careers Investors` that became three items). Not counted as missing or added |
 | `heading.missing` / `heading.level` / `heading.added` | review / review / info | Heading text and level changes |
-| `meta.title`, `meta.description`, `meta.canonical`, `meta.robots`, `meta.lang`, `meta.hreflang`, `meta.social`, `meta.favicon` | fail or review | Head metadata. A missing title, a canonical pointing to the wrong host and `noindex` appearing are fails. On an Edge Delivery preview host (`*.aem.page`/`.live`, `*.hlx.page`/`.live`) a canonical that still points to production is review, since preview pages keep it by design |
+| `meta.title`, `meta.description`, `meta.canonical`, `meta.robots`, `meta.lang`, `meta.hreflang`, `meta.social`, `meta.favicon` | fail or review | Head metadata. A missing title, a canonical pointing to the wrong host and `noindex` appearing are fails. On a preview or publish host (Edge Delivery `*.aem.page`/`.live`, `*.hlx.page`/`.live`, and AEM as a Cloud Service `author|publish|preview-p<program>-e<env>.adobeaemcloud.com`/`.net`) a canonical that still points to production is review, since those hosts keep it by design |
 | `consent.missing` | review | A cookie consent banner (OneTrust, Cookiebot, TrustArc, ...) is on the before page but not on the after page. Consent dialogs are otherwise left out of every content check and screenshot, so their headings, buttons and logos never show up as missing content |
 | `image.missing`, `image.broken` | fail | Content images missing or failing to load. Images are matched by file name, then by alt text, since Edge Delivery and DAM moves rename images (`media_<hash>.jpg`). An image with no alt text and a new name cannot be matched and shows as missing |
 | `image.alt`, `image.alt.changed` | review | Alt text lost or changed |
 | `image.missing.chrome`, `image.broken.chrome` | review | Same, for header/footer images |
 | `link.missing`, `link.target`, `link.added` | review / review / info | Links compared after mapping before hosts and paths to the after site |
-| `nav.item` | fail | Navigation entry missing |
+| `nav.item` | review | Navigation entry missing (priority P3 unless overridden) |
 | `cta.missing` | review | Button or call-to-action label missing |
 | `form.field.missing` | fail | A form field present before is gone |
 | `form.field.changed`, `form.action` | review | Field type, label or required flag changed; form action changed |
@@ -43,7 +49,7 @@ Text that differs between two loads of the before page (for example a counter) i
 
 ## Visual
 
-Pages are split into sections (header, footer, and the children of `main`, looking through wrappers that hold a single element such as AEM's `.page-body > .parsys`; override with `--sections`). A section is identified by its visible text; inline CSS and scripts inside it are ignored. Sections are paired by text, then by order, and compared at each viewport. The before page is loaded twice; pixels that differ between those loads are masked out of the comparison. A section whose text differs between the two before loads (rotating testimonials, carousels) is paired by its position name instead of its text and compared with that mask, so it is never reported as missing. A section with the same name and the same opening words (usually its heading) on both pages is also treated as the same section with changed content, so a carousel that starts on a different slide is a visual difference with screenshots, not a missing section. Add `--mask <selector>` for carousels to leave them out entirely. One-pixel shifts caused by content above a section are tolerated.
+Pages are split into sections (header, footer, and the children of `main`, looking through wrappers that hold a single element such as AEM's `.page-body > .parsys`; override with `--sections`). A section is identified by its visible text; inline CSS and scripts inside it are ignored. The header is always paired with the header and the footer with the footer, so a changed header is compared, not reported as missing. Other sections are paired by text, then by order, and compared at each viewport. The before page is loaded twice; pixels that differ between those loads are masked out of the comparison. A section whose text differs between the two before loads (rotating testimonials, carousels) is paired by its position name instead of its text and compared with that mask, so it is never reported as missing. A section with the same name and the same opening words (usually its heading) on both pages is also treated as the same section with changed content, so a carousel that starts on a different slide is a visual difference with screenshots, not a missing section. Add `--mask <selector>` for carousels to leave them out entirely. One-pixel shifts caused by content above a section are tolerated.
 
 | Check | Severity | Meaning |
 |---|---|---|
@@ -89,7 +95,7 @@ Not covered: interaction events (clicks, form submits), consent behaviour, and w
 
 | Check | Severity | Meaning |
 |---|---|---|
-| `site.robots` | fail / review | After robots.txt disallows everything, or is missing when before has one. Review instead of fail on an Edge Delivery preview host, where blocking crawlers is by design |
+| `site.robots` | fail / review | After robots.txt disallows everything, or is missing when before has one. Review instead of fail on a preview or publish host (see `meta.canonical`), where blocking crawlers is by design |
 | `site.sitemap` | review | sitemap.xml missing on after |
 | `redirect.wrong` / `redirect.temporary` | fail / review | From `--redirects`: before URL does not redirect to the expected target, or uses a temporary redirect |
 | Page-set coverage | shown in summary | With `--after-sitemap`: after pages not in the compared set |

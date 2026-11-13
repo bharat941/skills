@@ -14,7 +14,7 @@ Pages are only loaded (GET); nothing is clicked, submitted or sent to another se
 ```bash
 cd scripts && npm run setup
 node compare.js --before https://www.example.com/en/page --after https://stage.example.com/en/page --out ./out
-open out/report.md      # one-page summary: content, visual, integration, top issues
+open out/report.md      # verdict, prioritised action items (P1/P2/P3), content differences
 open out/report.html    # interactive version
 ```
 
