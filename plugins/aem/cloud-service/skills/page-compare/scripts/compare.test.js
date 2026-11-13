@@ -725,6 +725,71 @@ test('content: "Learn more" alone is never flagged as placeholder or empty state
   assert.ok(!out.some((f) => f.check === 'content.placeholder' || f.check === 'content.empty_state'));
 });
 
+// ---------- action items ----------
+
+const { buildActions, verdictOf } = require('./lib/actions');
+
+const pairOf = (i, findings, extra = {}) => ({ id: `p${i}`, before: `https://www.b.com/p${i}`, after: `https://www.a.com/p${i}`, status: 'fail', findings, ...extra });
+const actionRun = (pairs, completeness = {}) => ({ generatedAt: 'now', viewports: [1440], pairs, completeness, notTested: [] });
+
+test('actions: ten broken images are one action with count 10', () => {
+  const items = Array.from({ length: 10 }, (_, i) => ({ src: `https://cdn/x/img${i}.png` }));
+  const actions = buildActions(actionRun([pairOf(1, [{ check: 'image.broken', severity: 'fail', summary: '10 content image(s) fail to load on the after page', items }])]));
+  assert.equal(actions.length, 1);
+  assert.deepEqual([actions[0].priority, actions[0].count, actions[0].pages.length], ['P1', 10, 1]);
+  assert.equal(actions[0].title, 'content image(s) fail to load on the after page');
+  assert.equal(actions[0].owner, 'Dev / assets');
+});
+
+test('actions: the same broken link on 90 pages is one action with 90 pages', () => {
+  const pairs = Array.from({ length: 90 }, (_, i) => pairOf(i, [{ check: 'link.broken', severity: 'fail', summary: `${i % 3 + 1} internal link(s) on the after page return an error`, items: [{ url: 'https://www.a.com/store.html', status: 404 }] }]));
+  const actions = buildActions(actionRun(pairs));
+  assert.equal(actions.length, 1);
+  assert.deepEqual([actions[0].count, actions[0].pages.length], [1, 90]);
+});
+
+test('actions: P1 content before P1 integration before P2', () => {
+  const actions = buildActions(actionRun([pairOf(1, [
+    { check: 'link.broken', severity: 'fail', summary: '1 internal link(s) return an error', items: [{ url: 'https://www.a.com/x' }] },
+    { check: 'image.broken', severity: 'fail', summary: '1 content image(s) fail to load', items: [{ src: 'https://cdn/a.png' }] },
+    { check: 'content.text.missing', severity: 'fail', summary: '3 text block(s) missing (40% of text)', items: [{ text: 'FAQs' }] },
+  ])]));
+  assert.deepEqual(actions.map((a) => `${a.priority} ${a.area} ${a.check}`), ['P1 content content.text.missing', 'P1 integration image.broken', 'P2 integration link.broken']);
+  assert.equal(actions[0].title, 'text block(s) missing');
+});
+
+test('actions: duplicate items are counted once, and one section at three viewports is one section', () => {
+  const sec = (vp) => ({ check: 'visual.section.missing', severity: 'fail', summary: `1 section(s) from the before page have no match on the after page at ${vp}`, items: [{ section: 'main-4:.faq', viewport: vp }] });
+  const actions = buildActions(actionRun([pairOf(1, [
+    { check: 'content.text.missing', severity: 'fail', summary: '3 text block(s) missing', items: [{ text: 'FAQs' }, { text: 'FAQs' }, { text: 'What is it?' }] },
+    sec('1440'), sec('768'), sec('375'),
+  ])]));
+  assert.equal(actions.find((a) => a.check === 'content.text.missing').count, 2);
+  const visual = actions.filter((a) => a.check === 'visual.section.missing');
+  assert.equal(visual.length, 1);
+  assert.equal(visual[0].count, 1);
+});
+
+test('actions: preview host puts robots and analytics under expected', () => {
+  const run = actionRun([{ ...pairOf(1, [{ check: 'analytics.rsid', severity: 'review', summary: 'Report suite differs', before: 'prod', after: 'test' }]), after: 'https://publish-p1-e2.adobeaemcloud.com/p1' }],
+    { siteFindings: [{ check: 'site.robots', severity: 'fail', summary: 'robots.txt on the after site disallows everything' }] });
+  const actions = buildActions(run);
+  assert.deepEqual(actions.map((a) => a.priority), ['expected', 'expected']);
+  assert.ok(actions.find((a) => a.check === 'site.robots').siteWide);
+});
+
+test('verdict: any P1 is Not ready, only P2 is Ready after fixes, none is No blocking differences found', () => {
+  assert.equal(verdictOf([{ priority: 'P1' }, { priority: 'P2' }]).label, 'Not ready');
+  assert.deepEqual(verdictOf([{ priority: 'P1' }, { priority: 'P2' }, { priority: 'P2' }, { priority: 'expected' }]), { label: 'Not ready', p1: 1, p2: 2, p3: 0, expected: 1, notCompared: 0 });
+  assert.equal(verdictOf([{ priority: 'P2' }, { priority: 'P3' }]).label, 'Ready after fixes');
+  assert.equal(verdictOf([{ priority: 'P3' }, { priority: 'expected' }]).label, 'No blocking differences found');
+});
+
+test('verdict: pages that could not be compared make an otherwise clean run Incomplete', () => {
+  assert.equal(verdictOf([], { notCompared: 4 }).label, 'Incomplete');
+  assert.equal(verdictOf([{ priority: 'P1' }], { notCompared: 4 }).label, 'Not ready');
+});
+
 // ---------- priority rubric ----------
 
 const { priorityOf, ownerOf, DEFAULT_RULES: RULES } = require('./lib/rules');

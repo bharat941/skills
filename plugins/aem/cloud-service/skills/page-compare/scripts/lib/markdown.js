@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { STATUS_ORDER } = require('./report');
 const { csvCell } = require('./util');
+const { areaOf, pathOf, subjectOf, normalizeSubject, issueTitle } = require('./actions');
 
 const SEVERITY_ORDER = { fail: 0, review: 1, info: 2 };
 const SEVERITY_LABEL = { fail: '❌ Fail', review: '⚠️ Review', info: 'ℹ️ Info' };
@@ -15,18 +16,11 @@ const AREAS = [
   { id: 'integration', title: 'Integration', covers: 'Console and network errors, analytics, broken links and downloads, redirects, robots.txt and sitemap' },
 ];
 
-const INTEGRATION = /^(console\.|js\.|request\.|resource\.|a11y\.|analytics\.|http\.|image\.broken|link\.broken|link\.unchecked|download\.|redirect\.|site\.)/;
 const MAX_ROWS = 10;
 const MAX_CELL = 140;
 const MAX_TOP = 10;
 const MAX_ISSUE_ROWS = 200;
 const MAX_ISSUE_PAGES = 20;
-
-/** Which of the three report areas a check id belongs to. Unknown checks count as content. */
-function areaOf(check) {
-  if (check.startsWith('visual.')) return 'visual';
-  return INTEGRATION.test(check) ? 'integration' : 'content';
-}
 
 function cell(v, max = MAX_CELL) {
   let s = typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v ?? '');
@@ -38,14 +32,6 @@ function cell(v, max = MAX_CELL) {
 function label(key) {
   const words = key.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ').toLowerCase();
   return words.charAt(0).toUpperCase() + words.slice(1);
-}
-
-function pathOf(p) {
-  try {
-    return new URL(p.after).pathname || '/';
-  } catch (e) {
-    return p.after;
-  }
 }
 
 function table(headers, rows) {
@@ -214,24 +200,6 @@ function siteSection(run) {
 }
 
 // ---------- issues across pages ----------
-
-const SUBJECT_KEYS = ['url', 'src', 'href', 'target', 'message', 'text', 'label', 'name', 'type'];
-
-function subjectOf(item) {
-  if (item === null || typeof item !== 'object') return String(item ?? '');
-  if (item.section) return `${item.section}${item.viewport ? ` at ${item.viewport}px` : ''}`;
-  for (const k of SUBJECT_KEYS) if (item[k]) return String(item[k]);
-  return JSON.stringify(item);
-}
-
-// Cache busters and timestamps make the same problem look different on every page.
-function normalizeSubject(s) {
-  return String(s).replace(/([?&])_=\d+&?/g, '$1').replace(/[?&]$/, '').replace(/\d{6,}/g, '#').replace(/\s+/g, ' ').trim();
-}
-
-function issueTitle(f) {
-  return String(f.summary || f.check).replace(/^\d+\s+(of \d+\s+)?/, '').replace(/\s+at \d+$/, '');
-}
 
 /** Groups open fail/review findings from all pages into distinct issues with the pages they affect. */
 function groupIssues(pairs, run) {
