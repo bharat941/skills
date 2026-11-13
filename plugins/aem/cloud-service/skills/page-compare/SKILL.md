@@ -65,12 +65,12 @@ Exit code: `0` no fail/error/blocked, `1` at least one, `2` usage or setup error
 
 Open `out/report.md` first. It reads in a minute at any number of pages and is what to share with a customer or leadership:
 
-1. A one-line **verdict**: `Not ready: N blockers`, `Ready after fixes`, `Incomplete` (pages could not be compared) or `No blocking differences found`.
+1. A one-line **verdict**: `Not ready: N blockers`, `Ready after fixes`, `Incomplete` (pages could not be compared), `Nothing compared` (no pairs matched the filters) or `No blocking differences found`.
 2. **Action items**: one row per problem (ten broken images are one row), with a priority, how many items and pages, an example and a likely owner.
 3. **Content differences**: `Before says / After says`, with changed figures in bold.
 4. **Expected on preview**: robots.txt, canonical and analytics differences that are normal before launch on a preview or publish host.
 
-Priorities: 🔴 **P1** must be fixed before launch. Content is non-negotiable: lost or changed text, figures, images, sections and forms are P1, as are broken pages and robots/canonical on a production host. 🟠 **P2** should be fixed (rewritten copy, broken links, large visual or speed differences). 🟡 **P3** is polish (navigation, header/footer, small visual shifts). ⚪ **Expected** is fine on a preview host and must be rechecked on the launch domain. The map is `priority` in `scripts/lib/rules.js` and can be changed per customer with `--rules`. Alongside the summary:
+Priorities: 🔴 **P1** must be fixed before launch. Content is non-negotiable: lost main-content text, changed figures, placeholder text, missing images, sections and form fields are P1, as are broken pages, noindex, `Disallow: /` and a canonical pointing to another host on a production host. 🟠 **P2** should be fixed (rewritten or reworded copy, broken links, large visual or speed differences, smaller robots/canonical changes). 🟡 **P3** is polish (navigation, header/footer text and sections, small visual shifts). ⚪ **Expected** is fine on a preview host and must be rechecked on the launch domain. The map is `priority` in `scripts/lib/rules.js` and can be changed per customer with `--rules`; priority is worked out when the report is written, so `--resume --rules` re-prioritises without reloading pages (detection changes such as changed figures need a fresh run). Alongside the summary:
 
 - `issues.md` / `issues.csv`: the work list, every item with its priority and the pages it affects. The same broken link or wrong canonical on 400 pages is one row.
 - `pages.csv`: one row per page with a result per area and its P1/P2/P3 counts; open it in a spreadsheet to sort and filter.

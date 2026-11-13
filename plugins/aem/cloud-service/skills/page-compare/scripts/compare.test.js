@@ -1027,3 +1027,68 @@ test('cli: usage errors exit with 2', () => {
   assert.equal(none.status, 2);
   assert.match(none.stderr, /No pages to compare/);
 });
+
+// ---------- review fixes ----------
+
+const { numbersIn } = require('./lib/content');
+
+test('numbersIn keeps any unit written next to the number', () => {
+  assert.deepEqual(numbersIn('data rates up to 8533Mbps'), ['8533mbps']);
+  assert.deepEqual(numbersIn('120Hz display, 3.5mm jack, 5000mAh battery, 65W charging'), ['120hz', '3.5mm', '5000mah', '65w']);
+  assert.deepEqual(numbersIn('a breakthrough 32 GB capacity'), ['32gb']);
+  assert.deepEqual(numbersIn('sold in over 30 countries'), ['30']);
+  assert.deepEqual(numbersIn('LPDDR5X meets AEC-Q100 for 5G phones'), []);
+});
+
+test('content: 8533Mbps → 10700Mbps is facts changed', () => {
+  const ctx = ctxFor('https://www.b.com/', 'https://www.a.com/');
+  const out = contentFindings(snap({ blocks: [{ text: 'LPDDR5X offers data rates up to 8533Mbps for on-device AI workloads', region: 'main' }] }),
+    snap({ blocks: [{ text: 'LPDDR5X offers data rates up to 10700Mbps for on-device AI workloads', region: 'main' }] }), ctx);
+  assert.ok(out.some((x) => x.check === 'content.facts.changed'), JSON.stringify(out));
+});
+
+test('priority: robots and canonical review findings on production are P2, fail stays P1', () => {
+  assert.equal(priorityOf(f('meta.robots', 'review'), prod), 'P2');
+  assert.equal(priorityOf(f('meta.robots', 'fail'), prod), 'P1');
+  assert.equal(priorityOf(f('meta.canonical', 'review'), prod), 'P2');
+  assert.equal(priorityOf(f('site.robots', 'review'), prod), 'P2');
+  assert.equal(priorityOf(f('site.robots', 'fail'), prod), 'P1');
+});
+
+test('priority: header/footer text missing is P3, main text missing is P1', () => {
+  assert.equal(priorityOf(f('content.text.missing', 'review', { items: [{ text: 'Careers', region: 'footer' }] }), prod), 'P3');
+  assert.equal(priorityOf(f('content.text.missing', 'review', { items: [{ text: 'Careers', region: 'footer' }, { text: 'FAQs', region: 'main' }] }), prod), 'P1');
+});
+
+test('actions: missing header/footer text is its own P3 action; P1 example is main text', () => {
+  const items = [{ text: 'Tech Blog', region: 'header' }, { text: 'Careers', region: 'footer' }, { text: 'What is LPDDR5X', region: 'main' }];
+  const run = actionRun([pairOf(1, [{ check: 'content.text.missing', severity: 'fail', summary: '3 text block(s) from the before page are missing on the after page', items }])]);
+  const actions = buildActions(run).filter((a) => a.check === 'content.text.missing');
+  assert.deepEqual(actions.map((a) => [a.priority, a.count]), [['P1', 1], ['P3', 2]]);
+  assert.equal(actions[0].example.detail, 'What is LPDDR5X');
+  assert.match(actions[1].title, /header\/footer/);
+  const footerOnly = actionRun([pairOf(1, [{ check: 'content.text.missing', severity: 'review', summary: '1 text block(s) missing', items: [{ text: 'Careers', region: 'footer' }] }])]);
+  assert.equal(verdictOf(buildActions(footerOnly)).label, 'No blocking differences found');
+});
+
+test('actions: a capped list repeated on 90 pages counts its items once', () => {
+  const items = Array.from({ length: 50 }, (_, i) => ({ text: `Nav ${i}`, region: 'header' }));
+  const pairs = Array.from({ length: 90 }, (_, i) => pairOf(i, [{ check: 'nav.item', severity: 'review', summary: '120 navigation item(s) missing', items, truncated: 70 }]));
+  assert.equal(buildActions(actionRun(pairs))[0].count, 120);
+  const dup = [...items.slice(0, 47), items[0], items[1], items[2]];
+  assert.equal(buildActions(actionRun([pairOf(1, [{ check: 'nav.item', severity: 'review', summary: '99 navigation item(s) missing', items: dup, truncated: 49 }])]))[0].count, 99);
+});
+
+test('report: --rules priority overrides reach report.md, issues.csv and pages.csv', () => {
+  const run = actionRun([pairOf(1, [{ check: 'nav.item', severity: 'review', summary: '1 navigation item(s) missing', items: [{ text: 'Products', region: 'header' }] }])]);
+  const rules = { ...RULES, priority: { ...RULES.priority, 'nav.item': 'P1' } };
+  const files = renderMarkdownFiles(run, rules);
+  assert.match(files['report.md'], /\*\*Not ready: 1 blocker\*\*/);
+  assert.match(files['issues.csv'].split('\n')[1], /^P1,/);
+  assert.match(files['pages.csv'].split('\n')[1], /,0,1,1,0,0,/);
+  assert.match(renderMarkdownFiles(run)['report.md'], /No blocking differences found/);
+});
+
+test('report: a run with no pages says nothing was compared', () => {
+  assert.match(toMarkdown(actionRun([])), /\*\*Nothing compared/);
+});

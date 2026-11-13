@@ -25,12 +25,13 @@ const DEFAULT_RULES = {
   links: { maxPerPage: 50 },
   // What a finding means for a launch. A check id or a prefix ending in "." maps to
   // P1 (blocker: content loss, broken page), P2 (major), P3 (minor), or an object
-  // { preview, production } for checks that are expected to differ before launch.
+  // { preview, production } for checks that are expected to differ before launch; either side can be
+  // { fail, review } to depend on the finding's severity.
   // "auto" is decided from the finding itself (see priorityOf).
   priority: {
     'content.facts.changed': 'P1',
     'content.placeholder': 'P1',
-    'content.text.missing': 'P1',
+    'content.text.missing': 'auto',
     'image.missing': 'P1',
     'image.broken': 'P1',
     'heading.h1': 'P1',
@@ -76,9 +77,9 @@ const DEFAULT_RULES = {
     'redirect.': 'P3',
     'consent.missing': 'P3',
     'content.text.added': 'P3',
-    'site.robots': { preview: 'expected', production: 'P1' },
-    'meta.robots': { preview: 'expected', production: 'P1' },
-    'meta.canonical': { preview: 'expected', production: 'P1' },
+    'site.robots': { preview: 'expected', production: { fail: 'P1', review: 'P2' } },
+    'meta.robots': { preview: 'expected', production: { fail: 'P1', review: 'P2' } },
+    'meta.canonical': { preview: 'expected', production: { fail: 'P1', review: 'P2' } },
     'site.sitemap': { preview: 'expected', production: 'P3' },
     'analytics.': { preview: 'expected', production: 'P2' },
   },
@@ -232,6 +233,9 @@ function lookup(map, check) {
 
 const CHROME_SECTIONS = new Set(['header', 'footer']);
 
+/** True for an item found in the page header or footer. */
+const isChromeItem = (it) => Boolean(it && CHROME_SECTIONS.has(it.region));
+
 /**
  * Launch priority of a finding: 'P1' | 'P2' | 'P3' | 'expected' (fine before launch, recheck on the launch
  * domain), or null for info-level and accepted findings, which are not action items.
@@ -240,11 +244,12 @@ function priorityOf(finding, { previewHost = false } = {}, rules = DEFAULT_RULES
   if (!finding || finding.accepted || !['fail', 'review'].includes(finding.severity)) return null;
   let p = lookup(rules.priority, finding.check);
   if (p && typeof p === 'object') p = previewHost ? p.preview : p.production;
+  if (p && typeof p === 'object') p = p[finding.severity];
   if (p === 'auto') {
-    if (finding.check === 'visual.section.missing') {
-      const items = Array.isArray(finding.items) ? finding.items : [];
-      return items.some((it) => it && !CHROME_SECTIONS.has(it.section)) ? 'P1' : 'P3';
-    }
+    const items = Array.isArray(finding.items) ? finding.items : [];
+    if (finding.check === 'visual.section.missing') return items.some((it) => it && !CHROME_SECTIONS.has(it.section)) ? 'P1' : 'P3';
+    // Text missing from the main content is a blocker; header/footer text is menus and links.
+    if (finding.check === 'content.text.missing') return !items.length || items.some((it) => !isChromeItem(it)) ? 'P1' : 'P3';
     return finding.severity === 'fail' ? 'P2' : 'P3';
   }
   if (p) return p;
@@ -261,6 +266,7 @@ module.exports = {
   reusableResult,
   priorityOf,
   ownerOf,
+  isChromeItem,
   DEFAULT_RULES,
   loadRules,
   loadAccepted,

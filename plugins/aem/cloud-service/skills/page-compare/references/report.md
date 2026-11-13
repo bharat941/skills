@@ -20,7 +20,7 @@ Share the whole output folder: the Markdown files link to screenshots under `pai
 
 The report to hand to a customer or to leadership. Its size does not grow with the number of pages. Top to bottom:
 
-1. **Verdict**, one line: `Not ready: N blockers` (any P1), `Ready after fixes: N major issues` (P2 only), `Incomplete: N pages could not be compared` (pages blocked or failed and nothing blocking found), or `No blocking differences found`, followed by the count of P1, P2 and P3 action items and of items to recheck at launch.
+1. **Verdict**, one line: `Not ready: N blockers` (any P1), `Ready after fixes: N major issues` (P2 only), `Incomplete: N pages could not be compared` (pages blocked or failed and nothing blocking found), `Nothing compared` (no page pairs matched the input and filters), or `No blocking differences found`, followed by the count of P1, P2 and P3 action items and of items to recheck at launch.
 2. **Action items**: one row per problem, not per item. Ten broken images are one row with "How many: 10"; the same broken link on 90 pages is one row "on 90 pages". Columns: `#, Priority, Area, Problem, How many, Example, Likely owner`. Sorted by priority, content before visual before integration, then by reach. At most 15 rows; the rest are in `issues.csv`.
 3. **Content differences**: `Before says / After says` for text that says something different on the after page. Changed figures (speeds, sizes, percentages) are bold and marked 🔴. At most 10 rows.
 4. **Expected on preview — recheck at launch**: robots.txt, canonical, sitemap and analytics differences on a preview or publish host, which are expected before launch.
@@ -32,12 +32,12 @@ Every list that is cut says how many rows were left out and which file has them.
 
 | Priority | Meaning | Typical checks |
 |---|---|---|
-| 🔴 P1 Blocker | Must be fixed before launch. Content is non-negotiable and comes first | changed figures, placeholder text, missing text, missing or broken content images, missing main sections, H1, form fields, page missing or erroring, robots/canonical on a production host |
-| 🟠 P2 Major | Should be fixed before launch | rewritten or reworded copy, empty components, missing headings or CTAs, broken links and downloads, large visual differences, slower load, analytics on a production host |
-| 🟡 P3 Minor | Polish | navigation and header/footer differences, link targets, alt text changes, small visual shifts, console errors |
+| 🔴 P1 Blocker | Must be fixed before launch. Content is non-negotiable and comes first | changed figures, placeholder text, missing main-content text, missing or broken content images, missing main sections, H1, form fields, page missing or erroring; on a production host: noindex, `Disallow: /`, canonical pointing to another host |
+| 🟠 P2 Major | Should be fixed before launch | rewritten or reworded copy, empty components, missing headings or CTAs, broken links and downloads, large visual differences, slower load; on a production host: analytics and other robots/canonical changes |
+| 🟡 P3 Minor | Polish | navigation, missing header/footer text and sections, link targets, alt text changes, small visual shifts, console errors |
 | ⚪ Expected | Differs by design on a preview or publish host (`*.aem.page/live`, `*.hlx.page/live`, `author/publish/preview-p…-e….adobeaemcloud.com`) | robots.txt, canonical, sitemap, analytics |
 
-The full map is `priority` in `scripts/lib/rules.js` (check id or `prefix.` → priority). Override it per customer with `--rules`, for example `{"priority": {"nav.item": "P1"}}`. "Likely owner" comes from `owner` in the same file and is a suggestion.
+Missing text found in both the main content and the header/footer is split into two action items: P1 for the main content, P3 for the header/footer. The full map is `priority` in `scripts/lib/rules.js` (check id or `prefix.` → priority, `{ preview, production }` per host type, and `{ fail, review }` per severity). Override it per customer with `--rules`, for example `{"priority": {"nav.item": "P1"}}`. "Likely owner" comes from `owner` in the same file and is a suggestion.
 
 Priority is not severity. Fail / review / info, shown in the page detail and in `report.json`, say how sure a check is that something changed; the priority says how much it matters for the launch.
 

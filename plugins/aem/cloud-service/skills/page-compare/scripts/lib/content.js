@@ -25,9 +25,10 @@ function counter(list, keyFn) {
 
 // ---------- text ----------
 
-// Numbers as written, with a unit when there is one: "1.25", "25%", "12nm", "64gb", "10.7gbps".
-// Digits inside a word (LPDDR5X, AEC-Q100, 5G) are names, not figures, and are left out.
-const NUMBER = /(?<![\p{L}\d.,])\d+(?:[.,]\d+)?(?:\s?(?:%|x|nm|gbps|gb|tb|mb|mhz|ghz))?(?![\p{L}\d])/giu;
+// Numbers as written, with a unit when there is one: "1.25", "25%", "12nm", "64gb", "8533mbps", "3.5mm".
+// A unit written next to the number can be any word; after a space only known units count ("30 countries" is "30").
+// Digits inside a word (LPDDR5X, AEC-Q100) and a number with one other letter (5G, 4K) are names, not figures.
+const NUMBER = /(?<![\p{L}\d.,])\d+(?:[.,]\d+)?(?:%|x|w|\p{L}{2,}|\s(?:%|x|w|nm|mm|cm|kg|hz|khz|mhz|ghz|mb|gb|tb|mbps|gbps|mah|wh|kwh))?(?![\p{L}\d])/giu;
 
 function numbersIn(text) {
   return [...String(text || '').matchAll(NUMBER)].map((m) => m[0].toLowerCase().replace(/\s+/g, ''));

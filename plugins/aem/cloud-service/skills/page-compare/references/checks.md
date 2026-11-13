@@ -24,7 +24,7 @@ When either page is not 2xx, the remaining checks are skipped for that pair.
 | Check | Severity | Meaning |
 |---|---|---|
 | `content.text.missing` | fail above 10% of before text lost, otherwise review | Text blocks on before that have no match on after. Blocks hidden on load in the main content (tabs, accordions, FAQ answers) are included and flagged `hidden`; hidden header and footer text (menus) is not counted |
-| `content.facts.changed` | fail | Reworded or rewritten text that states different figures: speeds, sizes, percentages (`1.25x` vs `1.3x`, `25%` vs `20%`, `12nm` vs `14nm`, `32GB` vs `64GB`). Digits inside names (LPDDR5X, AEC-Q100, 5G) are not figures |
+| `content.facts.changed` | fail | Reworded or rewritten text that states different figures: speeds, sizes, percentages (`1.25x` vs `1.3x`, `25%` vs `20%`, `12nm` vs `14nm`, `32GB` vs `64GB`, `8533Mbps` vs `10700Mbps`). A unit written next to the number can be any word (`3.5mm`, `120Hz`); after a space only known units count. Digits inside names (LPDDR5X, AEC-Q100) and a number with one other letter (5G, 4K) are not figures |
 | `content.text.changed` | review | Reworded text (85% or more similar) with the same figures |
 | `content.text.rewritten` | review | A block that is missing and a new block in the same region that still say much the same thing (50% or more similar), with the same figures. Reported as one pair instead of one missing and one added block |
 | `content.placeholder` | fail | Visible text only on the after page that is left-over authoring copy: lorem ipsum, "Disclaimer text 1", placeholder, sample text, text goes here, TBD, dummy text. Patterns are `text.placeholder` in the rules |

@@ -14,7 +14,7 @@ const { visualFindings } = require('./lib/visual');
 const { createFetcher, downloadFindings, brokenLinkFindings, siteFindings, redirectFindings, pageSetCoverage } = require('./lib/completeness');
 const { renderHtml, renderJson, toCsv, summarize, exitCode } = require('./lib/report');
 const { renderMarkdownFiles, writeReportFiles } = require('./lib/markdown');
-const { normalizePath, hash } = require('./lib/util');
+const { normalizePath, hash, normalizeText } = require('./lib/util');
 const { parseCsv } = require('./lib/pairs');
 
 const USAGE = `Usage: node compare.js [options]
@@ -178,7 +178,8 @@ async function processPair(pair, env) {
       const d = diffBlocks(b1.snapshot.blocks, b2.snapshot.blocks);
       // Anything that differs between two loads of the same page is noise, rewritten pairs included.
       volatile = [...d.missing.map((m) => m.text), ...d.changed.flatMap((c) => [c.before, c.after]), ...d.rewritten.flatMap((c) => [c.before, c.after]), ...d.added.map((x) => x.text)];
-      const rewrittenPct = d.totalChars ? (100 * d.rewritten.reduce((n, c) => n + c.before.length, 0)) / d.totalChars : 0;
+      // missingPct already holds the changed share of rewritten pairs; add the rest so each counts once, in full.
+      const rewrittenPct = d.totalChars ? (100 * d.rewritten.reduce((n, c) => n + c.similarity * normalizeText(c.before).length, 0)) / d.totalChars : 0;
       volatilePct = Math.max(d.missingPct + rewrittenPct, d.addedPct);
     }
 
@@ -355,7 +356,7 @@ async function main() {
     pairs: finalPairs,
   };
   fs.writeFileSync(path.join(outDir, 'report.html'), renderHtml(run));
-  writeReportFiles(outDir, renderMarkdownFiles(run));
+  writeReportFiles(outDir, renderMarkdownFiles(run, rules));
   fs.writeFileSync(path.join(outDir, 'report.json'), renderJson(run));
   fs.writeFileSync(path.join(outDir, 'summary.csv'), toCsv(finalPairs));
 

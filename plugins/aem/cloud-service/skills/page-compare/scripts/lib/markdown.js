@@ -4,9 +4,9 @@ const fs = require('fs');
 const path = require('path');
 const { STATUS_ORDER } = require('./report');
 const { csvCell, isPreviewHost, hostOf } = require('./util');
-const { priorityOf } = require('./rules');
+const { priorityOf, DEFAULT_RULES } = require('./rules');
 const { NUMBER, numbersIn } = require('./content');
-const { areaOf, pathOf, subjectOf, normalizeSubject, issueTitle, buildActions, verdictOf, PRIORITY_ORDER } = require('./actions');
+const { areaOf, pathOf, subjectOf, normalizeSubject, issueTitle, buildActions, verdictOf, priorityParts, PRIORITY_ORDER } = require('./actions');
 
 const SEVERITY_ORDER = { fail: 0, review: 1, info: 2 };
 const SEVERITY_LABEL = { fail: '❌ Fail', review: '⚠️ Review', info: 'ℹ️ Info' };
@@ -204,11 +204,11 @@ function siteSection(run) {
 // ---------- issues across pages ----------
 
 /** Groups open fail/review findings from all pages into item-level issues with the pages they affect and their priority. */
-function groupIssues(pairs, run) {
+function groupIssues(pairs, run, rules = DEFAULT_RULES) {
   const map = new Map();
   const add = (f, issue, page, previewHost) => {
     const key = `${f.check}\u0000${issue}`;
-    const priority = priorityOf(f, { previewHost });
+    const priority = priorityOf(f, { previewHost }, rules);
     const e = map.get(key) || { priority, action: issueTitle(f), severity: f.severity, area: areaOf(f.check), check: f.check, issue, pages: [], siteWide: page === null };
     if (SEVERITY_ORDER[f.severity] < SEVERITY_ORDER[e.severity]) e.severity = f.severity;
     if (PRIORITY_ORDER.indexOf(priority) < PRIORITY_ORDER.indexOf(e.priority)) e.priority = priority;
@@ -218,7 +218,7 @@ function groupIssues(pairs, run) {
   for (const p of pairs) {
     const page = pathOf(p);
     const previewHost = isPreviewHost(hostOf(p.after));
-    for (const f of p.findings || []) {
+    for (const f of (p.findings || []).flatMap(priorityParts)) {
       if (f.accepted || !['fail', 'review'].includes(f.severity)) continue;
       const items = Array.isArray(f.items) ? f.items : [];
       if (items.length) for (const it of items) add(f, `${issueTitle(f)}: ${normalizeSubject(subjectOf(it))}`, page, previewHost);
@@ -271,13 +271,13 @@ function detailPath(p) {
   return `pages/${p.id}.md`;
 }
 
-function pagesCsv(pairs) {
+function pagesCsv(pairs, rules = DEFAULT_RULES) {
   return toCsvText(['page', 'status', 'flaky', 'content', 'visual', 'integration', 'fail', 'review', 'p1', 'p2', 'p3', 'top_issue', 'detail', 'before', 'after'],
     pairs.map((p) => {
       const a = pageAreas(p);
       const c = counts(p.findings || []);
       const previewHost = isPreviewHost(hostOf(p.after));
-      const pr = (want) => (p.findings || []).filter((f) => priorityOf(f, { previewHost }) === want).length;
+      const pr = (want) => (p.findings || []).flatMap(priorityParts).filter((f) => priorityOf(f, { previewHost }, rules) === want).length;
       return [pathOf(p), p.status, p.flaky || p.retried ? 'yes' : '', a.content, a.visual, a.integration, c.fail, c.review, pr('P1'), pr('P2'), pr('P3'), topIssueOf(p), p.status === 'pass' ? '' : detailPath(p), p.before, p.after];
     }));
 }
@@ -321,6 +321,7 @@ function plural(n, word) {
 }
 
 function verdictLine(v) {
+  if (v.label === 'Nothing compared') return '**Nothing compared**: no page pairs matched the input and filters.';
   const head = v.label === 'Not ready' ? `**Not ready: ${plural(v.p1, 'blocker')}**`
     : v.label === 'Incomplete' ? `**Incomplete: ${plural(v.notCompared, 'page')} could not be compared**`
       : v.label === 'Ready after fixes' ? `**Ready after fixes: ${plural(v.p2, 'major issue')}**`
@@ -412,12 +413,12 @@ function expectedSection(actions) {
   return ['## Expected on preview — recheck at launch', 'The after site is a preview or publish host, where these usually differ by design. Check them again on the launch domain.', list.map(line).join('\n')].join('\n\n');
 }
 
-function summaryMd(run, pairs, issues) {
+function summaryMd(run, pairs, issues, rules = DEFAULT_RULES) {
   const single = pairs.length === 1;
   const siteIssues = issues.filter((e) => e.siteWide);
-  const actions = buildActions(run);
+  const actions = buildActions(run, rules);
   const notCompared = pairs.filter((p) => p.blocked || p.error).length;
-  const verdict = verdictOf(actions, { notCompared });
+  const verdict = verdictOf(actions, { notCompared, pages: pairs.length });
   const out = [
     '# Page comparison report',
     [`- **Generated:** ${cell(run.generatedAt)}`, `- **Pages compared:** ${pairs.length} (${statusLine(pairs)})`, `- **Viewports:** ${(run.viewports || []).map((v) => `${v}px`).join(', ')}`].join('\n'),
@@ -444,9 +445,9 @@ function summaryMd(run, pairs, issues) {
     '- `pages/<page>.md`: full detail for each page that did not pass. Screenshots are linked from `pairs/`.',
   ].join('\n'));
   out.push('## How to read this', [
-    '- **🔴 P1 Blocker**: must be fixed before launch: content lost or changed (text, figures, images, sections, forms), broken pages, and robots/canonical on a production host.',
+    '- **🔴 P1 Blocker**: must be fixed before launch: main content lost or changed (text, figures, images, sections, forms), broken pages, and noindex, `Disallow: /` or a canonical to another host on a production host.',
     '- **🟠 P2 Major**: should be fixed before launch: rewritten copy, broken links and downloads, large visual or speed differences.',
-    '- **🟡 P3 Minor**: polish: header, footer and navigation differences, small visual shifts, alt text.',
+    '- **🟡 P3 Minor**: polish: header, footer and navigation text and sections, small visual shifts, alt text.',
     '- **⚪ Expected**: differs by design on a preview or publish host; recheck on the launch domain.',
     '- "Likely owner" is a suggestion from the type of check, not an assignment.',
     '- **Fail / Review / Info** in the page detail say how sure the check is that something changed; the priority says how much it matters.',
@@ -459,15 +460,16 @@ function summaryMd(run, pairs, issues) {
 /**
  * All Markdown/CSV report files for a run, keyed by path relative to the output directory:
  * report.md (fixed-size summary), issues.md, issues.csv, pages.csv and pages/<id>.md for every page that did not pass.
+ * `rules` are the run's rules, so --rules priority and owner overrides apply.
  */
-function renderMarkdownFiles(run) {
+function renderMarkdownFiles(run, rules = DEFAULT_RULES) {
   const pairs = [...(run.pairs || [])].sort((a, b) => STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status));
-  const issues = groupIssues(pairs, run);
+  const issues = groupIssues(pairs, run, rules);
   const files = {
-    'report.md': summaryMd(run, pairs, issues),
+    'report.md': summaryMd(run, pairs, issues, rules),
     'issues.md': issuesMd(issues, run),
     'issues.csv': issuesCsv(issues),
-    'pages.csv': pagesCsv(pairs),
+    'pages.csv': pagesCsv(pairs, rules),
   };
   for (const p of pairs) if (p.status !== 'pass') files[detailPath(p)] = `${pairSection(p, '../')}\n`;
   return files;
