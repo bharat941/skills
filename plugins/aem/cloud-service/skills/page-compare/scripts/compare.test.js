@@ -725,6 +725,17 @@ test('content: "Learn more" alone is never flagged as placeholder or empty state
   assert.ok(!out.some((f) => f.check === 'content.placeholder' || f.check === 'content.empty_state'));
 });
 
+// ---------- preview hosts ----------
+
+test('isPreviewHost knows AEM Cloud publish and preview hosts', () => {
+  const { isPreviewHost } = require('./lib/util');
+  assert.equal(isPreviewHost('publish-p142164-e2390502.adobeaemcloud.com'), true);
+  assert.equal(isPreviewHost('preview-p1-e2.adobeaemcloud.net'), true);
+  assert.equal(isPreviewHost('main--site--org.aem.page'), true);
+  assert.equal(isPreviewHost('www.samsung.com'), false);
+  assert.equal(isPreviewHost('publish-p1-e2.adobeaemcloud.com.evil.example'), false);
+});
+
 // ---------- header, footer and navigation ----------
 
 test('visual.pairSections pairs header and footer even when their text differs', () => {

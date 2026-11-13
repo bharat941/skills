@@ -120,9 +120,11 @@ function round(n, d = 2) {
   return Math.round(n * f) / f;
 }
 
-// Edge Delivery Services preview/live hosts block crawlers and keep the production canonical by design.
+// Hosts that are not the launch domain: Edge Delivery preview/live hosts and AEM as a Cloud Service
+// author/publish/preview hosts block crawlers and keep the production canonical by design.
 function isPreviewHost(host) {
-  return /\.(aem|hlx)\.(page|live)$/i.test(String(host || '').replace(/:\d+$/, ''));
+  const h = String(host || '').replace(/:\d+$/, '');
+  return /\.(aem|hlx)\.(page|live)$/i.test(h) || /^(author|publish|preview)-p\d+-e\d+\.adobeaemcloud\.(com|net)$/i.test(h);
 }
 
 // A CSV cell for a spreadsheet: text that starts with = + - @ tab or CR would run as a formula in Excel, so it gets a leading quote.
