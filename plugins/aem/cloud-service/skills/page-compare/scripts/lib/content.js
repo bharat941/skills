@@ -429,6 +429,29 @@ function consentFindings(before, after) {
   return [];
 }
 
+// Visible text on the after page only that is left-over authoring copy, or a component that came back empty.
+function placeholderFindings(before, after, rules) {
+  const t = (rules && rules.text) || {};
+  const onBefore = new Set((before.blocks || []).map((b) => normalizeText(b.text)));
+  const pick = (sources) => {
+    const re = (sources || []).length ? new RegExp(sources.join('|'), 'i') : null;
+    if (!re) return [];
+    const seen = new Set();
+    return (after.blocks || []).filter((b) => {
+      const key = normalizeText(b.text);
+      if (b.hidden || !key || onBefore.has(key) || seen.has(key) || !re.test(b.text)) return false;
+      seen.add(key);
+      return true;
+    }).map((b) => ({ text: b.text, region: b.region }));
+  };
+  const out = [];
+  const placeholders = pick(t.placeholder);
+  if (placeholders.length) out.push(finding('content.placeholder', 'fail', `${placeholders.length} placeholder text(s) on the after page`, cap(placeholders)));
+  const empty = pick(t.emptyState);
+  if (empty.length) out.push(finding('content.empty_state', 'review', `${empty.length} empty list or search result(s) on the after page`, cap(empty)));
+  return out;
+}
+
 function contentFindings(before, after, ctx) {
   const status = statusFindings(before, after, ctx);
   if (!status.comparable) return status.findings;
@@ -436,6 +459,7 @@ function contentFindings(before, after, ctx) {
     ...status.findings,
     ...metaFindings(before, after, ctx),
     ...consentFindings(before, after),
+    ...placeholderFindings(before, after, ctx.rules),
     ...headingFindings(before, after),
     ...textFindings(before, after, ctx.rules, ctx.volatile),
     ...imageFindings(before, after),

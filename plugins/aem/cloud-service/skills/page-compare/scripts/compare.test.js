@@ -695,6 +695,36 @@ test('content: product names with digits are not facts (LPDDR5X, AEC-Q100)', () 
   assert.ok(!out.some((f) => f.check === 'content.facts.changed'), JSON.stringify(out));
 });
 
+// ---------- placeholder and empty-state text ----------
+
+test('content: placeholder text only on the after page is content.placeholder', () => {
+  const ctx = ctxFor('https://www.b.com/', 'https://www.a.com/');
+  const after = snap({ blocks: [{ text: 'Disclaimer text 1', region: 'main' }, { text: 'Disclaimer text 2', region: 'main' }, { text: 'Disclaimer text 1', region: 'main' }, { text: 'Real copy about memory', region: 'main' }] });
+  const found = contentFindings(snap({ blocks: [{ text: 'Real copy about memory', region: 'main' }] }), after, ctx).filter((f) => f.check === 'content.placeholder');
+  assert.equal(found.length, 1);
+  assert.equal(found[0].severity, 'fail');
+  assert.deepEqual(found[0].items.map((i) => i.text), ['Disclaimer text 1', 'Disclaimer text 2']);
+});
+
+test('content: placeholder on both pages is not flagged', () => {
+  const ctx = ctxFor('https://www.b.com/', 'https://www.a.com/');
+  const both = snap({ blocks: [{ text: 'Lorem ipsum dolor sit amet', region: 'main' }] });
+  assert.ok(!contentFindings(both, both, ctx).some((f) => f.check === 'content.placeholder'));
+});
+
+test('content: empty state only on the after page is content.empty_state', () => {
+  const ctx = ctxFor('https://www.b.com/', 'https://www.a.com/');
+  const found = contentFindings(snap({ blocks: [] }), snap({ blocks: [{ text: 'No results found', region: 'main' }] }), ctx).filter((f) => f.check === 'content.empty_state');
+  assert.equal(found.length, 1);
+  assert.equal(found[0].severity, 'review');
+});
+
+test('content: "Learn more" alone is never flagged as placeholder or empty state', () => {
+  const ctx = ctxFor('https://www.b.com/', 'https://www.a.com/');
+  const out = contentFindings(snap({ blocks: [] }), snap({ blocks: [{ text: 'Learn more', region: 'main' }, { text: 'Learn more', region: 'main' }] }), ctx);
+  assert.ok(!out.some((f) => f.check === 'content.placeholder' || f.check === 'content.empty_state'));
+});
+
 // ---------- AEM to Edge Delivery markup changes ----------
 
 test('diffBlocks: text split into or merged from other blocks is not reported as missing or added', () => {

@@ -4,7 +4,15 @@ const fs = require('fs');
 const { globToRegex } = require('./util');
 
 const DEFAULT_RULES = {
-  text: { failMissingPct: 10, addedReviewPct: 2, volatileFlakyPct: 5 },
+  text: {
+    failMissingPct: 10,
+    addedReviewPct: 2,
+    volatileFlakyPct: 5,
+    // Regex sources, case-insensitive. Text on the after page only that matches is left-over authoring copy.
+    placeholder: ['lorem ipsum', 'disclaimer text \\d', 'placeholder', 'sample text', 'text goes here', '\\btbd\\b', 'dummy text'],
+    // A list or search component on the after page that came back empty.
+    emptyState: ['no results found', 'no items found', 'nothing to show'],
+  },
   visual: {
     reviewPct: 1,
     failPct: 5,
