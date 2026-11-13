@@ -660,6 +660,41 @@ e2e('end to end: fixture site comparison', { timeout: 280000 }, async () => {
   }
 });
 
+// ---------- facts changed and rewritten copy ----------
+
+test('diffBlocks: a rewrite with different numbers is facts changed', () => {
+  const d = diffBlocks(
+    [{ text: 'With speeds up to 1.25 times faster and 25% better power efficiency compared to the previous generation', region: 'main' }],
+    [{ text: 'With speeds 1.3 times faster than the previous generation and 20% better power efficiency', region: 'main' }],
+  );
+  assert.equal(d.missing.length, 0);
+  assert.equal(d.added.length, 0);
+  assert.equal(d.rewritten.length, 1);
+  assert.deepEqual(d.rewritten[0].numbersBefore, ['1.25', '25%']);
+  assert.deepEqual(d.rewritten[0].numbersAfter, ['1.3', '20%']);
+});
+
+test('content: same numbers is rewritten, not facts changed', () => {
+  const ctx = ctxFor('https://www.b.com/', 'https://www.a.com/');
+  const out = contentFindings(snap({ blocks: [{ text: 'It took advanced 12nm process technology and innovative circuit designs', region: 'main' }] }),
+    snap({ blocks: [{ text: 'It took the industry leading 12nm process technology and new circuit designs', region: 'main' }] }), ctx);
+  assert.ok(out.some((f) => f.check === 'content.text.rewritten'), JSON.stringify(out));
+  assert.ok(!out.some((f) => f.check === 'content.facts.changed'));
+});
+
+test('content: hidden main text still counts as missing, hidden header/footer text does not', () => {
+  const d = diffBlocks([{ text: 'LPDDR5X is an enhanced version of LPDDR5 with higher speed', region: 'main', hidden: true },
+    { text: 'Products Type', region: 'header', hidden: true }], []);
+  assert.deepEqual(d.missing.map((m) => m.text), ['LPDDR5X is an enhanced version of LPDDR5 with higher speed']);
+});
+
+test('content: product names with digits are not facts (LPDDR5X, AEC-Q100)', () => {
+  const ctx = ctxFor('https://www.b.com/', 'https://www.a.com/');
+  const out = contentFindings(snap({ blocks: [{ text: 'LPDDR5X meets the AEC-Q100 standard for automotive memory parts', region: 'main' }] }),
+    snap({ blocks: [{ text: 'The memory meets the automotive standard for parts in modern cars', region: 'main' }] }), ctx);
+  assert.ok(!out.some((f) => f.check === 'content.facts.changed'), JSON.stringify(out));
+});
+
 // ---------- AEM to Edge Delivery markup changes ----------
 
 test('diffBlocks: text split into or merged from other blocks is not reported as missing or added', () => {

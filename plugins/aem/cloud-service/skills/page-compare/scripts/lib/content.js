@@ -25,9 +25,21 @@ function counter(list, keyFn) {
 
 // ---------- text ----------
 
+// Numbers as written, with a unit when there is one: "1.25", "25%", "12nm", "64gb", "10.7gbps".
+// Digits inside a word (LPDDR5X, AEC-Q100, 5G) are names, not figures, and are left out.
+const NUMBER = /(?<![\p{L}\d.,])\d+(?:[.,]\d+)?(?:\s?(?:%|x|nm|gbps|gb|tb|mb|mhz|ghz))?(?![\p{L}\d])/giu;
+
+function numbersIn(text) {
+  return [...String(text || '').matchAll(NUMBER)].map((m) => m[0].toLowerCase().replace(/\s+/g, ''));
+}
+
+const sameNumbers = (a, b) => a.length === b.length && [...a].sort().join('|') === [...b].sort().join('|');
+
 function diffBlocks(beforeBlocks, afterBlocks, volatile = []) {
   const vol = new Set(volatile.map(normalizeText));
-  const bl = beforeBlocks.map((b) => ({ ...b, norm: normalizeText(b.text) })).filter((b) => b.norm && !vol.has(b.norm));
+  // Hidden header/footer text is menus; hidden main text is content in tabs and accordions and still counts.
+  const bl = beforeBlocks.map((b) => ({ ...b, norm: normalizeText(b.text) }))
+    .filter((b) => b.norm && !vol.has(b.norm) && !(b.hidden && b.region && b.region !== 'main'));
   const al = afterBlocks.map((b) => ({ ...b, norm: normalizeText(b.text) })).filter((b) => b.norm);
 
   const pool = counter(al, (b) => b.norm);
@@ -67,21 +79,45 @@ function diffBlocks(beforeBlocks, afterBlocks, volatile = []) {
     }
     if (best && bestSim >= 0.85) {
       available.delete(best);
-      changed.push({ before: b.text, after: best.text, similarity: round(bestSim), region: b.region, hidden: !!b.hidden });
+      changed.push({ before: b.text, after: best.text, similarity: round(bestSim), region: b.region, hidden: !!b.hidden, numbersBefore: numbersIn(b.text), numbersAfter: numbersIn(best.text) });
     } else if (allAfter.includes(` ${b.norm} `)) {
       regrouped++;
     } else {
-      missing.push({ text: b.text, region: b.region, hidden: !!b.hidden, chars: b.norm.length });
+      missing.push({ text: b.text, region: b.region, hidden: !!b.hidden, chars: b.norm.length, norm: b.norm });
     }
   }
-  const added = [...available].filter((a) => !allBefore.includes(` ${a.norm} `)).map((a) => ({ text: a.text, region: a.region, chars: a.norm.length }));
+  const addedRaw = [...available].filter((a) => !allBefore.includes(` ${a.norm} `));
+
+  // Rewritten copy: a missing block and a new block in the same region that still say much the same thing.
+  const candidates = [];
+  for (const m of missing) {
+    for (const a of addedRaw) {
+      if ((m.region || 'main') !== (a.region || 'main')) continue;
+      const s = similarity(m.norm, a.norm);
+      if (s >= 0.5) candidates.push({ m, a, s });
+    }
+  }
+  candidates.sort((x, y) => y.s - x.s);
+  const rewritten = [];
+  const usedM = new Set();
+  const usedA = new Set();
+  for (const { m, a, s } of candidates) {
+    if (usedM.has(m) || usedA.has(a)) continue;
+    usedM.add(m);
+    usedA.add(a);
+    rewritten.push({ before: m.text, after: a.text, similarity: round(s), region: m.region, hidden: m.hidden, numbersBefore: numbersIn(m.text), numbersAfter: numbersIn(a.text) });
+  }
+  const stillMissing = missing.filter((m) => !usedM.has(m)).map(({ norm, ...m }) => m);
+  const added = addedRaw.filter((a) => !usedA.has(a)).map((a) => ({ text: a.text, region: a.region, chars: a.norm.length }));
 
   const totalChars = bl.reduce((n, b) => n + b.norm.length, 0);
-  const lost = missing.reduce((n, m) => n + m.chars, 0) + changed.reduce((n, c) => n + (1 - c.similarity) * normalizeText(c.before).length, 0);
+  const partly = (list) => list.reduce((n, c) => n + (1 - c.similarity) * normalizeText(c.before).length, 0);
+  const lost = stillMissing.reduce((n, m) => n + m.chars, 0) + partly(changed) + partly(rewritten);
   const addedChars = added.reduce((n, a) => n + a.chars, 0);
   return {
-    missing,
+    missing: stillMissing,
     changed,
+    rewritten,
     added,
     regrouped,
     formatOnly,
@@ -95,11 +131,21 @@ function textFindings(before, after, rules, volatile) {
   const d = diffBlocks(before.blocks, after.blocks, volatile);
   const out = [];
   const sev = d.missingPct > rules.text.failMissingPct ? 'fail' : 'review';
+  // Reworded or rewritten text whose figures differ (speeds, sizes, percentages) is a content error, not wording.
+  const facts = [...d.changed, ...d.rewritten].filter((c) => !sameNumbers(c.numbersBefore, c.numbersAfter));
+  const reworded = d.changed.filter((c) => !facts.includes(c));
+  const rewritten = d.rewritten.filter((c) => !facts.includes(c));
+  if (facts.length) {
+    out.push(finding('content.facts.changed', 'fail', `${facts.length} text block(s) state different figures on the after page`, cap(facts)));
+  }
   if (d.missing.length) {
     out.push(finding('content.text.missing', sev, `${d.missing.length} text block(s) from the before page are missing on the after page (${d.missingPct}% of text)`, cap(d.missing)));
   }
-  if (d.changed.length) {
-    out.push(finding('content.text.changed', d.missing.length ? 'review' : sev, `${d.changed.length} text block(s) were reworded`, cap(d.changed)));
+  if (reworded.length) {
+    out.push(finding('content.text.changed', d.missing.length ? 'review' : sev, `${reworded.length} text block(s) were reworded`, cap(reworded)));
+  }
+  if (rewritten.length) {
+    out.push(finding('content.text.rewritten', 'review', `${rewritten.length} text block(s) were rewritten`, cap(rewritten)));
   }
   if (d.added.length) {
     out.push(finding('content.text.added', d.addedPct > rules.text.addedReviewPct ? 'review' : 'info', `${d.added.length} new text block(s) on the after page (${d.addedPct}% of before text)`, cap(d.added)));
@@ -445,4 +491,4 @@ function makeCanon({ beforeUrl, afterUrl, hostMap = [], pathMap = [], rewrites =
   };
 }
 
-module.exports = { diffBlocks, contentFindings, makeCanon, beforeBase, finding, cap, counter, safeHost, MAX_ITEMS };
+module.exports = { diffBlocks, numbersIn, contentFindings, makeCanon, beforeBase, finding, cap, counter, safeHost, MAX_ITEMS };

@@ -176,8 +176,10 @@ async function processPair(pair, env) {
     if (comparable && doNoise) {
       b2 = await load(pair.before, primary);
       const d = diffBlocks(b1.snapshot.blocks, b2.snapshot.blocks);
-      volatile = [...d.missing.map((m) => m.text), ...d.changed.flatMap((c) => [c.before, c.after]), ...d.added.map((x) => x.text)];
-      volatilePct = Math.max(d.missingPct, d.addedPct);
+      // Anything that differs between two loads of the same page is noise, rewritten pairs included.
+      volatile = [...d.missing.map((m) => m.text), ...d.changed.flatMap((c) => [c.before, c.after]), ...d.rewritten.flatMap((c) => [c.before, c.after]), ...d.added.map((x) => x.text)];
+      const rewrittenPct = d.totalChars ? (100 * d.rewritten.reduce((n, c) => n + c.before.length, 0)) / d.totalChars : 0;
+      volatilePct = Math.max(d.missingPct + rewrittenPct, d.addedPct);
     }
 
     const ctx = { beforeUrl, afterUrl: pair.after, beforeHost, afterHost, canon, rules, volatile, expect: env.expect, fetcher };
