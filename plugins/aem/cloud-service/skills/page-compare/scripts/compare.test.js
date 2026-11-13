@@ -725,6 +725,23 @@ test('content: "Learn more" alone is never flagged as placeholder or empty state
   assert.ok(!out.some((f) => f.check === 'content.placeholder' || f.check === 'content.empty_state'));
 });
 
+// ---------- header, footer and navigation ----------
+
+test('visual.pairSections pairs header and footer even when their text differs', () => {
+  const s = (name, fp) => ({ name, fp });
+  const r = pairSections([s('header', 'products dram ssd'), s('main-1', 'alpha beta gamma'), s('footer', 'contact us sitemap')],
+    [s('header', 'about company'), s('main-1', 'alpha beta gamma'), s('footer', 'legal privacy')]);
+  assert.equal(r.pairs.length, 3);
+  assert.deepEqual([r.missing.length, r.added.length], [0, 0]);
+  assert.ok(r.pairs.some(([b, a]) => b.name === 'header' && a.name === 'header'));
+});
+
+test('content: nav.item is review, not fail', () => {
+  const ctx = ctxFor('https://www.b.com/', 'https://www.a.com/');
+  const f = contentFindings(snap({ nav: ['A', 'B'] }), snap({ nav: [] }), ctx).find((x) => x.check === 'nav.item');
+  assert.equal(f.severity, 'review');
+});
+
 // ---------- AEM to Edge Delivery markup changes ----------
 
 test('diffBlocks: text split into or merged from other blocks is not reported as missing or added', () => {

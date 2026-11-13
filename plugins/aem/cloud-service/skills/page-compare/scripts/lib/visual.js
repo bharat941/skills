@@ -127,8 +127,18 @@ function pairSections(before, after, { byName = new Set() } = {}) {
   const usedB = new Set();
   const usedA = new Set();
   const pairs = [];
+  // A page has one header and one footer: they are the same section even when their content changed.
+  for (const kind of ['header', 'footer']) {
+    const i = before.findIndex((b) => b.name === kind);
+    const k = after.findIndex((a) => a.name === kind);
+    if (i >= 0 && k >= 0) {
+      usedB.add(i);
+      usedA.add(k);
+      pairs.push([before[i], after[k]]);
+    }
+  }
   for (const [i, b] of before.entries()) {
-    if (!b.fp) continue;
+    if (!b.fp || usedB.has(i)) continue;
     const j = after.findIndex((a, k) => !usedA.has(k) && kindOf(a.name) === kindOf(b.name) && a.fp === b.fp);
     if (j >= 0) {
       usedB.add(i);

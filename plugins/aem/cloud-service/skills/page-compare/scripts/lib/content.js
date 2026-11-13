@@ -349,7 +349,7 @@ function linkFindings(before, after, ctx) {
 function navFindings(before, after) {
   const have = new Set((after.nav || []).map(normalizeText));
   const missing = (before.nav || []).filter((t) => normalizeText(t) && !have.has(normalizeText(t)));
-  return missing.length ? [finding('nav.item', 'fail', `${missing.length} navigation item(s) missing on the after page`, cap(missing.map((text) => ({ text }))))] : [];
+  return missing.length ? [finding('nav.item', 'review', `${missing.length} navigation item(s) missing on the after page`, cap(missing.map((text) => ({ text }))))] : [];
 }
 
 function ctaFindings(before, after) {
