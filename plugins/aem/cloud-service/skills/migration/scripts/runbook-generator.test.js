@@ -13,6 +13,7 @@ const { runLuiScan, runCdwScan } = require('./legacy-ui-runner.js');
 const { runTemplateScan, classifyStaticTemplate } = require('./template-scan-runner.js');
 const { runAnalyzer, isAnalyzerAvailable, DEFAULT_ANALYZE_SCRIPT } = require('./analyzer-runner.js');
 const { getBpaFindings } = require('./bpa-findings-helper.js');
+const { decodeFileVaultPath, parseFileVaultValue, parsePolicyXml } = require('./acl-scan-runner.js');
 const {
   gatherFindings, generateRunbook, renderRunbook, writeRunbookCache, mergeLlmFindings,
   samplePrompt, relPath, classKey, sourceLabel, CANONICAL_PATTERNS, PATTERN_META,
@@ -1333,4 +1334,116 @@ test('bpaIncomplete: when BPA DOES report the pattern, BPA still owns it (no fal
   });
   assert.strictEqual(gathered.sourceByPattern.templateModernization, 'mcp', 'BPA owns it when it reports findings');
   assert.strictEqual(gathered.findingsByPattern.templateModernization.length, 1, 'BPA finding, not the content-scan one');
+});
+
+// ── ACL scan ──
+
+test('acl: decodeFileVaultPath decodes namespaces, double underscores and %xx', () => {
+  assert.strictEqual(decodeFileVaultPath(['content', '_jcr_content', 'a%3Ab']), '/content/jcr:content/a:b');
+  assert.strictEqual(decodeFileVaultPath(['__x']), '/_x');
+  assert.strictEqual(decodeFileVaultPath([]), '/');
+  assert.strictEqual(decodeFileVaultPath(['bad%E0%A4']), null);
+});
+
+test('acl: parseFileVaultValue handles types, escaped commas and entities', () => {
+  assert.deepStrictEqual(parseFileVaultValue('{Name}[jcr:read,rep:write]'), ['jcr:read', 'rep:write']);
+  assert.deepStrictEqual(parseFileVaultValue('{String}[a\\,b]'), ['a,b']);
+  assert.deepStrictEqual(parseFileVaultValue('{String}[a\\\\b]'), ['a\\b']);
+  assert.deepStrictEqual(parseFileVaultValue('*/jcr:content*'), ['*/jcr:content*']);
+  assert.deepStrictEqual(parseFileVaultValue('[]'), []);
+  assert.strictEqual(parseFileVaultValue('[unterminated'), null);
+  assert.strictEqual(parseFileVaultValue('[nested[bracket]'), null);
+});
+
+function aclPolicyXml(children) {
+  return `<jcr:root xmlns:jcr="http://www.jcp.org/jcr/1.0" xmlns:rep="internal" jcr:primaryType="rep:ACL">${children}</jcr:root>`;
+}
+
+test('acl: parsePolicyXml parses grant/deny ACEs in order with restrictions', () => {
+  const xml = aclPolicyXml([
+    '<allow jcr:primaryType="rep:GrantACE" rep:principalName="example-editors" rep:privileges="{Name}[jcr:read,rep:write]" rep:glob="*/jcr:content*"/>',
+    '<deny jcr:primaryType="rep:DenyACE" rep:principalName="example-guests" rep:privileges="{Name}[jcr:all]"><rep:restrictions rep:ntNames="{Name}[cq:Page,dam:Asset]"/></deny>',
+    '<allow1 jcr:primaryType="rep:UnknownACE"/>',
+  ].join(''));
+  const { entries, fatal } = parsePolicyXml(xml, { nodePath: '/content/x' });
+  assert.strictEqual(fatal, null);
+  assert.deepStrictEqual(entries.map(e => [e.order, e.effect, e.kind]), [[0, 'allow', 'acl-entry'], [1, 'deny', 'acl-entry'], [2, null, 'acl-unknown']]);
+  assert.deepStrictEqual(entries[0].restrictions, { 'rep:glob': ['*/jcr:content*'] });
+  assert.deepStrictEqual(entries[1].restrictions, { 'rep:ntNames': ['cq:Page', 'dam:Asset'] });
+  assert.deepStrictEqual(entries[0].privileges, ['jcr:read', 'rep:write']);
+  assert.ok(entries.every(e => e.policyPath === '/content/x' && e.sourceType === 'policy-xml'));
+  assert.match(entries[2].reason, /unexpected ACE type rep:UnknownACE/);
+});
+
+test('acl: parsePolicyXml decodes XML attribute entities', () => {
+  const xml = aclPolicyXml('<allow jcr:primaryType="rep:GrantACE" rep:principalName="example-editors" rep:privileges="{Name}[jcr:read]" rep:glob="a&amp;b&lt;c&gt;&quot;d&apos;e&#58;&#x21;"/>');
+  const { entries, fatal } = parsePolicyXml(xml, { nodePath: '/content/x' });
+  assert.strictEqual(fatal, null);
+  assert.deepStrictEqual(entries[0].restrictions, { 'rep:glob': ['a&b<c>"d\'e:!'] });
+});
+
+test('acl: parsePolicyXml reports a non-ACL policy-file root as unknown', () => {
+  const xml = '<jcr:root jcr:primaryType="rep:Unrelated"/>';
+  const { entries, fatal } = parsePolicyXml(xml, { nodePath: '/content/x' });
+  assert.strictEqual(fatal, null);
+  assert.strictEqual(entries.length, 1);
+  assert.strictEqual(entries[0].kind, 'acl-unknown');
+  assert.strictEqual(entries[0].reason, 'root is not rep:ACL');
+});
+
+test('acl: parsePolicyXml marks ACEs missing principal or privileges unknown', () => {
+  const xml = aclPolicyXml([
+    '<missingPrincipal jcr:primaryType="rep:GrantACE" rep:privileges="{Name}[jcr:read]"/>',
+    '<missingPrivileges jcr:primaryType="rep:DenyACE" rep:principalName="example-viewers"/>',
+  ].join(''));
+  const { entries, fatal } = parsePolicyXml(xml, { nodePath: '/content/x' });
+  assert.strictEqual(fatal, null);
+  assert.strictEqual(entries.length, 2);
+  assert.ok(entries.every(e => e.kind === 'acl-unknown'));
+  assert.match(entries[0].reason, /missing rep:principalName/);
+  assert.match(entries[1].reason, /missing rep:privileges/);
+});
+
+test('acl: parsePolicyXml inline rep:policy resolves nested node path', () => {
+  const ace = '<allow jcr:primaryType="rep:GrantACE" rep:principalName="example-editors" rep:privileges="{Name}[jcr:read]"/>';
+  const xml = `<jcr:root><jcr:content><rep:policy jcr:primaryType="rep:ACL">${ace}</rep:policy></jcr:content></jcr:root>`;
+  const { entries, fatal } = parsePolicyXml(xml, { nodePath: '/content/site', inline: true });
+  assert.strictEqual(fatal, null);
+  assert.strictEqual(entries.length, 1);
+  assert.strictEqual(entries[0].policyPath, '/content/site/jcr:content');
+  assert.strictEqual(entries[0].sourceType, 'inline-policy');
+  const rootPath = parsePolicyXml(xml, { nodePath: '/', inline: true });
+  assert.strictEqual(rootPath.entries[0].policyPath, '/jcr:content');
+
+  const wrongType = '<jcr:root><rep:policy jcr:primaryType="rep:Unrelated"/></jcr:root>';
+  const unknown = parsePolicyXml(wrongType, { nodePath: '/content/site', inline: true });
+  assert.strictEqual(unknown.fatal, null);
+  assert.strictEqual(unknown.entries.length, 1);
+  assert.strictEqual(unknown.entries[0].kind, 'acl-unknown');
+});
+
+test('acl: parsePolicyXml returns fatal for malformed XML', () => {
+  const malformed = [
+    '<jcr:root jcr:primaryType="rep:ACL"><allow',
+    '<jcr:root jcr:primaryType="rep:ACL"></not-root>',
+    '<jcr:root jcr:primaryType="rep:ACL"><</jcr:root>',
+    '<jcr:root jcr:primaryType="rep:ACL"><allow jcr:primaryType="rep:GrantACE"rep:principalName="example-editors"/></jcr:root>',
+  ];
+  for (const xml of malformed) {
+    const { entries, fatal } = parsePolicyXml(xml, { nodePath: '/content/x' });
+    assert.ok(typeof fatal === 'string' && fatal.length > 0);
+    assert.deepStrictEqual(entries, []);
+  }
+});
+
+test('acl: parsePolicyXml reports ACE line numbers with CRLF', () => {
+  const xml = [
+    '<jcr:root jcr:primaryType="rep:ACL">',
+    '  <allow jcr:primaryType="rep:GrantACE" rep:principalName="example-editors" rep:privileges="{Name}[jcr:read]"/>',
+    '  <deny jcr:primaryType="rep:DenyACE" rep:principalName="example-guests" rep:privileges="{Name}[jcr:all]"/>',
+    '</jcr:root>',
+  ].join('\r\n');
+  const { entries, fatal } = parsePolicyXml(xml, { nodePath: '/content/x' });
+  assert.strictEqual(fatal, null);
+  assert.strictEqual(entries[1].line, 3);
 });
