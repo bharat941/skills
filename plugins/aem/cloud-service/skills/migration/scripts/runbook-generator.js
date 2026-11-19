@@ -740,7 +740,11 @@ function renderRunbook(gathered, ctx = {}) {
       lines.push('');
     }
     if (targets.length === 0 && meta.alwaysRender) {
-      lines.push('No ACL definitions found in code for the scoped paths. This does not mean the source repository has no ACLs.');
+      if (gathered.scanStatusByPattern?.[p] === 'incomplete') {
+        lines.push('No ACL findings are available because the scan was incomplete.');
+      } else {
+        lines.push('No ACL definitions found in code for the scoped paths. This does not mean the source repository has no ACLs.');
+      }
       lines.push('');
     } else {
       lines.push('### Affected');

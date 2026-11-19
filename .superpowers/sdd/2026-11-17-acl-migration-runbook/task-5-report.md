@@ -64,3 +64,17 @@ skipped 0
 ## Commit
 
 `feat(migration): render ACL review section and checklist in runbook`
+
+## Follow-up fix — incomplete ACL scan rendering
+
+The ACL section now says `No ACL findings are available because the scan was incomplete.` when the scan status is incomplete and no findings are available. The pinned no-definitions notice remains limited to completed scans. Added assertions to the failed-scan rendering test for both behaviors.
+
+### TDD and verification
+
+From `plugins/aem/cloud-service/skills/migration/scripts`:
+
+- RED: `/opt/homebrew/bin/node --test --test-name-pattern '^acl' runbook-generator.test.js` — 38 passed, 1 failed, as expected. The new failed-scan assertion failed because the renderer emitted the no-definitions notice instead of the incomplete-scan message.
+- GREEN: same targeted command — 39 passed, 0 failed.
+- Full suite: `/opt/homebrew/bin/node --test runbook-generator.test.js` — 121 passed, 0 failed.
+
+`node` was not on `PATH`; the tests were run using `/opt/homebrew/bin/node`.

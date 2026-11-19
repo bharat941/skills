@@ -2017,6 +2017,10 @@ test('acl: scanner failure is incomplete and stays incomplete after LLM merge', 
   assert.strictEqual(gathered.scanStatusByPattern.aclPermissions, 'incomplete');
   assert.ok(gathered.analyzerWarnings.includes('aclPermissions scan did not run: boom'));
 
+  const failedScanMarkdown = renderRunbook(gathered, { workspaceRoot: root, generatedAt: 'now' });
+  assert.match(failedScanMarkdown, /No ACL findings are available because the scan was incomplete\./);
+  assert.doesNotMatch(failedScanMarkdown, /No ACL definitions found in code for the scoped paths\./);
+
   mergeLlmFindings(gathered, {
     aclPermissions: [{ file: 'a.xml', line: 3, detail: 'x' }],
   });
