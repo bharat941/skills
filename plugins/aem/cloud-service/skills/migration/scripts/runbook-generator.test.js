@@ -13,7 +13,16 @@ const { runLuiScan, runCdwScan } = require('./legacy-ui-runner.js');
 const { runTemplateScan, classifyStaticTemplate } = require('./template-scan-runner.js');
 const { runAnalyzer, isAnalyzerAvailable, DEFAULT_ANALYZE_SCRIPT } = require('./analyzer-runner.js');
 const { getBpaFindings } = require('./bpa-findings-helper.js');
-const { decodeFileVaultPath, parseFileVaultValue, parsePolicyXml, resolvePackage, importVerdict } = require('./acl-scan-runner.js');
+const {
+  decodeFileVaultPath,
+  parseFileVaultValue,
+  parsePolicyXml,
+  resolvePackage,
+  importVerdict,
+  isRepoInitConfigName,
+  readRepoInitConfig,
+  parseRepoInit,
+} = require('./acl-scan-runner.js');
 const {
   gatherFindings, generateRunbook, renderRunbook, writeRunbookCache, mergeLlmFindings,
   samplePrompt, relPath, classKey, sourceLabel, CANONICAL_PATTERNS, PATTERN_META,
@@ -1594,4 +1603,116 @@ test('acl: resolvePackage acHandling sources and clear', () => {
   });
   const r6 = resolvePackage(path.join(c6, 'jcr_root/.keep'), '/conf/acme/lists/x', root);
   assert.strictEqual(r6.acHandling, 'unknown');
+});
+
+test('acl: isRepoInitConfigName matches ~, legacy - and bare PIDs only', () => {
+  const pid = 'org.apache.sling.jcr.repoinit.RepositoryInitializer';
+  for (const name of [`${pid}~a.cfg.json`, `${pid}-b.config`, `${pid}.cfg`, `${pid}~x-y.cfg.json`]) {
+    assert.ok(isRepoInitConfigName(name), name);
+  }
+  for (const name of [`${pid}Factory~a.cfg.json`, `${pid}Extra.cfg.json`, `${pid}~a.json`, `other.${pid}~a.cfg.json`]) {
+    assert.ok(!isRepoInitConfigName(name), name);
+  }
+});
+
+test('acl: readRepoInitConfig reads cfg.json, .config and .cfg', () => {
+  const jsonOne = readRepoInitConfig(
+    '/workspace/ui.config/src/main/content/jcr_root/apps/acme/config.author/org.apache.sling.jcr.repoinit.RepositoryInitializer~author.cfg.json',
+    JSON.stringify({
+      scripts: 'set ACL for example-svc\n  allow jcr:read on /content\nend',
+      references: ['repoinit/a.txt'],
+    })
+  );
+  assert.deepStrictEqual(jsonOne.scripts, ['set ACL for example-svc\n  allow jcr:read on /content\nend']);
+  assert.deepStrictEqual(jsonOne.references, ['repoinit/a.txt']);
+  assert.strictEqual(jsonOne.runmode, 'author');
+  assert.strictEqual(jsonOne.fatal, null);
+
+  const jsonMany = readRepoInitConfig(
+    '/workspace/ui.config/src/main/content/jcr_root/apps/acme/config/org.apache.sling.jcr.repoinit.RepositoryInitializer.cfg.json',
+    JSON.stringify({ scripts: ['a', 'b'], references: 'repoinit/single.txt' })
+  );
+  assert.deepStrictEqual(jsonMany.scripts, ['a', 'b']);
+  assert.deepStrictEqual(jsonMany.references, ['repoinit/single.txt']);
+  assert.strictEqual(jsonMany.runmode, null);
+
+  const felixConfig = readRepoInitConfig(
+    '/workspace/ui.config/src/main/content/jcr_root/apps/acme/config.publish/org.apache.sling.jcr.repoinit.RepositoryInitializer-b.config',
+    'scripts=["set ACL for a\\n  allow jcr:read on /x\\nend"]\nreferences=["repoinit/x.txt"]\n'
+  );
+  assert.strictEqual(felixConfig.runmode, 'publish');
+  assert.deepStrictEqual(felixConfig.scripts, ['set ACL for a\n  allow jcr:read on /x\nend']);
+  assert.deepStrictEqual(felixConfig.references, ['repoinit/x.txt']);
+  assert.strictEqual(felixConfig.fatal, null);
+
+  const propsConfig = readRepoInitConfig(
+    '/workspace/ui.config/src/main/content/jcr_root/apps/acme/config/org.apache.sling.jcr.repoinit.RepositoryInitializer.cfg',
+    'scripts=set ACL for a\\n  allow jcr:read on /x\\nend\nreferences=repoinit/x.txt\n'
+  );
+  assert.deepStrictEqual(propsConfig.scripts, ['set ACL for a\n  allow jcr:read on /x\nend']);
+  assert.deepStrictEqual(propsConfig.references, ['repoinit/x.txt']);
+  assert.strictEqual(propsConfig.fatal, null);
+
+  const badJson = readRepoInitConfig(
+    '/workspace/ui.config/src/main/content/jcr_root/apps/acme/config/org.apache.sling.jcr.repoinit.RepositoryInitializer.cfg.json',
+    '{ scripts: }'
+  );
+  assert.ok(typeof badJson.fatal === 'string' && badJson.fatal.length > 0);
+});
+
+test('acl: parseRepoInit parses set ACL for/on with restrictions and multi-path', () => {
+  const script = [
+    'set ACL for example-svc, example-editors',
+    '  allow jcr:read,rep:write on /content/a,/content/b restriction(rep:glob,*/jcr:content*)',
+    'end',
+    'set ACL on /conf/x',
+    '  deny jcr:all for everyone restriction(rep:ntNames,cq:Page,dam:Asset)',
+    '  remove * for example-svc',
+    'end',
+    'set principal ACL for example-svc',
+    '  allow jcr:read on /content/c',
+    'end',
+  ].join('\n');
+  const { entries } = parseRepoInit(script, { runmode: 'author' });
+  const allows = entries.filter(e => e.kind === 'acl-entry' && e.effect === 'allow');
+  assert.strictEqual(allows.length, 2);
+  assert.deepStrictEqual(allows.map(e => e.policyPath), ['/content/a', '/content/b']);
+  assert.deepStrictEqual(allows[0].principals, ['example-svc', 'example-editors']);
+  assert.deepStrictEqual(allows[0].restrictions, { 'rep:glob': ['*/jcr:content*'] });
+  assert.ok(entries.every(e => e.sourceType === 'repoinit'));
+  assert.ok(entries.every(e => e.runmode === 'author'));
+
+  const deny = entries.find(e => e.kind === 'acl-entry' && e.effect === 'deny');
+  assert.ok(deny);
+  assert.strictEqual(deny.policyPath, '/conf/x');
+  assert.deepStrictEqual(deny.principals, ['everyone']);
+  assert.deepStrictEqual(deny.restrictions, { 'rep:ntNames': ['cq:Page', 'dam:Asset'] });
+
+  const remove = entries.find(e => e.kind === 'acl-unknown' && e.scriptLine === 6);
+  assert.ok(remove);
+  assert.match(remove.reason, /unrecognized/);
+  assert.strictEqual(remove.policyPath, '/conf/x');
+
+  const principalBased = entries.find(e => e.kind === 'acl-unknown' && /principal-based/.test(e.reason));
+  assert.ok(principalBased);
+});
+
+test('acl: parseRepoInit flags home(), :repository and unterminated blocks unknown', () => {
+  const home = parseRepoInit(['set ACL for example-svc', '  allow jcr:read on home(example)', 'end'].join('\n'), { runmode: null });
+  assert.strictEqual(home.entries.length, 1);
+  assert.strictEqual(home.entries[0].kind, 'acl-unknown');
+  assert.strictEqual(home.entries[0].policyPath, null);
+  assert.ok(home.entries[0].reason.length > 0);
+
+  const repository = parseRepoInit(['set ACL for example-svc', '  allow jcr:read on :repository', 'end'].join('\n'), { runmode: null });
+  assert.strictEqual(repository.entries.length, 1);
+  assert.strictEqual(repository.entries[0].kind, 'acl-unknown');
+  assert.strictEqual(repository.entries[0].policyPath, null);
+  assert.ok(repository.entries[0].reason.length > 0);
+
+  const unterminated = parseRepoInit(['set ACL for example-svc', '  allow jcr:read on /content/a'].join('\n'), { runmode: null });
+  assert.strictEqual(unterminated.entries.length, 1);
+  assert.strictEqual(unterminated.entries[0].kind, 'acl-unknown');
+  assert.strictEqual(unterminated.entries[0].policyPath, null);
+  assert.ok(unterminated.entries[0].reason.length > 0);
 });

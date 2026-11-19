@@ -495,4 +495,304 @@ function resolvePackage(fileAbs, policyPath, workspaceRoot) {
   };
 }
 
-module.exports = { decodeFileVaultPath, parseFileVaultValue, parsePolicyXml, resolvePackage, importVerdict };
+const REPOINIT_CONFIG_RE = /^org\.apache\.sling\.jcr\.repoinit\.RepositoryInitializer(?:[~-][^/\\]+)?\.(?:cfg\.json|config|cfg)$/;
+
+function isRepoInitConfigName(fileName) {
+  if (typeof fileName !== 'string') return false;
+  return REPOINIT_CONFIG_RE.test(path.basename(fileName));
+}
+
+function detectRunmode(fileAbs) {
+  if (typeof fileAbs !== 'string') return null;
+  const segments = path.dirname(fileAbs).split(path.sep);
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const match = segments[i].match(/^config(?:\.(.+))?$/);
+    if (match) return match[1] || null;
+  }
+  return null;
+}
+
+function decodeEscapes(value) {
+  if (typeof value !== 'string') return '';
+  let out = '';
+  for (let i = 0; i < value.length; i++) {
+    const char = value[i];
+    if (char !== '\\' || i === value.length - 1) {
+      out += char;
+      continue;
+    }
+    const next = value[++i];
+    if (next === 'n') out += '\n';
+    else if (next === 'r') out += '\r';
+    else if (next === 't') out += '\t';
+    else out += next;
+  }
+  return out;
+}
+
+function splitCsvList(raw) {
+  return String(raw || '').split(',').map(part => part.trim()).filter(Boolean);
+}
+
+function parseFelixList(raw) {
+  const trimmed = String(raw || '').trim();
+  if (!trimmed.startsWith('[') || !trimmed.endsWith(']')) return null;
+  const body = trimmed.slice(1, -1);
+  const values = [];
+  let current = '';
+  let quote = null;
+  let escape = false;
+  for (let i = 0; i < body.length; i++) {
+    const char = body[i];
+    if (escape) {
+      current += `\\${char}`;
+      escape = false;
+      continue;
+    }
+    if (char === '\\') {
+      escape = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) {
+        quote = null;
+      } else {
+        current += char;
+      }
+      continue;
+    }
+    if (char === '"' || char === '\'') {
+      quote = char;
+      continue;
+    }
+    if (char === ',') {
+      const value = current.trim();
+      if (value) values.push(decodeEscapes(value));
+      current = '';
+      continue;
+    }
+    current += char;
+  }
+  const last = current.trim();
+  if (last) values.push(decodeEscapes(last));
+  return values;
+}
+
+function parseKvConfig(text) {
+  const result = {};
+  for (const line of String(text || '').split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed[0] === '#') continue;
+    const equals = trimmed.indexOf('=');
+    if (equals <= 0) continue;
+    const key = trimmed.slice(0, equals).trim();
+    const rawValue = trimmed.slice(equals + 1).trim();
+    let values = parseFelixList(rawValue);
+    if (values === null) values = [decodeEscapes(rawValue.replace(/^['"]|['"]$/g, ''))];
+    if (!result[key]) result[key] = [];
+    result[key].push.apply(result[key], values.filter(Boolean));
+  }
+  return result;
+}
+
+function toStringList(value) {
+  if (typeof value === 'string') return [value];
+  if (Array.isArray(value)) return value.filter(item => typeof item === 'string');
+  return [];
+}
+
+function readRepoInitConfig(fileAbs, text) {
+  const base = path.basename(String(fileAbs || ''));
+  const runmode = detectRunmode(fileAbs);
+  const output = { scripts: [], references: [], runmode, fatal: null };
+
+  if (/\.cfg\.json$/.test(base)) {
+    let parsed;
+    try {
+      parsed = JSON.parse(String(text || ''));
+    } catch (error) {
+      output.fatal = error && error.message ? error.message : 'invalid JSON';
+      return output;
+    }
+    output.scripts = toStringList(parsed && parsed.scripts);
+    output.references = toStringList(parsed && parsed.references);
+    return output;
+  }
+
+  if (/\.config$/.test(base) || /\.cfg$/.test(base)) {
+    const parsed = parseKvConfig(text);
+    output.scripts = parsed.scripts || [];
+    output.references = parsed.references || [];
+  }
+  return output;
+}
+
+function makeRepoInitUnknown(reason, scriptLine, runmode, policyPath, order) {
+  return {
+    kind: 'acl-unknown',
+    sourceType: 'repoinit',
+    policyPath: policyPath || null,
+    order,
+    effect: null,
+    principals: [],
+    privileges: [],
+    restrictions: {},
+    runmode: runmode || null,
+    scriptLine,
+    reason,
+  };
+}
+
+function parseRestrictions(text) {
+  const restrictions = {};
+  let malformed = false;
+  const stripped = text.replace(/\brestriction\s*\(([^)]*)\)/ig, (_, raw) => {
+    const items = splitCsvList(raw);
+    const name = items.shift();
+    if (!name) {
+      malformed = true;
+      return ' ';
+    }
+    if (!restrictions[name]) restrictions[name] = [];
+    restrictions[name].push.apply(restrictions[name], items);
+    return ' ';
+  });
+  return { restrictions, malformed, stripped };
+}
+
+function parseAceClauses(text) {
+  const clauses = { privileges: '', on: null, for: null };
+  const stripped = String(text || '').trim();
+  const lower = stripped.toLowerCase();
+  let cursor = 0;
+  let firstClause = stripped.length;
+  for (const keyword of [' on ', ' for ']) {
+    const idx = lower.indexOf(keyword);
+    if (idx >= 0 && idx < firstClause) firstClause = idx;
+  }
+  clauses.privileges = stripped.slice(0, firstClause).trim();
+  cursor = firstClause;
+  while (cursor < stripped.length) {
+    while (cursor < stripped.length && /\s/.test(stripped[cursor])) cursor++;
+    if (cursor >= stripped.length) break;
+    let keyword = null;
+    if (lower.slice(cursor, cursor + 3) === 'on ') keyword = 'on';
+    if (lower.slice(cursor, cursor + 4) === 'for ') keyword = 'for';
+    if (!keyword) break;
+    cursor += keyword.length + 1;
+    let next = stripped.length;
+    for (const marker of [' on ', ' for ']) {
+      const idx = lower.indexOf(marker, cursor);
+      if (idx >= 0 && idx < next) next = idx;
+    }
+    clauses[keyword] = stripped.slice(cursor, next).trim();
+    cursor = next;
+  }
+  return clauses;
+}
+
+function parseRepoInit(text, options) {
+  const runmode = options && options.runmode ? options.runmode : null;
+  const lines = String(text || '').split(/\r?\n/);
+  const entries = [];
+  let order = 0;
+  let block = null;
+
+  for (let idx = 0; idx < lines.length; idx++) {
+    const scriptLine = idx + 1;
+    const rawLine = lines[idx];
+    const line = rawLine.trim();
+    if (!line || line[0] === '#') continue;
+
+    if (!block) {
+      const forMatch = line.match(/^set\s+ACL\s+for\s+(.+)$/i);
+      if (forMatch) {
+        block = {
+          type: 'for',
+          principals: splitCsvList(forMatch[1]),
+          startLine: scriptLine,
+          startIndex: entries.length,
+        };
+        continue;
+      }
+      const onMatch = line.match(/^set\s+ACL\s+on\s+(.+)$/i);
+      if (onMatch) {
+        block = {
+          type: 'on',
+          paths: splitCsvList(onMatch[1]),
+          startLine: scriptLine,
+          startIndex: entries.length,
+        };
+        continue;
+      }
+      if (/^set\s+principal\s+ACL\b/i.test(line)) {
+        entries.push(makeRepoInitUnknown('principal-based RepoInit ACL is out of scope', scriptLine, runmode, null, order++));
+        block = { type: 'principal', startLine: scriptLine, startIndex: entries.length - 1 };
+      }
+      continue;
+    }
+
+    if (/^end$/i.test(line)) {
+      block = null;
+      continue;
+    }
+
+    if (block.type === 'principal') continue;
+    const aceMatch = line.match(/^(allow|deny)\s+(.+)$/i);
+    if (!aceMatch) {
+      entries.push(makeRepoInitUnknown(`unrecognized RepoInit ACL line: ${line}`, scriptLine, runmode, block.type === 'on' ? (block.paths[0] || null) : null, order++));
+      continue;
+    }
+    const effect = aceMatch[1].toLowerCase();
+    const rest = aceMatch[2];
+    const restrictionParse = parseRestrictions(rest);
+    if (restrictionParse.malformed) {
+      entries.push(makeRepoInitUnknown(`unrecognized RepoInit ACL line: ${line}`, scriptLine, runmode, null, order++));
+      continue;
+    }
+    const clauses = parseAceClauses(restrictionParse.stripped);
+    const privileges = splitCsvList(clauses.privileges);
+    const policyPaths = clauses.on ? splitCsvList(clauses.on) : (block.type === 'on' ? block.paths : []);
+    const principals = clauses.for ? splitCsvList(clauses.for) : (block.type === 'for' ? block.principals : []);
+    if (!privileges.length || !policyPaths.length || !principals.length) {
+      entries.push(makeRepoInitUnknown(`unrecognized RepoInit ACL line: ${line}`, scriptLine, runmode, null, order++));
+      continue;
+    }
+
+    for (const policyPath of policyPaths) {
+      if (!policyPath.startsWith('/') || /^home\s*\(/i.test(policyPath) || policyPath === ':repository') {
+        entries.push(makeRepoInitUnknown(`unrecognized RepoInit ACL line: ${line}`, scriptLine, runmode, null, order++));
+        continue;
+      }
+      entries.push({
+        kind: 'acl-entry',
+        sourceType: 'repoinit',
+        policyPath,
+        order: order++,
+        effect,
+        principals,
+        privileges,
+        restrictions: restrictionParse.restrictions,
+        runmode,
+        scriptLine,
+      });
+    }
+  }
+
+  if (block) {
+    if (typeof block.startIndex === 'number') entries.splice(block.startIndex);
+    entries.push(makeRepoInitUnknown('unterminated RepoInit ACL block', block.startLine, runmode, null, order++));
+  }
+  return { entries };
+}
+
+module.exports = {
+  decodeFileVaultPath,
+  parseFileVaultValue,
+  parsePolicyXml,
+  resolvePackage,
+  importVerdict,
+  isRepoInitConfigName,
+  readRepoInitConfig,
+  parseRepoInit,
+};
