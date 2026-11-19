@@ -784,6 +784,336 @@ function parseRepoInit(text, options) {
   return { entries };
 }
 
+function validateMigrationPaths(paths) {
+  const values = paths === undefined ? [] : paths;
+  if (!Array.isArray(values)) {
+    throw new TypeError('Invalid --migration-path value: expected an absolute JCR path such as --migration-path /content/site (no "..", "//", or wildcards *?[]).');
+  }
+  return values.map(value => {
+    if (value === undefined || value === null) {
+      throw new TypeError('Missing value: --migration-path requires a value, e.g. --migration-path /content/site.');
+    }
+    const raw = String(value);
+    const segments = raw.split('/');
+    const valid = raw.startsWith('/')
+      && !raw.includes('//')
+      && !/[?*[\]]/.test(raw)
+      && !segments.includes('..')
+      && !segments.includes('.');
+    if (!valid) {
+      throw new TypeError(`Invalid --migration-path "${raw}": expected an absolute JCR path such as --migration-path /content/site (no "..", "//", or wildcards *?[]).`);
+    }
+    const normalized = raw === '/' ? '/' : raw.replace(/\/+$/, '');
+    return normalized || '/';
+  });
+}
+
+function isJcrAncestor(ancestor, candidate) {
+  if (ancestor === '/') return candidate.startsWith('/');
+  return candidate === ancestor || candidate.startsWith(`${ancestor}/`);
+}
+
+function relationTo(policyPath, migrationPaths) {
+  if (policyPath === null || policyPath === undefined) return { relation: null, matchedPaths: [] };
+  if (!migrationPaths || migrationPaths.length === 0) return { relation: 'unscoped', matchedPaths: [] };
+  const paths = migrationPaths.map(value => value === '/' ? '/' : String(value).replace(/\/+$/, ''));
+  const matchedPaths = paths.filter(migrationPath =>
+    isJcrAncestor(policyPath, migrationPath) || isJcrAncestor(migrationPath, policyPath)
+  );
+  if (paths.includes(policyPath)) return { relation: 'self', matchedPaths };
+  if (matchedPaths.some(migrationPath => isJcrAncestor(policyPath, migrationPath))) {
+    return { relation: 'ancestor', matchedPaths };
+  }
+  if (matchedPaths.length) return { relation: 'descendant', matchedPaths };
+  return { relation: 'unrelated', matchedPaths: [] };
+}
+
+function aceSeverity(entry) {
+  if (entry.relation === 'ancestor' || entry.status === 'unknown' || entry.kind === 'acl-unknown') return 'high';
+  if (['acl-clear-review', 'not-eligible-for-acl-import', 'unknown'].includes(entry.importVerdict)) return 'high';
+  return 'medium';
+}
+
+function formatAceDetail(entry) {
+  const subject = entry.policyPath || entry.file || 'file';
+  if (entry.kind === 'acl-unknown' || entry.status === 'unknown') {
+    return `${subject} UNKNOWN — ${entry.reason || 'unclassified ACL entry'}`;
+  }
+  let relation;
+  if (entry.relation === 'self') {
+    relation = `self ${entry.matchedPaths && entry.matchedPaths.join(', ') || entry.policyPath}`;
+  } else if (entry.relation === 'ancestor') {
+    relation = `ancestor of ${entry.matchedPaths && entry.matchedPaths.join(', ')} — potentially relevant (inherited)`;
+  } else if (entry.relation === 'descendant') {
+    relation = `descendant of ${entry.matchedPaths && entry.matchedPaths.join(', ')}`;
+  } else if (entry.relation === 'unscoped') {
+    relation = 'unscoped';
+  } else {
+    relation = 'path unresolved';
+  }
+  const principals = (entry.principals || []).join(',');
+  const privileges = (entry.privileges || []).join(',');
+  const restrictions = Object.keys(entry.restrictions || {}).map(name =>
+    `${name}=[${entry.restrictions[name].join(',')}]`
+  ).join('; ');
+  const effect = entry.effect || 'UNKNOWN';
+  const importValue = entry.importVerdict || 'unknown';
+  if (entry.sourceType === 'repoinit') {
+    return `${subject} [${relation}] ${effect} ${principals} ${privileges} restrictions{${restrictions}} | runmode: ${entry.runmode || 'any'} | import: ${importValue}`;
+  }
+  return `${subject} [${relation}] ${effect} ${principals} ${privileges} restrictions{${restrictions}} | filter: ${entry.filterStatus || 'unknown'} | acHandling: ${entry.acHandling || 'unknown'} | import: ${importValue}`;
+}
+
+function workspaceRelative(root, fileAbs) {
+  return path.relative(root, fileAbs).split(path.sep).join('/');
+}
+
+function hasJcrRootSegment(fileAbs, root) {
+  return path.relative(root, fileAbs).split(path.sep).includes('jcr_root');
+}
+
+function jcrPathForFile(fileAbs, root) {
+  const relativeSegments = path.relative(root, fileAbs).split(path.sep);
+  let jcrRootIndex = -1;
+  for (let i = relativeSegments.length - 1; i >= 0; i--) {
+    if (relativeSegments[i] === 'jcr_root') {
+      jcrRootIndex = i;
+      break;
+    }
+  }
+  if (jcrRootIndex < 0) return null;
+  const nodeSegments = relativeSegments.slice(jcrRootIndex + 1);
+  nodeSegments.pop();
+  return decodeFileVaultPath(nodeSegments);
+}
+
+function makeReferenceUnknown(reason, context) {
+  return {
+    kind: 'acl-unknown',
+    sourceType: 'repoinit',
+    policyPath: null,
+    order: 0,
+    effect: null,
+    principals: [],
+    privileges: [],
+    restrictions: {},
+    runmode: context.runmode || null,
+    scriptIndex: context.scriptIndex,
+    reason,
+  };
+}
+
+function runAclScan(workspaceRoot, options) {
+  const root = path.resolve(String(workspaceRoot || ''));
+  const migrationPaths = validateMigrationPaths(options && options.migrationPaths);
+  const result = {
+    ok: true,
+    findings: [],
+    rawFindings: [],
+    warnings: [],
+    scanStatus: 'complete',
+    unreadable: [],
+  };
+  let rootStat;
+  try {
+    rootStat = fs.statSync(root);
+    if (!rootStat.isDirectory()) throw new Error('not a directory');
+  } catch (error) {
+    result.ok = false;
+    result.scanStatus = 'incomplete';
+    result.error = `ACL scan workspace root could not be read: ${error.message}`;
+    return result;
+  }
+
+  const files = [];
+  function walk(dir) {
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (_) {
+      result.unreadable.push(workspaceRelative(root, dir));
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        if (['node_modules', '.git', 'target', 'dist'].includes(entry.name)) continue;
+        walk(path.join(dir, entry.name));
+      } else if (entry.isFile()) {
+        const fileAbs = path.join(dir, entry.name);
+        const relative = workspaceRelative(root, fileAbs);
+        if (isRepoInitConfigName(entry.name)) {
+          files.push({ fileAbs, relative, type: 'repoinit' });
+        } else if (entry.name === '_rep_policy.xml' && hasJcrRootSegment(fileAbs, root)) {
+          files.push({ fileAbs, relative, type: 'policy-xml' });
+        } else if (entry.name === '.content.xml' && hasJcrRootSegment(fileAbs, root)) {
+          files.push({ fileAbs, relative, type: 'content-xml' });
+        }
+      }
+    }
+  }
+  walk(root);
+
+  const entries = [];
+  function addEntry(entry, fileAbs, fileRelative, sourceType, extra) {
+    const base = Object.assign({}, entry, extra || {});
+    base.file = fileRelative;
+    if (base.line === undefined && base.scriptLine !== undefined) base.line = base.scriptLine;
+    if (base.line === undefined || base.line === null) base.line = 1;
+    base.sourceType = sourceType || base.sourceType;
+    if (base.sourceType === 'repoinit') {
+      base.filterStatus = null;
+      base.acHandling = null;
+      base.importVerdict = base.kind === 'acl-unknown' ? 'unknown' : 'repoinit-defined';
+    } else {
+      const packageInfo = resolvePackage(fileAbs, base.policyPath, root);
+      base.filterStatus = packageInfo.filterStatus;
+      base.acHandling = packageInfo.acHandling;
+      base.importVerdict = base.kind === 'acl-unknown' ? 'unknown' : packageInfo.importVerdict;
+    }
+    const relation = relationTo(base.policyPath, migrationPaths);
+    base.relation = relation.relation;
+    base.matchedPaths = relation.matchedPaths;
+    if (relation.relation === 'unrelated') {
+      result.skippedCount = (result.skippedCount || 0) + 1;
+      return;
+    }
+    base.status = base.kind === 'acl-unknown' ? 'unknown' : 'complete';
+    base.severity = aceSeverity(base);
+    entries.push(base);
+  }
+
+  function parseScript(text, fileAbs, fileRelative, runmode, scriptIndex, sourceFileIsConfig) {
+    const parsed = parseRepoInit(text, { runmode });
+    for (const entry of parsed.entries) {
+      addEntry(entry, fileAbs, fileRelative, 'repoinit', {
+        line: entry.scriptLine,
+        scriptIndex: sourceFileIsConfig ? scriptIndex : undefined,
+      });
+    }
+  }
+
+  for (const file of files) {
+    let text;
+    try {
+      text = fs.readFileSync(file.fileAbs, 'utf8');
+    } catch (_) {
+      result.unreadable.push(file.relative);
+      continue;
+    }
+    if (file.type === 'policy-xml') {
+      const policyPath = jcrPathForFile(file.fileAbs, root);
+      const parsed = parsePolicyXml(text, { nodePath: policyPath });
+      if (parsed.fatal) {
+        const malformed = {
+          kind: 'acl-unknown',
+          sourceType: 'policy-xml',
+          policyPath,
+          reason: `malformed: ${parsed.fatal}`,
+          order: 0,
+          line: 1,
+        };
+        addEntry(malformed, file.fileAbs, file.relative, 'policy-xml');
+        result.warnings.push(`ACL file could not be parsed: ${file.relative} — ${parsed.fatal}`);
+      } else {
+        for (const entry of parsed.entries) addEntry(entry, file.fileAbs, file.relative, 'policy-xml');
+      }
+    } else if (file.type === 'content-xml') {
+      if (!text.includes('rep:policy')) continue;
+      const nodePath = jcrPathForFile(file.fileAbs, root);
+      const parsed = parsePolicyXml(text, { nodePath, inline: true });
+      if (parsed.fatal) {
+        const malformed = {
+          kind: 'acl-unknown',
+          sourceType: 'inline-policy',
+          policyPath: nodePath,
+          reason: `malformed: ${parsed.fatal}`,
+          order: 0,
+          line: 1,
+        };
+        addEntry(malformed, file.fileAbs, file.relative, 'inline-policy');
+        result.warnings.push(`ACL file could not be parsed: ${file.relative} — ${parsed.fatal}`);
+      } else {
+        for (const entry of parsed.entries) addEntry(entry, file.fileAbs, file.relative, 'inline-policy');
+      }
+    } else {
+      const config = readRepoInitConfig(file.fileAbs, text);
+      if (config.fatal) {
+        addEntry(makeReferenceUnknown(`malformed RepoInit config: ${config.fatal}`, {
+          runmode: config.runmode, scriptIndex: 0,
+        }), file.fileAbs, file.relative, 'repoinit', { line: 1, scriptIndex: 0 });
+      }
+      config.scripts.forEach((script, scriptIndex) => parseScript(
+        script, file.fileAbs, file.relative, config.runmode, scriptIndex, true
+      ));
+      for (const reference of config.references) {
+        const prefix = 'file:';
+        let referencePath = null;
+        if (reference.startsWith(prefix)) {
+          const rel = reference.slice(prefix.length);
+          const candidate = path.resolve(root, rel);
+          if (rel && !path.isAbsolute(rel) && isWithin(root, candidate)) referencePath = candidate;
+        }
+        let referencedText;
+        if (referencePath) {
+          try {
+            const realRoot = fs.realpathSync(root);
+            const realReference = fs.realpathSync(referencePath);
+            if (isWithin(realRoot, realReference) && fs.statSync(realReference).isFile()) {
+              try {
+                referencedText = fs.readFileSync(realReference, 'utf8');
+              } catch (_) {
+                result.unreadable.push(workspaceRelative(root, referencePath));
+              }
+            }
+          } catch (_) {
+            referencedText = undefined;
+          }
+        }
+        if (referencedText === undefined) {
+          const unknown = makeReferenceUnknown(`unresolved RepoInit reference: ${reference}`, {
+            runmode: config.runmode,
+          });
+          addEntry(unknown, file.fileAbs, file.relative, 'repoinit', { line: 1 });
+          continue;
+        }
+        parseScript(referencedText, referencePath, workspaceRelative(root, referencePath), config.runmode, 0, false);
+      }
+    }
+  }
+
+  if (!migrationPaths.length) {
+    result.warnings.push('No --migration-path given: ACL entries are reported unscoped and inheritance relevance was not assessed. Re-run with --migration-path <jcrPath> (repeatable) for each migration-set path.');
+  } else if (result.skippedCount) {
+    result.warnings.push(`${result.skippedCount} ACL entries outside the migration paths were skipped.`);
+  }
+  result.unreadable = Array.from(new Set(result.unreadable)).sort();
+  if (result.unreadable.length) {
+    result.scanStatus = 'incomplete';
+    result.warnings.push(`ACL scan incomplete: ${result.unreadable.length} file(s) could not be read: ${result.unreadable.join(', ')}`);
+  }
+
+  entries.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line || a.order - b.order);
+  for (const entry of entries) {
+    const configLocation = entry.sourceType === 'repoinit' && entry.scriptIndex !== undefined
+      && (entry.file.endsWith('.cfg.json') || entry.file.endsWith('.config') || entry.file.endsWith('.cfg'));
+    const location = configLocation
+      ? `${entry.file} (scripts[${entry.scriptIndex}]:${entry.line})`
+      : `${entry.file}:${entry.line}`;
+    result.rawFindings.push({
+      pattern: 'aclPermissions',
+      snippet: null,
+      ...entry,
+    });
+    result.findings.push({
+      location,
+      detail: formatAceDetail(entry),
+      severity: entry.severity,
+    });
+  }
+  delete result.skippedCount;
+  return result;
+}
+
 module.exports = {
   decodeFileVaultPath,
   parseFileVaultValue,
@@ -793,4 +1123,9 @@ module.exports = {
   isRepoInitConfigName,
   readRepoInitConfig,
   parseRepoInit,
+  validateMigrationPaths,
+  relationTo,
+  aceSeverity,
+  formatAceDetail,
+  runAclScan,
 };

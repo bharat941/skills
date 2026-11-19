@@ -40,6 +40,7 @@ Each pattern declares a **detection strategy** in `PATTERN_META`:
 | `replication` | `cascade` | BPA/CAM → CSV (`replication.agent`) → analyzer → LLM scan |
 | `htlLint` | `html-scan` | `htl-lint-runner.js` (pure-Node regex over `.html`) |
 | `osgiConfig` | `config-scan` | `osgi-config-runner.js` (config-file scan) |
+| `aclPermissions` | `acl-scan` | `acl-scan-runner.js` (code ACLs — review-only, heuristic) |
 | `lui`, `cdw`, `templateModernization` | BPA + `content-scan` | BPA/CAM → CSV first (`legacy-ui-runner.js` / `template-scan-runner.js` as fallback) |
 | `dispatcherConversion` | `content-scan` | `dispatcher-inventory.js` (`runDispatcherScan` — heuristic, no BPA subtype) |
 
@@ -86,6 +87,10 @@ The `html-scan` strategy for `htlLint`. Pure-Node fs walk + regex over `.html` f
 ### `osgi-config-runner.js`
 
 The `config-scan` strategy for `osgiConfig`. Scans OSGi config files (`.cfg.json`, legacy `.cfg`/`.config`) under `config*` folders for secret-looking keys and `$[secret:]`/`$[env:]` placeholders, per `{migration}/references/osgi-cfg-json-cloud-manager.md`. **Reports key names + locations only — never secret values** (the runbook is written to disk / often committed). Heuristic and review-only: classification (real secret? Adobe-owned PID?) is deferred to apply time.
+
+### `acl-scan-runner.js`
+
+The `acl-scan` strategy for `aclPermissions`. `runAclScan(workspaceRoot, { migrationPaths })` reads FileVault `_rep_policy.xml` and inline `.content.xml` policies plus Sling RepoInit initializer configs and in-workspace `file:` references. It is read-only and has no JCR connection. Pass repeatable absolute JCR migration paths to focus findings; without paths, findings are explicitly unscoped. Parent policies are marked **potentially relevant (inherited)**, not treated as proof of effective access. Restrictions, other policies, and principal memberships still require runtime validation. Unreadable files make the scan incomplete; unknown or malformed ACL input is never treated as clean. Findings are heuristic and review-only.
 
 ### `legacy-ui-runner.js`
 

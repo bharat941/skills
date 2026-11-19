@@ -22,6 +22,11 @@ const {
   isRepoInitConfigName,
   readRepoInitConfig,
   parseRepoInit,
+  validateMigrationPaths,
+  relationTo,
+  aceSeverity,
+  formatAceDetail,
+  runAclScan,
 } = require('./acl-scan-runner.js');
 const {
   gatherFindings, generateRunbook, renderRunbook, writeRunbookCache, mergeLlmFindings,
@@ -1721,4 +1726,214 @@ test('acl: parseRepoInit flags home(), :repository and unterminated blocks unkno
   assert.strictEqual(unterminated.entries[0].kind, 'acl-unknown');
   assert.strictEqual(unterminated.entries[0].policyPath, null);
   assert.ok(unterminated.entries[0].reason.length > 0);
+});
+
+test('acl: validateMigrationPaths normalizes and rejects invalid values', () => {
+  assert.deepStrictEqual(validateMigrationPaths(['/content/site/', '/']), ['/content/site', '/']);
+  for (const value of ['content/x', '', '/a/../b', '/a//b', '/a/*']) {
+    assert.throws(
+      () => validateMigrationPaths([value]),
+      error => error instanceof TypeError
+        && error.message.includes(value)
+        && error.message.includes('--migration-path /content/site')
+    );
+  }
+  assert.throws(() => validateMigrationPaths([undefined]), /requires a value/);
+});
+
+test('acl: relationTo classifies self/ancestor/descendant/unrelated with precedence', () => {
+  assert.deepStrictEqual(relationTo('/content/site', ['/content/site']), {
+    relation: 'self', matchedPaths: ['/content/site'],
+  });
+  assert.strictEqual(relationTo('/', ['/content/site']).relation, 'ancestor');
+  assert.strictEqual(relationTo('/content/site/en', ['/content/site']).relation, 'descendant');
+  assert.deepStrictEqual(relationTo('/content', ['/content/site/en', '/content']), {
+    relation: 'self', matchedPaths: ['/content/site/en', '/content'],
+  });
+  assert.deepStrictEqual(relationTo('/x', []), { relation: 'unscoped', matchedPaths: [] });
+  assert.deepStrictEqual(relationTo(null, ['/content']), { relation: null, matchedPaths: [] });
+});
+
+test('acl: relationTo does not treat sibling prefixes as related', () => {
+  assert.strictEqual(relationTo('/content/site2', ['/content/site']).relation, 'unrelated');
+  assert.strictEqual(relationTo('/content/site', ['/content/site2']).relation, 'unrelated');
+});
+
+test('acl: aceSeverity follows spec §4.5', () => {
+  const base = { kind: 'acl-entry', relation: 'self', status: 'complete', importVerdict: 'eligible-for-acl-import' };
+  assert.strictEqual(aceSeverity({ ...base, relation: 'ancestor' }), 'high');
+  assert.strictEqual(aceSeverity({ ...base, status: 'unknown' }), 'high');
+  for (const importVerdict of ['acl-clear-review', 'not-eligible-for-acl-import', 'unknown']) {
+    assert.strictEqual(aceSeverity({ ...base, importVerdict }), 'high');
+  }
+  assert.strictEqual(aceSeverity({ ...base, relation: 'self' }), 'medium');
+  assert.strictEqual(aceSeverity({ ...base, relation: 'unscoped', importVerdict: 'repoinit-defined' }), 'medium');
+});
+
+test('acl: runAclScan Cox shape reports not-covered with glob preserved', () => {
+  const root = mkworkspace();
+  const contentRoot = writeContentPackage(root, 'ui.apps', { filters: [{ root: '/conf/acme/other' }] });
+  write(root, path.relative(root, path.join(contentRoot, 'jcr_root/conf/acme/lists/x/_rep_policy.xml')),
+    aclPolicyXml('<allow jcr:primaryType="rep:GrantACE" rep:principalName="example-editors" rep:privileges="{Name}[jcr:read]" rep:glob="*/jcr:content*"/>'));
+  const result = runAclScan(root, { migrationPaths: ['/conf/acme/lists/x'] });
+  assert.strictEqual(result.rawFindings.length, 1);
+  const entry = result.rawFindings[0];
+  assert.strictEqual(entry.kind, 'acl-entry');
+  assert.strictEqual(entry.relation, 'self');
+  assert.strictEqual(entry.filterStatus, 'not-covered');
+  assert.strictEqual(entry.importVerdict, 'not-eligible-for-acl-import');
+  assert.strictEqual(result.findings[0].severity, 'high');
+  assert.match(result.findings[0].detail, /rep:glob=\[\*\/jcr:content\*\]/);
+  assert.match(result.findings[0].detail, /import: not-eligible-for-acl-import/);
+  assert.ok(!entry.file.startsWith(root), 'file path is workspace-relative');
+});
+
+test('acl: runAclScan Signify shape marks ancestor potentially relevant', () => {
+  const root = mkworkspace();
+  const contentRoot = writeContentPackage(root, 'ui.apps', {
+    filters: [{ root: '/content/experience-fragments' }],
+    acHandling: 'merge_preserve',
+  });
+  write(root, path.relative(root, path.join(contentRoot, 'jcr_root/content/experience-fragments/_rep_policy.xml')),
+    aclPolicyXml('<allow jcr:primaryType="rep:GrantACE" rep:principalName="example-editors" rep:privileges="{Name}[jcr:read]"/>'));
+  const result = runAclScan(root, { migrationPaths: ['/content/experience-fragments/site'] });
+  assert.strictEqual(result.rawFindings[0].relation, 'ancestor');
+  assert.strictEqual(result.rawFindings[0].importVerdict, 'eligible-for-acl-import');
+  assert.strictEqual(result.findings[0].severity, 'high');
+  assert.match(result.findings[0].detail, /potentially relevant \(inherited\)/);
+  assert.doesNotMatch(result.findings[0].detail, /effective/i);
+});
+
+test('acl: runAclScan scoping excludes unrelated, warns unscoped, decodes names', () => {
+  const root = mkworkspace();
+  const contentRoot = writeContentPackage(root, 'ui.apps', {
+    filters: [{ root: '/content' }],
+    acHandling: 'merge',
+  });
+  for (const rel of [
+    'jcr_root/content/site/_rep_policy.xml',
+    'jcr_root/content/site/en/_jcr_content/_rep_policy.xml',
+    'jcr_root/content/other/_rep_policy.xml',
+  ]) {
+    write(root, path.relative(root, path.join(contentRoot, rel)),
+      aclPolicyXml('<allow jcr:primaryType="rep:GrantACE" rep:principalName="example-editors" rep:privileges="{Name}[jcr:read]"/>'));
+  }
+  const scoped = runAclScan(root, { migrationPaths: ['/content/site'] });
+  assert.strictEqual(scoped.rawFindings.length, 2);
+  assert.ok(scoped.rawFindings.some(entry => entry.policyPath === '/content/site/en/jcr:content'));
+  assert.ok(scoped.warnings.includes('1 ACL entries outside the migration paths were skipped.'));
+
+  const unscoped = runAclScan(root);
+  assert.strictEqual(unscoped.rawFindings.length, 3);
+  assert.ok(unscoped.rawFindings.every(entry => entry.relation === 'unscoped'));
+  assert.ok(unscoped.warnings.includes('No --migration-path given: ACL entries are reported unscoped and inheritance relevance was not assessed. Re-run with --migration-path <jcrPath> (repeatable) for each migration-set path.'));
+});
+
+test('acl: runAclScan includes inline policies, RepoInit and unknown files', () => {
+  const root = mkworkspace();
+  const contentRoot = writeContentPackage(root, 'ui.apps', {
+    filters: [{ root: '/content/site' }],
+    acHandling: 'merge',
+  });
+  const ace = '<allow jcr:primaryType="rep:GrantACE" rep:principalName="example-editors" rep:privileges="{Name}[jcr:read]"/>';
+  write(root, path.relative(root, path.join(contentRoot, 'jcr_root/content/site/.content.xml')),
+    `<jcr:root xmlns:jcr="http://www.jcp.org/jcr/1.0" xmlns:rep="internal"><jcr:content><rep:policy jcr:primaryType="rep:ACL">${ace}</rep:policy></jcr:content></jcr:root>`);
+  const runScript = 'set ACL for example-editors\n  allow jcr:read on /content/site\nend';
+  write(root, path.relative(root, path.join(contentRoot, 'jcr_root/apps/acme/config.author/org.apache.sling.jcr.repoinit.RepositoryInitializer~a.cfg.json')),
+    JSON.stringify({ scripts: [runScript] }));
+  write(root, path.relative(root, path.join(contentRoot, 'jcr_root/apps/acme/config/org.apache.sling.jcr.repoinit.RepositoryInitializer-b.config')),
+    `scripts="${runScript.replace(/\n/g, '\\n')}"`);
+  write(root, path.relative(root, path.join(contentRoot, 'jcr_root/apps/acme/config/org.apache.sling.jcr.repoinit.RepositoryInitializerExtra.cfg.json')),
+    JSON.stringify({ scripts: [runScript] }));
+  const malformed = path.join(contentRoot, 'jcr_root/content/site/bad/_rep_policy.xml');
+  write(root, path.relative(root, malformed), '<jcr:root><broken></jcr:root>');
+
+  const result = runAclScan(root, { migrationPaths: ['/content/site'] });
+  assert.ok(result.rawFindings.some(entry => entry.sourceType === 'inline-policy'));
+  const repoInit = result.rawFindings.filter(entry => entry.sourceType === 'repoinit');
+  assert.strictEqual(repoInit.length, 2);
+  assert.ok(repoInit.every(entry => entry.importVerdict === 'repoinit-defined'));
+  assert.ok(repoInit.some(entry => entry.runmode === 'author'));
+  assert.ok(repoInit.some(entry => entry.runmode === null));
+  assert.strictEqual(result.rawFindings.some(entry => entry.file.includes('RepositoryInitializerExtra')), false);
+  const malformedEntry = result.rawFindings.find(entry => entry.kind === 'acl-unknown' && entry.policyPath === '/content/site/bad');
+  assert.ok(malformedEntry);
+  assert.match(malformedEntry.reason, /^malformed:/);
+  assert.ok(result.warnings.some(warning => warning.startsWith('ACL file could not be parsed: ')));
+  assert.strictEqual(result.scanStatus, 'complete');
+});
+
+test('acl: runAclScan resolves in-workspace RepoInit references and flags others unknown', () => {
+  const root = mkworkspace();
+  const contentRoot = writeContentPackage(root, 'ui.apps');
+  write(root, path.relative(root, path.join(contentRoot, 'jcr_root/apps/acme/config.author/org.apache.sling.jcr.repoinit.RepositoryInitializer.cfg.json')),
+    JSON.stringify({ references: ['file:repoinit/acl.txt', 'https://example.invalid/x'] }));
+  write(root, 'repoinit/acl.txt', [
+    '# source',
+    'set ACL for example-editors',
+    '  allow jcr:read on /content/site',
+    'end',
+  ].join('\n'));
+  const result = runAclScan(root, { migrationPaths: ['/content/site'] });
+  const resolved = result.rawFindings.find(entry => entry.file === 'repoinit/acl.txt');
+  assert.ok(resolved);
+  assert.strictEqual(resolved.line, 3);
+  const unresolved = result.rawFindings.find(entry => entry.kind === 'acl-unknown');
+  assert.ok(unresolved);
+  assert.match(unresolved.reason, /unresolved RepoInit reference/);
+});
+
+test('acl: runAclScan skips build and VCS directories', () => {
+  const root = mkworkspace();
+  const xml = aclPolicyXml('<allow jcr:primaryType="rep:GrantACE" rep:principalName="example-editors" rep:privileges="{Name}[jcr:read]"/>');
+  for (const rel of [
+    'jcr_root/content/a/_rep_policy.xml',
+    'target/classes/jcr_root/content/a/_rep_policy.xml',
+    'dist/jcr_root/content/a/_rep_policy.xml',
+    'node_modules/x/jcr_root/content/a/_rep_policy.xml',
+    '.git/jcr_root/content/a/_rep_policy.xml',
+  ]) write(root, rel, xml);
+  assert.strictEqual(runAclScan(root, { migrationPaths: ['/content/a'] }).rawFindings.length, 1);
+});
+
+test('acl: runAclScan retains ACL files with undecodable FileVault paths as unresolved', () => {
+  const root = mkworkspace();
+  write(root, 'jcr_root/content/bad%E0%A4/_rep_policy.xml',
+    aclPolicyXml('<allow jcr:primaryType="rep:GrantACE" rep:principalName="example-editors" rep:privileges="{Name}[jcr:read]"/>'));
+  const result = runAclScan(root, { migrationPaths: ['/content/site'] });
+  assert.strictEqual(result.rawFindings.length, 1);
+  assert.strictEqual(result.rawFindings[0].policyPath, null);
+  assert.strictEqual(result.rawFindings[0].relation, null);
+  assert.match(result.findings[0].detail, /path unresolved/);
+});
+
+test('acl: runAclScan partial read is incomplete but keeps parsed entries', t => {
+  if (process.getuid && process.getuid() === 0) {
+    t.skip('chmod does not make files unreadable to root');
+    return;
+  }
+  const root = mkworkspace();
+  const first = write(root, 'jcr_root/content/a/_rep_policy.xml',
+    aclPolicyXml('<allow jcr:primaryType="rep:GrantACE" rep:principalName="example-editors" rep:privileges="{Name}[jcr:read]"/>'));
+  const second = write(root, 'jcr_root/content/b/_rep_policy.xml',
+    aclPolicyXml('<allow jcr:primaryType="rep:GrantACE" rep:principalName="example-editors" rep:privileges="{Name}[jcr:read]"/>'));
+  fs.chmodSync(second, 0o000);
+  try {
+    const result = runAclScan(root, { migrationPaths: ['/content'] });
+    assert.strictEqual(result.ok, true);
+    assert.strictEqual(result.scanStatus, 'incomplete');
+    assert.strictEqual(result.unreadable.length, 1);
+    assert.ok(result.warnings.includes(`ACL scan incomplete: 1 file(s) could not be read: ${path.relative(root, second)}`));
+    assert.strictEqual(result.rawFindings.length, 1);
+  } finally {
+    fs.chmodSync(second, 0o644);
+    assert.ok(fs.existsSync(first));
+  }
+});
+
+test('acl: runAclScan with missing root returns ok false', () => {
+  const result = runAclScan(`/nonexistent-${Date.now()}`);
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.scanStatus, 'incomplete');
+  assert.ok(result.error);
 });
