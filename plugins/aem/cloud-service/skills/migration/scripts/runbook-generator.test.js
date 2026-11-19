@@ -13,7 +13,7 @@ const { runLuiScan, runCdwScan } = require('./legacy-ui-runner.js');
 const { runTemplateScan, classifyStaticTemplate } = require('./template-scan-runner.js');
 const { runAnalyzer, isAnalyzerAvailable, DEFAULT_ANALYZE_SCRIPT } = require('./analyzer-runner.js');
 const { getBpaFindings } = require('./bpa-findings-helper.js');
-const { decodeFileVaultPath, parseFileVaultValue, parsePolicyXml } = require('./acl-scan-runner.js');
+const { decodeFileVaultPath, parseFileVaultValue, parsePolicyXml, resolvePackage, importVerdict } = require('./acl-scan-runner.js');
 const {
   gatherFindings, generateRunbook, renderRunbook, writeRunbookCache, mergeLlmFindings,
   samplePrompt, relPath, classKey, sourceLabel, CANONICAL_PATTERNS, PATTERN_META,
@@ -1359,6 +1359,48 @@ function aclPolicyXml(children) {
   return `<jcr:root xmlns:jcr="http://www.jcp.org/jcr/1.0" xmlns:rep="internal" jcr:primaryType="rep:ACL">${children}</jcr:root>`;
 }
 
+function writeContentPackage(root, mod, { filters, acHandling, acIn = 'properties' } = {}) {
+  const contentRoot = path.join(mod, 'src/main/content');
+  write(root, `${contentRoot}/jcr_root/.keep`, '');
+  if (filters) {
+    const xml = [
+      '<workspaceFilter version="1.0">',
+      ...filters.map(({ root: filterRoot, rules }) => {
+        const lines = [`  <filter root="${filterRoot}">`];
+        if (Array.isArray(rules)) {
+          for (const [kind, pattern] of rules) {
+            lines.push(`    <${kind} pattern="${pattern}"/>`);
+          }
+        }
+        lines.push('  </filter>');
+        return lines.join('\n');
+      }),
+      '</workspaceFilter>',
+    ].join('\n');
+    write(root, `${mod}/META-INF/vault/filter.xml`, xml);
+  }
+  if (acHandling) {
+    if (acIn === 'properties') {
+      const propertiesXml = [
+        '<properties>',
+        `  <entry key="acHandling">${acHandling}</entry>`,
+        '</properties>',
+      ].join('\n');
+      write(root, `${mod}/META-INF/vault/properties.xml`, propertiesXml);
+    } else if (acIn === 'pom') {
+      const pom = [
+        '<project>',
+        '  <build><plugins><plugin><configuration>',
+        `    <accessControlHandling>${acHandling}</accessControlHandling>`,
+        '  </configuration></plugin></plugins></build>',
+        '</project>',
+      ].join('\n');
+      write(root, `${mod}/pom.xml`, pom);
+    }
+  }
+  return path.join(root, contentRoot);
+}
+
 test('acl: parsePolicyXml parses grant/deny ACEs in order with restrictions', () => {
   const xml = aclPolicyXml([
     '<allow jcr:primaryType="rep:GrantACE" rep:principalName="example-editors" rep:privileges="{Name}[jcr:read,rep:write]" rep:glob="*/jcr:content*"/>',
@@ -1446,4 +1488,110 @@ test('acl: parsePolicyXml reports ACE line numbers with CRLF', () => {
   const { entries, fatal } = parsePolicyXml(xml, { nodePath: '/content/x' });
   assert.strictEqual(fatal, null);
   assert.strictEqual(entries[1].line, 3);
+});
+
+test('acl: importVerdict follows first-match table', () => {
+  assert.strictEqual(importVerdict('covered', 'clear'), 'acl-clear-review');
+  assert.strictEqual(importVerdict('not-covered', 'clear'), 'acl-clear-review');
+  assert.strictEqual(importVerdict('not-covered', 'merge'), 'not-eligible-for-acl-import');
+  assert.strictEqual(importVerdict('covered', 'ignore'), 'not-eligible-for-acl-import');
+  assert.strictEqual(importVerdict('unknown', 'ignore'), 'not-eligible-for-acl-import');
+  for (const h of ['overwrite', 'merge', 'merge_preserve']) {
+    assert.strictEqual(importVerdict('covered', h), 'eligible-for-acl-import');
+  }
+  assert.strictEqual(importVerdict('covered', 'not-set'), 'unknown');
+  assert.strictEqual(importVerdict('unknown', 'merge'), 'unknown');
+});
+
+test('acl: resolvePackage reports not-covered when filter misses the policy path', () => {
+  const root = mkworkspace();
+  const contentRoot = writeContentPackage(root, 'ui.apps', { filters: [{ root: '/conf/acme/other' }] });
+  const result = resolvePackage(path.join(contentRoot, 'jcr_root/conf/acme/other/.keep'), '/conf/acme/lists/x', root);
+  assert.strictEqual(result.filterStatus, 'not-covered');
+  assert.strictEqual(result.acHandling, 'not-set');
+  assert.strictEqual(result.importVerdict, 'not-eligible-for-acl-import');
+});
+
+test('acl: filter root sibling prefix does not cover', () => {
+  const root = mkworkspace();
+  const contentRoot = writeContentPackage(root, 'ui.apps', { filters: [{ root: '/conf/acme/list' }] });
+  const result = resolvePackage(path.join(contentRoot, 'jcr_root/conf/acme/list/.keep'), '/conf/acme/lists/x', root);
+  assert.strictEqual(result.filterStatus, 'not-covered');
+});
+
+test('acl: resolvePackage include/exclude rules, last match wins', () => {
+  const root = mkworkspace();
+  const contentRoot = writeContentPackage(root, 'ui.apps', {
+    filters: [{ root: '/content/a', rules: [['exclude', '/content/a/b(/.*)?'], ['include', '/content/a/b/c(/.*)?']] }],
+  });
+  const covered = resolvePackage(path.join(contentRoot, 'jcr_root/content/a/.keep'), '/content/a/b/c', root);
+  const notCovered = resolvePackage(path.join(contentRoot, 'jcr_root/content/a/.keep'), '/content/a/b', root);
+  assert.strictEqual(covered.filterStatus, 'covered');
+  assert.strictEqual(notCovered.filterStatus, 'not-covered');
+});
+
+test('acl: resolvePackage unknown filter cases', () => {
+  const root = mkworkspace();
+  const c1 = writeContentPackage(root, 'ui.apps');
+  const r1 = resolvePackage(path.join(c1, 'jcr_root/.keep'), '/content/a', root);
+  assert.strictEqual(r1.filterStatus, 'unknown');
+
+  const c2 = writeContentPackage(root, 'ui.apps2', { filters: [{ root: '/content/a' }] });
+  write(root, 'ui.apps2/META-INF/vault/filter.xml', '<workspaceFilter><filter root="/content/a">');
+  const r2 = resolvePackage(path.join(c2, 'jcr_root/.keep'), '/content/a', root);
+  assert.strictEqual(r2.filterStatus, 'unknown');
+
+  const c3 = writeContentPackage(root, 'ui.apps3', { filters: [{ root: '/content/a', rules: [['include', '(']] }] });
+  const r3 = resolvePackage(path.join(c3, 'jcr_root/.keep'), '/content/a', root);
+  assert.strictEqual(r3.filterStatus, 'unknown');
+
+  const outside = write(root, 'outside/thing.xml', '<x/>');
+  const r4 = resolvePackage(outside, '/content/a', root);
+  assert.strictEqual(r4.packageRoot, null);
+  assert.strictEqual(r4.filterStatus, 'unknown');
+  assert.strictEqual(r4.acHandling, 'unknown');
+  assert.strictEqual(r4.importVerdict, 'unknown');
+});
+
+test('acl: resolvePackage acHandling sources and clear', () => {
+  const root = mkworkspace();
+  const c1 = writeContentPackage(root, 'ui.apps', {
+    filters: [{ root: '/conf/acme' }],
+    acHandling: 'merge_preserve',
+  });
+  const r1 = resolvePackage(path.join(c1, 'jcr_root/.keep'), '/conf/acme/lists/x', root);
+  assert.strictEqual(r1.acHandling, 'merge_preserve');
+  assert.strictEqual(r1.importVerdict, 'eligible-for-acl-import');
+
+  const c2 = writeContentPackage(root, 'ui.apps2', {
+    filters: [{ root: '/conf/acme' }],
+    acHandling: 'Overwrite',
+    acIn: 'pom',
+  });
+  const r2 = resolvePackage(path.join(c2, 'jcr_root/.keep'), '/conf/acme/lists/x', root);
+  assert.strictEqual(r2.acHandling, 'overwrite');
+
+  const c3 = writeContentPackage(root, 'ui.apps3', {
+    filters: [{ root: '/conf/acme' }],
+    acHandling: 'merge',
+  });
+  write(root, 'ui.apps3/pom.xml', '<project><build><plugins><plugin><configuration><accessControlHandling>ignore</accessControlHandling></configuration></plugin></plugins></build></project>');
+  const r3 = resolvePackage(path.join(c3, 'jcr_root/.keep'), '/conf/acme/lists/x', root);
+  assert.strictEqual(r3.acHandling, 'merge');
+
+  const c4 = writeContentPackage(root, 'ui.apps4', {
+    filters: [{ root: '/conf/acme/other' }],
+    acHandling: 'clear',
+  });
+  const r4 = resolvePackage(path.join(c4, 'jcr_root/.keep'), '/conf/acme/lists/x', root);
+  assert.strictEqual(r4.importVerdict, 'acl-clear-review');
+  const r5 = resolvePackage(path.join(c4, 'jcr_root/.keep'), '/content/x', root);
+  assert.strictEqual(r5.importVerdict, 'acl-clear-review');
+
+  const c6 = writeContentPackage(root, 'ui.apps6', {
+    filters: [{ root: '/conf/acme' }],
+    acHandling: 'foo',
+  });
+  const r6 = resolvePackage(path.join(c6, 'jcr_root/.keep'), '/conf/acme/lists/x', root);
+  assert.strictEqual(r6.acHandling, 'unknown');
 });

@@ -1,4 +1,6 @@
 'use strict';
+const fs = require('fs');
+const path = require('path');
 
 function decodeFileVaultPath(segments) {
   if (!Array.isArray(segments)) return null;
@@ -307,4 +309,190 @@ function parsePolicyXml(text, options) {
   return { entries, fatal: null };
 }
 
-module.exports = { decodeFileVaultPath, parseFileVaultValue, parsePolicyXml };
+function isWithin(base, candidate) {
+  const rel = path.relative(base, candidate);
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+function findPackageRoot(fileAbs, workspaceRoot) {
+  if (typeof fileAbs !== 'string' || typeof workspaceRoot !== 'string') return null;
+  const workspace = path.resolve(workspaceRoot);
+  let cursor = path.resolve(fileAbs);
+  if (!isWithin(workspace, cursor)) return null;
+  try {
+    if (fs.statSync(cursor).isFile()) cursor = path.dirname(cursor);
+  } catch (_) {
+    cursor = path.dirname(cursor);
+  }
+  while (isWithin(workspace, cursor)) {
+    const hasJcrRoot = fs.existsSync(path.join(cursor, 'src/main/content/jcr_root'));
+    const hasVault = fs.existsSync(path.join(cursor, 'META-INF/vault'));
+    if (hasJcrRoot && hasVault) return cursor;
+    if (cursor === workspace) break;
+    const parent = path.dirname(cursor);
+    if (parent === cursor) break;
+    cursor = parent;
+  }
+  return null;
+}
+
+function normalizeAcHandling(raw) {
+  if (typeof raw !== 'string') return null;
+  const normalized = raw.trim().toLowerCase();
+  if (!normalized) return null;
+  const known = new Set(['ignore', 'overwrite', 'merge', 'merge_preserve', 'clear', 'not-set']);
+  return known.has(normalized) ? normalized : 'unknown';
+}
+
+function readPropertiesAcHandling(packageRoot) {
+  const propertiesPath = path.join(packageRoot, 'META-INF/vault/properties.xml');
+  if (!fs.existsSync(propertiesPath)) return null;
+  let xml;
+  try {
+    xml = fs.readFileSync(propertiesPath, 'utf8');
+  } catch (_) {
+    return 'unknown';
+  }
+  const { document, fatal } = tokenizeXml(xml);
+  if (fatal) return 'unknown';
+  function find(node) {
+    for (const child of node.children || []) {
+      if (child.name === 'entry' && child.attrs && child.attrs.key === 'acHandling') {
+        return normalizeAcHandling(child.children && child.children.length ? '' : child.attrs.value || '');
+      }
+      const nested = find(child);
+      if (nested !== null) return nested;
+    }
+    return null;
+  }
+  const fromAttr = find(document);
+  if (fromAttr !== null) return fromAttr;
+  const textMatch = xml.match(/<\s*entry\b[^>]*\bkey\s*=\s*(['"])acHandling\1[^>]*>([\s\S]*?)<\s*\/\s*entry\s*>/i);
+  if (!textMatch) return null;
+  const decoded = decodeXmlAttribute(textMatch[2].trim());
+  if (decoded === null) return 'unknown';
+  return normalizeAcHandling(decoded);
+}
+
+function readPomAcHandling(packageRoot, workspaceRoot) {
+  const workspace = path.resolve(workspaceRoot);
+  let cursor = packageRoot;
+  while (isWithin(workspace, cursor)) {
+    const pomPath = path.join(cursor, 'pom.xml');
+    if (fs.existsSync(pomPath)) {
+      let text = '';
+      try {
+        text = fs.readFileSync(pomPath, 'utf8');
+      } catch (_) {
+        return 'unknown';
+      }
+      const accessMatch = text.match(/<\s*accessControlHandling\s*>([\s\S]*?)<\s*\/\s*accessControlHandling\s*>/i);
+      const aliasMatch = text.match(/<\s*acHandling\s*>([\s\S]*?)<\s*\/\s*acHandling\s*>/i);
+      const match = accessMatch || aliasMatch;
+      if (!match) return null;
+      return normalizeAcHandling(match[1]);
+    }
+    if (cursor === workspace) break;
+    const parent = path.dirname(cursor);
+    if (parent === cursor) break;
+    cursor = parent;
+  }
+  return null;
+}
+
+function evaluateFilterCoverage(filterXml, policyPath) {
+  if (!policyPath || typeof policyPath !== 'string' || !policyPath.startsWith('/')) return 'unknown';
+  const normalizedPolicy = policyPath === '/' ? '/' : policyPath.replace(/\/+$/, '') || '/';
+  const target = normalizedPolicy === '/' ? '/rep:policy' : `${normalizedPolicy}/rep:policy`;
+  const { document, fatal } = tokenizeXml(filterXml);
+  if (fatal) return 'unknown';
+  const filters = [];
+  function collect(node) {
+    for (const child of node.children || []) {
+      if (child.name === 'filter') {
+        const root = child.attrs && typeof child.attrs.root === 'string' ? child.attrs.root : null;
+        if (!root || !root.startsWith('/')) return false;
+        const rules = [];
+        for (const rule of child.children || []) {
+          if (rule.name === 'include' || rule.name === 'exclude') {
+            const pattern = rule.attrs && rule.attrs.pattern;
+            if (typeof pattern !== 'string') return false;
+            rules.push({ type: rule.name, pattern });
+          }
+        }
+        filters.push({ root, rules });
+      }
+      if (!collect(child)) return false;
+    }
+    return true;
+  }
+  if (!collect(document)) return 'unknown';
+  let covered = false;
+  for (const filter of filters) {
+    const applies = target === filter.root || target.startsWith(filter.root === '/' ? '/' : `${filter.root}/`);
+    if (!applies) continue;
+    let included = true;
+    if (filter.rules.length > 0) {
+      included = filter.rules[0].type === 'exclude';
+      for (const rule of filter.rules) {
+        let re;
+        try {
+          re = new RegExp(`^(?:${rule.pattern})$`);
+        } catch (_) {
+          return 'unknown';
+        }
+        if (re.test(target)) included = rule.type === 'include';
+      }
+    }
+    if (included) {
+      covered = true;
+      break;
+    }
+  }
+  return covered ? 'covered' : 'not-covered';
+}
+
+function importVerdict(filterStatus, acHandling) {
+  if (acHandling === 'clear') return 'acl-clear-review';
+  if (filterStatus === 'not-covered') return 'not-eligible-for-acl-import';
+  if (acHandling === 'ignore') return 'not-eligible-for-acl-import';
+  if (filterStatus === 'covered' && (acHandling === 'overwrite' || acHandling === 'merge' || acHandling === 'merge_preserve')) {
+    return 'eligible-for-acl-import';
+  }
+  return 'unknown';
+}
+
+function resolvePackage(fileAbs, policyPath, workspaceRoot) {
+  const packageRoot = findPackageRoot(fileAbs, workspaceRoot);
+  if (!packageRoot) {
+    return {
+      packageRoot: null,
+      filterStatus: 'unknown',
+      acHandling: 'unknown',
+      importVerdict: 'unknown',
+    };
+  }
+
+  const filterPath = path.join(packageRoot, 'META-INF/vault/filter.xml');
+  let filterStatus = 'unknown';
+  if (fs.existsSync(filterPath)) {
+    try {
+      filterStatus = evaluateFilterCoverage(fs.readFileSync(filterPath, 'utf8'), policyPath);
+    } catch (_) {
+      filterStatus = 'unknown';
+    }
+  }
+
+  let acHandling = readPropertiesAcHandling(packageRoot);
+  if (acHandling === null) acHandling = readPomAcHandling(packageRoot, workspaceRoot);
+  if (acHandling === null) acHandling = 'not-set';
+
+  return {
+    packageRoot,
+    filterStatus,
+    acHandling,
+    importVerdict: importVerdict(filterStatus, acHandling),
+  };
+}
+
+module.exports = { decodeFileVaultPath, parseFileVaultValue, parsePolicyXml, resolvePackage, importVerdict };
