@@ -96,7 +96,7 @@ function decodeXmlAttribute(value) {
 }
 
 function tokenizeXml(text) {
-  const document = { name: null, attrs: {}, children: [], line: 1 };
+  const document = { name: null, attrs: {}, children: [], text: '', line: 1 };
   const stack = [document];
   let cursor = 0;
   let roots = 0;
@@ -104,6 +104,7 @@ function tokenizeXml(text) {
 
   function addText(start, end) {
     if (stack.length === 1 && text.slice(start, end).trim()) return false;
+    stack[stack.length - 1].text += text.slice(start, end);
     return true;
   }
 
@@ -176,7 +177,7 @@ function tokenizeXml(text) {
       offset += attrMatch[0].length;
     }
 
-    const node = { name, attrs, children: [], line };
+    const node = { name, attrs, children: [], text: '', line };
     if (stack.length === 1) {
       roots++;
       if (roots > 1) return fatal('multiple XML roots');
@@ -194,13 +195,15 @@ function makeUnknown(reason, context) {
   return {
     kind: 'acl-unknown',
     sourceType: context.sourceType,
-    policyPath: context.policyPath,
+    policyPath: context.policyPath || null,
     order: context.order,
     effect: null,
     principals: [],
     privileges: [],
     restrictions: {},
+    runmode: null,
     line: context.line,
+    status: 'unknown',
     reason,
   };
 }
@@ -218,6 +221,11 @@ function entriesForPolicy(policy, policyPath, sourceType) {
   if (policy.attrs['jcr:primaryType'] !== 'rep:ACL') {
     return [makeUnknown(sourceType === 'inline-policy' ? 'rep:policy is not rep:ACL' : 'root is not rep:ACL', {
       sourceType, policyPath, order: 0, line: policy.line,
+    })];
+  }
+  if (policyPath === null || policyPath === undefined) {
+    return [makeUnknown('policy path unresolved: FileVault name could not be decoded', {
+      sourceType, policyPath: null, order: 0, line: policy.line,
     })];
   }
   const entries = [];
@@ -278,7 +286,10 @@ function entriesForPolicy(policy, policyPath, sourceType) {
       principals,
       privileges,
       restrictions,
+      runmode: null,
       line: ace.line,
+      status: 'parsed',
+      reason: null,
     });
   });
   return entries;
@@ -300,8 +311,7 @@ function parsePolicyXml(text, options) {
         const policyPath = joinPolicyPath(options ? options.nodePath : null, segments);
         entries.push(...entriesForPolicy(child, policyPath, sourceType));
       } else {
-        const decoded = decodeFileVaultPath([child.name]);
-        visit(child, decoded === null ? segments.concat(child.name) : segments.concat(decoded.slice(1)));
+        visit(child, segments.concat(child.name));
       }
     }
   }
@@ -325,9 +335,12 @@ function findPackageRoot(fileAbs, workspaceRoot) {
     cursor = path.dirname(cursor);
   }
   while (isWithin(workspace, cursor)) {
-    const hasJcrRoot = fs.existsSync(path.join(cursor, 'src/main/content/jcr_root'));
-    const hasVault = fs.existsSync(path.join(cursor, 'META-INF/vault'));
-    if (hasJcrRoot && hasVault) return cursor;
+    try {
+      if (fs.statSync(path.join(cursor, 'jcr_root')).isDirectory()
+          && fs.statSync(path.join(cursor, 'META-INF/vault')).isDirectory()) return cursor;
+    } catch (_) {
+      // Missing or unreadable package metadata cannot establish an owning package.
+    }
     if (cursor === workspace) break;
     const parent = path.dirname(cursor);
     if (parent === cursor) break;
@@ -353,6 +366,8 @@ function readPropertiesAcHandling(packageRoot) {
   } catch (_) {
     return 'unknown';
   }
+  // Java properties use this fixed declaration; no DTD is loaded or expanded.
+  xml = xml.replace(/<!DOCTYPE\s+properties\s+SYSTEM\s+(["'])http:\/\/java\.sun\.com\/dtd\/properties\.dtd\1\s*>/g, '');
   const { document, fatal } = tokenizeXml(xml);
   if (fatal) return 'unknown';
   function find(node) {
@@ -386,11 +401,44 @@ function readPomAcHandling(packageRoot, workspaceRoot) {
       } catch (_) {
         return 'unknown';
       }
-      const accessMatch = text.match(/<\s*accessControlHandling\s*>([\s\S]*?)<\s*\/\s*accessControlHandling\s*>/i);
-      const aliasMatch = text.match(/<\s*acHandling\s*>([\s\S]*?)<\s*\/\s*acHandling\s*>/i);
-      const match = accessMatch || aliasMatch;
-      if (!match) return null;
-      return normalizeAcHandling(match[1]);
+      const { document, fatal } = tokenizeXml(text);
+      if (fatal || document.children[0].name !== 'project') return 'unknown';
+      const values = [];
+      function addValue(node, conditional) {
+        const decoded = node.children.length ? null : decodeXmlAttribute(node.text.trim());
+        values.push(conditional || decoded === null ? 'unknown' : normalizeAcHandling(decoded) || 'unknown');
+      }
+      function configurations(node, conditional) {
+        for (const child of node.children) {
+          if (child.name === 'configuration') {
+            for (const setting of child.children) {
+              if (setting.name === 'accessControlHandling') addValue(setting, conditional);
+              if (setting.name === 'properties') {
+                for (const property of setting.children) {
+                  if (property.name === 'acHandling') addValue(property, conditional);
+                }
+              }
+            }
+          } else if (child.name === 'executions' || child.name === 'execution') {
+            configurations(child, conditional);
+          }
+        }
+      }
+      function collect(node, inBuild, conditional, parentName) {
+        const build = inBuild || node.name === 'build';
+        const uncertain = conditional || node.name === 'profile' || node.name === 'pluginManagement';
+        if (build && parentName === 'plugins' && node.name === 'plugin') {
+          const artifact = node.children.find(child => child.name === 'artifactId');
+          if (artifact && ['filevault-package-maven-plugin', 'content-package-maven-plugin'].includes(artifact.text.trim())) {
+            configurations(node, uncertain);
+          }
+          return;
+        }
+        for (const child of node.children) collect(child, build, uncertain, node.name);
+      }
+      collect(document, false, false, null);
+      if (!values.length) return null;
+      return values.every(value => value === values[0]) ? values[0] : 'unknown';
     }
     if (cursor === workspace) break;
     const parent = path.dirname(cursor);
@@ -534,68 +582,105 @@ function splitCsvList(raw) {
 
 function parseFelixList(raw) {
   const trimmed = String(raw || '').trim();
-  if (!trimmed.startsWith('[') || !trimmed.endsWith(']')) return null;
+  if (!trimmed.startsWith('[')) return null;
+  if (!trimmed.endsWith(']')) throw new Error('unterminated string list');
   const body = trimmed.slice(1, -1);
   const values = [];
-  let current = '';
-  let quote = null;
-  let escape = false;
-  for (let i = 0; i < body.length; i++) {
-    const char = body[i];
-    if (escape) {
-      current += `\\${char}`;
-      escape = false;
-      continue;
+  let cursor = 0;
+  while (cursor < body.length) {
+    while (/\s/.test(body[cursor] || '') && cursor < body.length) cursor++;
+    if (cursor === body.length) break;
+    const quote = body[cursor++];
+    if (quote !== '"' && quote !== "'") throw new Error('expected a quoted string');
+    let current = '';
+    let closed = false;
+    while (cursor < body.length) {
+      const char = body[cursor++];
+      if (char === '\\') {
+        if (cursor === body.length) throw new Error('unterminated string escape');
+        current += char + body[cursor++];
+      } else if (char === quote) {
+        closed = true;
+        break;
+      } else current += char;
     }
-    if (char === '\\') {
-      escape = true;
-      continue;
-    }
-    if (quote) {
-      if (char === quote) {
-        quote = null;
-      } else {
-        current += char;
-      }
-      continue;
-    }
-    if (char === '"' || char === '\'') {
-      quote = char;
-      continue;
-    }
-    if (char === ',') {
-      const value = current.trim();
-      if (value) values.push(decodeEscapes(value));
-      current = '';
-      continue;
-    }
-    current += char;
+    if (!closed) throw new Error('unterminated quoted string');
+    values.push(decodeEscapes(current));
+    while (cursor < body.length && /\s/.test(body[cursor])) cursor++;
+    if (cursor < body.length && body[cursor++] !== ',') throw new Error('unconsumed string-list text');
   }
-  const last = current.trim();
-  if (last) values.push(decodeEscapes(last));
   return values;
 }
 
+function configValueState(raw) {
+  const trimmed = raw.trim();
+  let quote = null;
+  let depth = 0;
+  if (trimmed.startsWith('[') || /^['"]/.test(trimmed)) {
+    for (let i = 0; i < raw.length; i++) {
+      const char = raw[i];
+      if (char === '\\') i++;
+      else if (quote) {
+        if (char === quote) quote = null;
+      } else if (char === '"' || char === "'") quote = char;
+      else if (char === '[') depth++;
+      else if (char === ']') depth--;
+    }
+  }
+  const slashes = raw.match(/\\+$/);
+  return { quote, open: quote !== null || depth > 0, continued: !!slashes && slashes[0].length % 2 === 1 };
+}
+
 function parseKvConfig(text) {
-  const result = {};
-  for (const line of String(text || '').split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed[0] === '#') continue;
-    const equals = trimmed.indexOf('=');
-    if (equals <= 0) continue;
-    const key = trimmed.slice(0, equals).trim();
-    const rawValue = trimmed.slice(equals + 1).trim();
-    let values = parseFelixList(rawValue);
-    if (values === null) values = [decodeEscapes(rawValue.replace(/^['"]|['"]$/g, ''))];
-    if (!result[key]) result[key] = [];
-    result[key].push.apply(result[key], values.filter(Boolean));
+  const result = { values: {}, errors: [] };
+  const lines = String(text || '').split(/\r?\n/);
+  for (let index = 0; index < lines.length; index++) {
+    const trimmed = lines[index].trim();
+    if (!trimmed || /^[#!]/.test(trimmed)) continue;
+    const property = trimmed.match(/^([^=:\s]+)\s*[:=]\s*([\s\S]*)$/);
+    if (!property) {
+      result.errors.push(`unrecognized RepoInit config line ${index + 1}`);
+      continue;
+    }
+    const key = property[1];
+    let rawValue = property[2];
+    try {
+      let state = configValueState(rawValue);
+      while (state.open || state.continued) {
+        if (index + 1 >= lines.length) throw new Error('unterminated property value');
+        const next = lines[++index];
+        if (!state.continued && !state.quote && /^\s*#/.test(next)) continue;
+        rawValue = state.continued ? rawValue.slice(0, -1) + next.trimStart() : `${rawValue}\n${next}`;
+        state = configValueState(rawValue);
+      }
+      if (key !== 'scripts' && key !== 'references') continue;
+      let values = parseFelixList(rawValue);
+      if (values === null && /^['"]/.test(rawValue)) {
+        values = parseFelixList(`[${rawValue}]`);
+        if (values.length !== 1) throw new Error('expected one string value');
+      }
+      if (values === null) {
+        if (/^[A-Za-z]["']/.test(rawValue)) throw new Error('expected a string, not a typed value');
+        values = [decodeEscapes(rawValue)];
+      }
+      if (!result.values[key]) result.values[key] = [];
+      result.values[key].push(...values);
+    } catch (error) {
+      result.errors.push(`${key}: ${error.message}`);
+    }
   }
   return result;
 }
 
-function toStringList(value) {
+function toStringList(value, key, errors) {
+  if (value === undefined) return [];
   if (typeof value === 'string') return [value];
-  if (Array.isArray(value)) return value.filter(item => typeof item === 'string');
+  if (Array.isArray(value)) {
+    const strings = value.filter(item => typeof item === 'string');
+    if (strings.length !== value.length) errors.push(`${key} must contain only strings`);
+    return strings;
+  }
+  errors.push(`${key} must be a string or an array of strings`);
   return [];
 }
 
@@ -612,15 +697,22 @@ function readRepoInitConfig(fileAbs, text) {
       output.fatal = error && error.message ? error.message : 'invalid JSON';
       return output;
     }
-    output.scripts = toStringList(parsed && parsed.scripts);
-    output.references = toStringList(parsed && parsed.references);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      output.fatal = 'RepoInit config must be a JSON object';
+      return output;
+    }
+    const errors = [];
+    output.scripts = toStringList(parsed.scripts, 'scripts', errors);
+    output.references = toStringList(parsed.references, 'references', errors);
+    output.fatal = errors.length ? errors.join('; ') : null;
     return output;
   }
 
   if (/\.config$/.test(base) || /\.cfg$/.test(base)) {
     const parsed = parseKvConfig(text);
-    output.scripts = parsed.scripts || [];
-    output.references = parsed.references || [];
+    output.scripts = parsed.values.scripts || [];
+    output.references = parsed.values.references || [];
+    output.fatal = parsed.errors.length ? parsed.errors.join('; ') : null;
   }
   return output;
 }
@@ -637,56 +729,50 @@ function makeRepoInitUnknown(reason, scriptLine, runmode, policyPath, order) {
     restrictions: {},
     runmode: runmode || null,
     scriptLine,
+    line: scriptLine,
+    status: 'unknown',
     reason,
   };
 }
 
 function parseRestrictions(text) {
   const restrictions = {};
-  let malformed = false;
-  const stripped = text.replace(/\brestriction\s*\(([^)]*)\)/ig, (_, raw) => {
-    const items = splitCsvList(raw);
+  const start = text.search(/\s+restriction\s*\(/i);
+  if (start < 0) return { restrictions, malformed: false, stripped: text };
+  const stripped = text.slice(0, start);
+  let rest = text.slice(start).trim();
+  while (rest) {
+    const match = rest.match(/^restriction\s*\(([^()]*)\)/i);
+    if (!match) return { restrictions, malformed: true, stripped };
+    const items = match[1].split(',').map(value => value.trim());
     const name = items.shift();
-    if (!name) {
-      malformed = true;
-      return ' ';
-    }
+    if (!name || /\s/.test(name) || !items.length) return { restrictions, malformed: true, stripped };
     if (!restrictions[name]) restrictions[name] = [];
     restrictions[name].push.apply(restrictions[name], items);
-    return ' ';
-  });
-  return { restrictions, malformed, stripped };
+    rest = rest.slice(match[0].length).trim();
+  }
+  return { restrictions, malformed: false, stripped };
 }
 
 function parseAceClauses(text) {
-  const clauses = { privileges: '', on: null, for: null };
-  const stripped = String(text || '').trim();
-  const lower = stripped.toLowerCase();
-  let cursor = 0;
-  let firstClause = stripped.length;
-  for (const keyword of [' on ', ' for ']) {
-    const idx = lower.indexOf(keyword);
-    if (idx >= 0 && idx < firstClause) firstClause = idx;
-  }
-  clauses.privileges = stripped.slice(0, firstClause).trim();
-  cursor = firstClause;
-  while (cursor < stripped.length) {
-    while (cursor < stripped.length && /\s/.test(stripped[cursor])) cursor++;
-    if (cursor >= stripped.length) break;
-    let keyword = null;
-    if (lower.slice(cursor, cursor + 3) === 'on ') keyword = 'on';
-    if (lower.slice(cursor, cursor + 4) === 'for ') keyword = 'for';
-    if (!keyword) break;
-    cursor += keyword.length + 1;
-    let next = stripped.length;
-    for (const marker of [' on ', ' for ']) {
-      const idx = lower.indexOf(marker, cursor);
-      if (idx >= 0 && idx < next) next = idx;
-    }
-    clauses[keyword] = stripped.slice(cursor, next).trim();
-    cursor = next;
+  const clauses = { privileges: '', on: null, for: null, malformed: false };
+  const first = String(text || '').trim().match(/^([^\s,()"']+(?:\s*,\s*[^\s,()"']+)*)([\s\S]*)$/);
+  if (!first) return Object.assign(clauses, { malformed: true });
+  clauses.privileges = first[1];
+  let rest = first[2];
+  while (rest) {
+    const match = rest.match(/^\s+(on|for)\s+([^\s,()"']+(?:\s*,\s*[^\s,()"']+)*)([\s\S]*)$/i);
+    if (!match || clauses[match[1].toLowerCase()] !== null) return Object.assign(clauses, { malformed: true });
+    clauses[match[1].toLowerCase()] = match[2];
+    rest = match[3];
   }
   return clauses;
+}
+
+function isRepoInitPolicyPath(value) {
+  return typeof value === 'string' && value.startsWith('/')
+    && !/[\s()"'\[\]*?]/.test(value) && !value.includes('//')
+    && !value.split('/').some(segment => segment === '.' || segment === '..');
 }
 
 function parseRepoInit(text, options) {
@@ -738,7 +824,11 @@ function parseRepoInit(text, options) {
     if (block.type === 'principal') continue;
     const aceMatch = line.match(/^(allow|deny)\s+(.+)$/i);
     if (!aceMatch) {
-      entries.push(makeRepoInitUnknown(`unrecognized RepoInit ACL line: ${line}`, scriptLine, runmode, block.type === 'on' ? (block.paths[0] || null) : null, order++));
+      const targets = block.type === 'on' && block.paths.length ? block.paths : [null];
+      for (const target of targets) {
+        entries.push(makeRepoInitUnknown(`unrecognized RepoInit ACL line: ${line}`, scriptLine, runmode,
+          isRepoInitPolicyPath(target) ? target : null, order++));
+      }
       continue;
     }
     const effect = aceMatch[1].toLowerCase();
@@ -752,13 +842,14 @@ function parseRepoInit(text, options) {
     const privileges = splitCsvList(clauses.privileges);
     const policyPaths = clauses.on ? splitCsvList(clauses.on) : (block.type === 'on' ? block.paths : []);
     const principals = clauses.for ? splitCsvList(clauses.for) : (block.type === 'for' ? block.principals : []);
-    if (!privileges.length || !policyPaths.length || !principals.length) {
+    if (clauses.malformed || !privileges.length || !policyPaths.length || !principals.length
+        || principals.some(principal => /[\s()"']/.test(principal))) {
       entries.push(makeRepoInitUnknown(`unrecognized RepoInit ACL line: ${line}`, scriptLine, runmode, null, order++));
       continue;
     }
 
     for (const policyPath of policyPaths) {
-      if (!policyPath.startsWith('/') || /^home\s*\(/i.test(policyPath) || policyPath === ':repository') {
+      if (!isRepoInitPolicyPath(policyPath)) {
         entries.push(makeRepoInitUnknown(`unrecognized RepoInit ACL line: ${line}`, scriptLine, runmode, null, order++));
         continue;
       }
@@ -773,6 +864,9 @@ function parseRepoInit(text, options) {
         restrictions: restrictionParse.restrictions,
         runmode,
         scriptLine,
+        line: scriptLine,
+        status: 'parsed',
+        reason: null,
       });
     }
   }
@@ -861,7 +955,10 @@ function formatAceDetail(entry) {
   if (entry.sourceType === 'repoinit') {
     return `${subject} [${relation}] ${effect} ${principals} ${privileges} restrictions{${restrictions}} | runmode: ${entry.runmode || 'any'} | import: ${importValue}`;
   }
-  return `${subject} [${relation}] ${effect} ${principals} ${privileges} restrictions{${restrictions}} | filter: ${entry.filterStatus || 'unknown'} | acHandling: ${entry.acHandling || 'unknown'} | import: ${importValue}`;
+  const handling = entry.acHandling === 'not-set'
+    ? 'not-set (FileVault defaults to ignore; build/install configuration is not visible)'
+    : entry.acHandling || 'unknown';
+  return `${subject} [${relation}] ${effect} ${principals} ${privileges} restrictions{${restrictions}} | filter: ${entry.filterStatus || 'unknown'} | acHandling: ${handling} | import: ${importValue}`;
 }
 
 function workspaceRelative(root, fileAbs) {
@@ -899,12 +996,12 @@ function makeReferenceUnknown(reason, context) {
     restrictions: {},
     runmode: context.runmode || null,
     scriptIndex: context.scriptIndex,
+    status: 'unknown',
     reason,
   };
 }
 
 function runAclScan(workspaceRoot, options) {
-  const root = path.resolve(String(workspaceRoot || ''));
   const migrationPaths = validateMigrationPaths(options && options.migrationPaths);
   const result = {
     ok: true,
@@ -914,6 +1011,13 @@ function runAclScan(workspaceRoot, options) {
     scanStatus: 'complete',
     unreadable: [],
   };
+  if (typeof workspaceRoot !== 'string' || !workspaceRoot.trim()) {
+    result.ok = false;
+    result.scanStatus = 'incomplete';
+    result.error = 'ACL scan workspaceRoot is required';
+    return result;
+  }
+  const root = path.resolve(workspaceRoot);
   let rootStat;
   try {
     rootStat = fs.statSync(root);
@@ -955,7 +1059,10 @@ function runAclScan(workspaceRoot, options) {
 
   const entries = [];
   function addEntry(entry, fileAbs, fileRelative, sourceType, extra) {
-    const base = Object.assign({}, entry, extra || {});
+    const base = Object.assign({
+      policyPath: null, order: 0, effect: null, principals: [], privileges: [],
+      restrictions: {}, runmode: null, reason: null,
+    }, entry, extra || {});
     base.file = fileRelative;
     if (base.line === undefined && base.scriptLine !== undefined) base.line = base.scriptLine;
     if (base.line === undefined || base.line === null) base.line = 1;
@@ -977,7 +1084,7 @@ function runAclScan(workspaceRoot, options) {
       result.skippedCount = (result.skippedCount || 0) + 1;
       return;
     }
-    base.status = base.kind === 'acl-unknown' ? 'unknown' : 'complete';
+    base.status = base.kind === 'acl-unknown' ? 'unknown' : 'parsed';
     base.severity = aceSeverity(base);
     entries.push(base);
   }
@@ -996,8 +1103,17 @@ function runAclScan(workspaceRoot, options) {
     let text;
     try {
       text = fs.readFileSync(file.fileAbs, 'utf8');
-    } catch (_) {
+    } catch (error) {
       result.unreadable.push(file.relative);
+      const sourceType = file.type === 'content-xml' ? 'inline-policy' : file.type;
+      addEntry(makeUnknown(`unreadable ACL input: ${error.code || 'read failed'}`, {
+        sourceType,
+        policyPath: file.type === 'repoinit' ? null : jcrPathForFile(file.fileAbs, root),
+        order: 0,
+        line: 1,
+      }), file.fileAbs, file.relative, sourceType, {
+        runmode: file.type === 'repoinit' ? detectRunmode(file.fileAbs) : null,
+      });
       continue;
     }
     if (file.type === 'policy-xml') {
@@ -1041,6 +1157,7 @@ function runAclScan(workspaceRoot, options) {
         addEntry(makeReferenceUnknown(`malformed RepoInit config: ${config.fatal}`, {
           runmode: config.runmode, scriptIndex: 0,
         }), file.fileAbs, file.relative, 'repoinit', { line: 1, scriptIndex: 0 });
+        result.warnings.push(`ACL file could not be parsed: ${file.relative} — ${config.fatal}`);
       }
       config.scripts.forEach((script, scriptIndex) => parseScript(
         script, file.fileAbs, file.relative, config.runmode, scriptIndex, true
@@ -1054,6 +1171,7 @@ function runAclScan(workspaceRoot, options) {
           if (rel && !path.isAbsolute(rel) && isWithin(root, candidate)) referencePath = candidate;
         }
         let referencedText;
+        let referenceUnreadable = false;
         if (referencePath) {
           try {
             const realRoot = fs.realpathSync(root);
@@ -1061,8 +1179,12 @@ function runAclScan(workspaceRoot, options) {
             if (isWithin(realRoot, realReference) && fs.statSync(realReference).isFile()) {
               try {
                 referencedText = fs.readFileSync(realReference, 'utf8');
-              } catch (_) {
-                result.unreadable.push(workspaceRelative(root, referencePath));
+              } catch (error) {
+                const relative = workspaceRelative(root, referencePath);
+                result.unreadable.push(relative);
+                addEntry(makeRepoInitUnknown(`unreadable RepoInit reference: ${error.code || 'read failed'}`,
+                  1, config.runmode, null, 0), referencePath, relative, 'repoinit');
+                referenceUnreadable = true;
               }
             }
           } catch (_) {
@@ -1070,6 +1192,7 @@ function runAclScan(workspaceRoot, options) {
           }
         }
         if (referencedText === undefined) {
+          if (referenceUnreadable) continue;
           const unknown = makeReferenceUnknown(`unresolved RepoInit reference: ${reference}`, {
             runmode: config.runmode,
           });
@@ -1089,10 +1212,11 @@ function runAclScan(workspaceRoot, options) {
   result.unreadable = Array.from(new Set(result.unreadable)).sort();
   if (result.unreadable.length) {
     result.scanStatus = 'incomplete';
-    result.warnings.push(`ACL scan incomplete: ${result.unreadable.length} file(s) could not be read: ${result.unreadable.join(', ')}`);
+    result.warnings.push(`ACL scan incomplete: ${result.unreadable.length} path(s) could not be read: ${result.unreadable.join(', ')}`);
   }
 
-  entries.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line || a.order - b.order);
+  entries.sort((a, b) => a.file.localeCompare(b.file)
+    || (a.scriptIndex ?? -1) - (b.scriptIndex ?? -1) || a.line - b.line || a.order - b.order);
   for (const entry of entries) {
     const configLocation = entry.sourceType === 'repoinit' && entry.scriptIndex !== undefined
       && (entry.file.endsWith('.cfg.json') || entry.file.endsWith('.config') || entry.file.endsWith('.cfg'));

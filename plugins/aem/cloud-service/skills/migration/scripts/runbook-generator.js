@@ -378,7 +378,7 @@ async function gatherFindings(options = {}) {
   const rawFindingsByPattern = {};
   const sourceByPattern = {};
   const scannedBy = {};
-  const scanStatusByPattern = {};
+  const scanStatusByPattern = { aclPermissions: 'incomplete' };
   CANONICAL_PATTERNS.forEach(p => { findingsByPattern[p] = []; rawFindingsByPattern[p] = []; });
 
   const cascadePatterns = CANONICAL_PATTERNS.filter(p => PATTERN_META[p].strategy === 'cascade');
@@ -564,19 +564,24 @@ async function gatherFindings(options = {}) {
   }
 
   // ── Strategy 'acl-scan': source ACL code (independent of the other tiers) ──
-  if (workspaceRoot) {
-    const res = aclScan(workspaceRoot, { migrationPaths });
-    if (res.warnings && res.warnings.length) scanWarnings.push(...res.warnings);
-    if (res.ok) {
-      findingsByPattern.aclPermissions = res.findings;
-      rawFindingsByPattern.aclPermissions = res.rawFindings;
-      sourceByPattern.aclPermissions = 'acl-scan';
-      scannedBy.aclPermissions = 'acl-scan';
-      scanStatusByPattern.aclPermissions = res.scanStatus;
-    } else {
-      scanWarnings.push(`aclPermissions scan did not run: ${res.error || 'unknown error'}`);
-      scanStatusByPattern.aclPermissions = 'incomplete';
+  if (options.workspaceRoot) {
+    try {
+      const res = await aclScan(options.workspaceRoot, { migrationPaths });
+      if (res.warnings && res.warnings.length) scanWarnings.push(...res.warnings);
+      if (res.ok) {
+        findingsByPattern.aclPermissions = res.findings;
+        rawFindingsByPattern.aclPermissions = res.rawFindings;
+        sourceByPattern.aclPermissions = 'acl-scan';
+        scannedBy.aclPermissions = 'acl-scan';
+        scanStatusByPattern.aclPermissions = res.scanStatus === 'complete' ? 'complete' : 'incomplete';
+      } else {
+        scanWarnings.push(`aclPermissions scan did not run: ${res.error || 'unknown error'}`);
+      }
+    } catch (error) {
+      scanWarnings.push(`aclPermissions scan did not run: ${error && error.message || String(error)}`);
     }
+  } else {
+    scanWarnings.push('aclPermissions scan did not run: workspaceRoot is required');
   }
 
   // ── Strategy 'content-scan': lui / cdw / templateModernization / dispatcherConversion
@@ -868,7 +873,8 @@ function writeRunbookCache(gathered, ctx, cachePath = DEFAULT_CACHE_PATH) {
  * second `renderRunbook`/`writeRunbookCache` round-trip. `llmByPattern` maps a
  * canonical pattern id to an array of raw findings `{file, line?, snippet?,
  * detail?, severity?}`; the display shape is derived from each. The pattern is
- * marked `source: 'llm'` and dropped from `needsLlmScan`.
+ * marked `source: 'llm'` and dropped from `needsLlmScan`. ACL findings always
+ * retain the deterministic evidence and scan status, with LLM results appended.
  */
 function mergeLlmFindings(gathered, llmByPattern) {
   for (const [pattern, raws] of Object.entries(llmByPattern || {})) {
@@ -882,7 +888,7 @@ function mergeLlmFindings(gathered, llmByPattern) {
       detail: r.detail || r.snippet || '',
       severity: r.severity || 'high',
     }));
-    if (gathered.scanStatusByPattern?.[pattern] === 'incomplete') {
+    if (pattern === 'aclPermissions' || gathered.scanStatusByPattern?.[pattern] === 'incomplete') {
       gathered.rawFindingsByPattern[pattern] = [
         ...(gathered.rawFindingsByPattern[pattern] || []),
         ...llmRaw,
@@ -891,9 +897,9 @@ function mergeLlmFindings(gathered, llmByPattern) {
         ...(gathered.findingsByPattern[pattern] || []),
         ...llmFindings,
       ];
-      gathered.sourceByPattern[pattern] = gathered.sourceByPattern[pattern]
-        ? `${gathered.sourceByPattern[pattern]}+llm`
-        : 'llm';
+      const sources = (gathered.sourceByPattern[pattern] || '').split('+').filter(Boolean);
+      if (!sources.includes('llm')) sources.push('llm');
+      gathered.sourceByPattern[pattern] = sources.join('+');
     } else {
       gathered.rawFindingsByPattern[pattern] = llmRaw;
       gathered.findingsByPattern[pattern] = llmFindings;

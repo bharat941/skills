@@ -71,6 +71,10 @@ Applies to **finding and editing the user's AEM project** (Java, bundles, config
 
 ## Required delegation (do this first)
 
+**ACL review — early, review-only route:** If the request names `aclPermissions`, **ACL review**, or permissions for migrated content, reuse the runbook's ACL findings, scan status and customer checklist. If the runbook is missing or needs refreshing, generate it using **Step 0**, passing every known migration-set path via `--migration-path`. Explain the findings and what the user must verify in the source and target JCR.
+
+**Stop after the ACL review.** Bypass the code-assessment catalog, Branches A–E, and the apply/target handoff below for this review. `aclPermissions` has no apply flow: never edit `_rep_policy.xml`, RepoInit or filters, and never connect to a JCR. Unknown or incomplete input is not clean, and code ACLs do not establish effective access.
+
 **Branch A — OSGi configs → Cloud Manager** (no Java BPA pattern this session): If the user asks to **scan config files**, **create / set up Cloud Manager environment secrets or variables**, move **passwords or secrets** out of **OSGi / `.cfg.json` / `ui.config`**, or mentions **`$[secret:]`** / **`$[env:]`** for AEM CS, then **read [references/osgi-cfg-json-cloud-manager.md](references/osgi-cfg-json-cloud-manager.md) immediately** and follow the **product rules and workflow** defined in that file (Adobe AEM as a Cloud Service OSGi + Cloud Manager behavior is reproduced there—no external doc URL required). Sleek prompts are enough — **no** need to name the reference file. **Skip** branch B for that work.
 
 **Branch B — Java / HTL / BPA pattern migration:**
@@ -292,7 +296,7 @@ After the command finishes, tell the user (numbers come from the printed summary
 
 The command also writes the sidecar findings cache (default `./migration-runbook.json`) alongside the markdown, holding each pattern's raw findings and their source. **Step 3** below reads this cache first before falling back to a live BPA/analyzer/scan lookup.
 
-**Skip Step 0** when the user names a **specific pattern** up front (e.g. *"fix scheduler findings"*, *"fix htlLint in ui.apps"*, *"scan my config files for Cloud Manager secrets"*) — go straight to the relevant apply flow. Step 0 is only for a **broad review/scan** request with no single pattern named.
+**Skip Step 0** when the user names a **specific apply pattern** up front (e.g. *"fix scheduler findings"*, *"fix htlLint in ui.apps"*, *"scan my config files for Cloud Manager secrets"*) — go straight to the relevant apply flow. ACL review uses the early review-only route above; it never enters an apply flow.
 
 > **Advanced (programmatic).** The same behavior is available as an API — `generateRunbook({ workspaceRoot, bpaFilePath, preFetchedBpa, llmByPattern, outputPath, cachePath })` and `mergeLlmFindings(gathered, llmByPattern)` from `./scripts/runbook-generator.js` — for callers that need to drive it in-process (e.g. an in-session `mcpFetcher` instead of `--bpa-json`). Prefer the CLI above; reach for the API only when the CLI can't express what you need.
 
@@ -303,6 +307,8 @@ The command also writes the sidecar findings cache (default `./migration-runbook
 If the user asks to fix everything or BPA mixes patterns, **ask which pattern first**. Prefer one commit per pattern session.
 
 ### Step 1: Pattern id
+
+For `aclPermissions` / ACL review, follow the **early, review-only route** above and stop before catalog availability or target/apply handling.
 
 First check the non-Java branches (routed in full under **Required delegation**), which take **no BPA pattern id**:
 
@@ -319,8 +325,6 @@ Otherwise map the request to a pattern id: `scheduler`, `resourceChangeListener`
 If the id is missing from the code-assessment catalog ([`{code-assessment}/references/patterns.md`](../code-assessment/references/patterns.md)), say the pattern is not supported yet.
 
 ### Step 3: Targets
-
-`aclPermissions` has no apply flow: explain the findings and checklist; never edit `_rep_policy.xml`, RepoInit or filters, and never connect to a JCR.
 
 **Check for a cached runbook first.** If `./migration-runbook.json` (or the path passed to
 `generateRunbook`'s `cachePath` option) exists and its `findingsByPattern[<active pattern>]` array
