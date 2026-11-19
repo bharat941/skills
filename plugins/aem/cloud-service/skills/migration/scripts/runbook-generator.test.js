@@ -1658,6 +1658,12 @@ test('acl: readRepoInitConfig reads cfg.json, .config and .cfg', () => {
     '{ scripts: }'
   );
   assert.ok(typeof badJson.fatal === 'string' && badJson.fatal.length > 0);
+
+  const nestedConfig = readRepoInitConfig(
+    '/workspace/ui.config/src/main/content/jcr_root/apps/acme/config.author/nested/config/org.apache.sling.jcr.repoinit.RepositoryInitializer.cfg.json',
+    JSON.stringify({ scripts: 'set ACL for example-svc\n  allow jcr:read on /content\nend' })
+  );
+  assert.strictEqual(nestedConfig.runmode, null, 'runmode must come from immediate parent folder only');
 });
 
 test('acl: parseRepoInit parses set ACL for/on with restrictions and multi-path', () => {

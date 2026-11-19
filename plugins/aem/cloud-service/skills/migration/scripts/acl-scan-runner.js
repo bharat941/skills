@@ -504,11 +504,9 @@ function isRepoInitConfigName(fileName) {
 
 function detectRunmode(fileAbs) {
   if (typeof fileAbs !== 'string') return null;
-  const segments = path.dirname(fileAbs).split(path.sep);
-  for (let i = segments.length - 1; i >= 0; i--) {
-    const match = segments[i].match(/^config(?:\.(.+))?$/);
-    if (match) return match[1] || null;
-  }
+  const parent = path.basename(path.dirname(fileAbs));
+  const match = parent.match(/^config(?:\.(.+))?$/);
+  if (match) return match[1] || null;
   return null;
 }
 
