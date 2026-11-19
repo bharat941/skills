@@ -249,8 +249,11 @@ The runbook covers **every pattern the migration skill can address**. Each patte
 | `lui`, `cdw`, `templateModernization` | BPA `cascade` → `content-scan` fallback | When a BPA CSV/CAM source is present, these come from BPA (subtypes `custom.classic.widget`; `legacy.dialog.classic`/`.coral2`; `legacy.static.template` + `custom.static.template`). With no BPA source, a heuristic `.content.xml` scan is the fallback — for `templateModernization` it walks `apps/<appId>/templates/**` at **any depth** (nested/grouped templates included) and classifies each static template as `custom.static.template` or `legacy.static.template` from its page-component resource type, so the custom-vs-legacy distinction survives even without a BPA report. Sample prompts route to **Branch D** (legacy-ui) / **Branch C** (templates), not code-assessment |
 | `guavaCache` | `bpa-only` (no analyzer, no content-scan) | BPA is the **sole** source of truth (subtype `custom.guava.cache`), one finding per **bundle** — `identifier` on this subtype is a Guava-internal class, not a customer class, so raw rows are deduped to the bundle named in the message, not surfaced per row. With no BPA source, `guavaCache` has no deterministic fallback and surfaces under **Tier 4 — LLM scan**: the agent greps `.java` files for `import com.google.common.cache` per module, per [references/guava-cache.md](references/guava-cache.md), and tags the result `confidence: llm`. There is deliberately no compiled analyzer detector for this pattern — it does not run inside `code-assessment`'s own discovery. |
 | `dispatcherConversion` | `content-scan` | Heuristic scan for an AMS / on-prem Dispatcher config layout (a monolithic `dispatcher.any` + `conf.vhost.d/`, or `conf.dispatcher.d/` AMS trees). Detected by `dispatcher-inventory.js`; the sample prompt routes to **Branch E**. |
+| `aclPermissions` | `acl-scan` | read-only scan of `_rep_policy.xml` / inline `rep:policy` / RepoInit ACLs on the migration paths, ancestors and descendants — principals, allow/deny, privileges, restrictions, conservative import label; never edits, never connects to a JCR |
 
-`htlLint`, `osgiConfig`, `vault-package-dependencies`, and the content-scan **fallback** for `lui`/`cdw`/`templateModernization` are **heuristic** (tagged `confidence: heuristic` in the cache) — candidate matches, not compiler-validated. BPA-sourced `lui`/`cdw`/`templateModernization`/`replication`/`guavaCache` findings are authoritative. Out of scope: `inject-in-sling-model` and `outdated-dependencies` (those belong to code-assessment's own runbook, not migration).
+`htlLint`, `osgiConfig`, `vault-package-dependencies`, `aclPermissions`, and the content-scan **fallback** for `lui`/`cdw`/`templateModernization` are **heuristic** (tagged `confidence: heuristic` in the cache) — candidate matches, not compiler-validated. BPA-sourced `lui`/`cdw`/`templateModernization`/`replication`/`guavaCache` findings are authoritative. Out of scope: `inject-in-sling-model` and `outdated-dependencies` (those belong to code-assessment's own runbook, not migration).
+
+Absence of ACLs in code is not evidence of correct permissions — the runbook always includes the ACL checklist.
 
 **BPA is the source of truth when a report is available.** `lui`/`cdw`/`templateModernization`/`replication` are read from the BPA CSV/CAM (the parser now extracts these subtypes and excludes `_COUNT_*`/`_STAT` summary rows), so the runbook counts match your BPA report's LUI-dialog / CDW / static-template / REP tallies. `lui` keeps only the dialog sub-types (`legacy.custom.component` → create-component; `legacy.static.template` is counted under `templateModernization`). The `.content.xml` scan is only the fallback when no BPA source is present — and it can **undercount** relative to BPA when the flagged legacy nodes live in packages (e.g. acs-commons) not in the project source. `replication`: BPA `replication.agent` findings when a report is present, else the analyzer detects `Replicator` usage from source.
 
@@ -260,9 +263,11 @@ The runbook is produced by a **single CLI command**. It runs the local analyzer 
 
 1. **Base (always):**
    ```bash
-   node scripts/runbook-generator.js <workspaceRoot> --out ./migration-runbook.md --cache ./migration-runbook.json
+   node scripts/runbook-generator.js <workspaceRoot> [--migration-path <jcrPath> ...] --out ./migration-runbook.md --cache ./migration-runbook.json
    ```
    This alone covers the local analyzer (Java cascade patterns), `html-scan`, `config-scan`, `pom-scan`, and the `content-scan` patterns.
+
+   Pass `--migration-path` for every Content Transfer Tool migration-set path the user named; an invalid value fails with exit code 2.
 
 2. **If you have a BPA CSV:** add `--csv ./reports/bpa.csv`.
 
@@ -314,6 +319,8 @@ Otherwise map the request to a pattern id: `scheduler`, `resourceChangeListener`
 If the id is missing from the code-assessment catalog ([`{code-assessment}/references/patterns.md`](../code-assessment/references/patterns.md)), say the pattern is not supported yet.
 
 ### Step 3: Targets
+
+`aclPermissions` has no apply flow: explain the findings and checklist; never edit `_rep_policy.xml`, RepoInit or filters, and never connect to a JCR.
 
 **Check for a cached runbook first.** If `./migration-runbook.json` (or the path passed to
 `generateRunbook`'s `cachePath` option) exists and its `findingsByPattern[<active pattern>]` array

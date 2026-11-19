@@ -5,6 +5,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { spawnSync } = require('child_process');
 
 const { runHtlLint, classify } = require('./htl-lint-runner.js');
 const { runOsgiConfigScan, validateRunmodeFolder, scanUnsupportedRunmodes, reorderRunmodeFolder, planRunmodeReorders } = require('./osgi-config-runner.js');
@@ -1262,6 +1263,43 @@ test('generateRunbook applies llmByPattern end to end (one command, no re-render
   const md = fs.readFileSync(out, 'utf8');
   assert.match(md, /LLM scan/);            // rendered "Detected via: LLM scan"
   assert.match(md, /bundle\/Foo\.java:3/);
+});
+
+test('acl: CLI rejects invalid --migration-path with exit 2 and writes nothing', () => {
+  const cases = [
+    { args: ['--migration-path', 'content/x'], expected: /Invalid --migration-path "content\/x"/ },
+    { args: ['--migration-path', ''], expected: /Invalid --migration-path ""/ },
+    { args: ['--migration-path'], expected: /requires a value/ },
+  ];
+
+  for (const { args, expected } of cases) {
+    const ws = mkworkspace();
+    const out = path.join(ws, 'migration-runbook.md');
+    const cache = path.join(ws, 'migration-runbook.json');
+    const result = spawnSync(process.execPath, [
+      path.join(__dirname, 'runbook-generator.js'), ws, ...args, '--out', out, '--cache', cache,
+    ], { cwd: ws, encoding: 'utf8' });
+
+    assert.strictEqual(result.status, 2, result.stderr);
+    assert.match(result.stderr, expected);
+    assert.match(result.stderr, /--migration-path \/content\/site/);
+    assert.ok(!fs.existsSync(out) && !fs.existsSync(cache), 'invalid paths must not write output');
+  }
+});
+
+test('acl: CLI accepts repeatable --migration-path', () => {
+  const ws = mkworkspace();
+  const out = path.join(ws, 'migration-runbook.md');
+  const cache = path.join(ws, 'migration-runbook.json');
+  const result = spawnSync(process.execPath, [
+    path.join(__dirname, 'runbook-generator.js'), ws,
+    '--migration-path', '/content/a', '--migration-path', '/content/b/',
+    '--out', out, '--cache', cache,
+  ], { cwd: ws, encoding: 'utf8' });
+
+  assert.strictEqual(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Migration paths: \/content\/a, \/content\/b/);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(cache, 'utf8')).migrationPaths, ['/content/a', '/content/b']);
 });
 
 test('Fix D: analyzer union fills a BPA-clean cascade pattern and dedups by class name', async (t) => {

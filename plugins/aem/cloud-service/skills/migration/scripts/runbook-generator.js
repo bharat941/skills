@@ -954,7 +954,7 @@ async function generateRunbook(options = {}) {
 
 // CLI
 function parseArgs(argv) {
-  const out = { workspaceRoot: undefined, bpaFilePath: undefined, outputPath: './migration-runbook.md', cachePath: DEFAULT_CACHE_PATH, bpaJsonPath: undefined, llmFindingsPath: undefined };
+  const out = { workspaceRoot: undefined, bpaFilePath: undefined, outputPath: './migration-runbook.md', cachePath: DEFAULT_CACHE_PATH, bpaJsonPath: undefined, llmFindingsPath: undefined, migrationPaths: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--csv') out.bpaFilePath = argv[++i];
@@ -962,6 +962,10 @@ function parseArgs(argv) {
     else if (a === '--cache') out.cachePath = argv[++i];
     else if (a === '--bpa-json') out.bpaJsonPath = argv[++i];
     else if (a === '--llm-findings') out.llmFindingsPath = argv[++i];
+    else if (a === '--migration-path') {
+      const next = argv[i + 1];
+      out.migrationPaths.push(next && next.startsWith('--') ? undefined : argv[++i]);
+    }
     else if (!out.workspaceRoot) out.workspaceRoot = a;
   }
   if (!out.workspaceRoot) out.workspaceRoot = process.cwd();
@@ -969,7 +973,17 @@ function parseArgs(argv) {
 }
 
 async function main() {
-  const { workspaceRoot, bpaFilePath, outputPath, cachePath, bpaJsonPath, llmFindingsPath } = parseArgs(process.argv.slice(2));
+  const args = parseArgs(process.argv.slice(2));
+  const { workspaceRoot, bpaFilePath, outputPath, cachePath, bpaJsonPath, llmFindingsPath } = args;
+  let migrationPaths;
+  try {
+    migrationPaths = validateMigrationPaths(args.migrationPaths);
+  } catch (e) {
+    if (!(e instanceof TypeError)) throw e;
+    console.error('Error: ' + e.message);
+    process.exitCode = 2;
+    return;
+  }
 
   // Pre-fetched BPA (agent dumped its CAM/MCP result to JSON) and LLM-scan
   // findings are the two inputs that let the whole runbook run as ONE command,
@@ -982,6 +996,7 @@ async function main() {
   console.log('Migration Runbook Generator');
   console.log('===========================');
   console.log(`Workspace:  ${workspaceRoot}`);
+  if (migrationPaths.length) console.log(`Migration paths: ${migrationPaths.join(', ')}`);
   if (bpaFilePath) console.log(`BPA CSV:    ${bpaFilePath}`);
   if (bpaJsonPath) console.log(`BPA JSON:   ${bpaJsonPath}`);
   if (llmFindingsPath) console.log(`LLM find.:  ${llmFindingsPath}`);
@@ -989,7 +1004,7 @@ async function main() {
   console.log(`Cache:      ${cachePath}`);
   console.log('');
 
-  const result = await generateRunbook({ workspaceRoot, bpaFilePath, outputPath, cachePath, preFetchedBpa, llmByPattern });
+  const result = await generateRunbook({ workspaceRoot, bpaFilePath, outputPath, cachePath, preFetchedBpa, llmByPattern, migrationPaths });
 
   console.log(`✅ ${result.message}`);
   console.log(`   Findings cache: ${result.cachePath}`);

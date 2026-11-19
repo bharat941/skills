@@ -66,6 +66,7 @@ const result = await generateRunbook({
 **CLI (the canonical Step-0 path — one command, no in-process bridge):**
 ```bash
 node scripts/runbook-generator.js <workspaceRoot> \
+  [--migration-path <jcrPath> ...] \
   [--csv <bpaFilePath>] \
   [--bpa-json <file>] \      # pre-fetched CAM/MCP findings, { "<slug>": [ <target>, … ] } — no mcpFetcher bridge needed
   [--llm-findings <file>] \  # Tier-4 results, { "<pattern>": [ { file, line, snippet }, … ] } — merged + re-rendered in one pass
