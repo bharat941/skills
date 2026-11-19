@@ -45,17 +45,17 @@ function write(root, rel, content) {
 
 // ── Pattern registry ────────────────────────────────────────────────────────
 
-test('registry includes all 13 migration patterns with a valid strategy', () => {
+test('registry includes all 14 migration patterns with a valid strategy', () => {
   const expected = [
     'scheduler', 'resourceChangeListener', 'event-migration', 'assetApi', 'replication',
     'vault-package-dependencies', 'htlLint', 'osgiConfig', 'lui', 'cdw', 'templateModernization',
-    'guavaCache', 'dispatcherConversion',
+    'guavaCache', 'dispatcherConversion', 'aclPermissions',
   ];
   assert.strictEqual(CANONICAL_PATTERNS.length, expected.length, 'no unexpected patterns');
   for (const key of expected) {
     assert.ok(CANONICAL_PATTERNS.includes(key), `${key} in CANONICAL_PATTERNS`);
     assert.ok(
-      ['cascade', 'html-scan', 'config-scan', 'content-scan', 'pom-scan', 'bpa-only'].includes(PATTERN_META[key].strategy),
+      ['cascade', 'html-scan', 'config-scan', 'content-scan', 'pom-scan', 'bpa-only', 'acl-scan'].includes(PATTERN_META[key].strategy),
       `${key} has a valid strategy`
     );
   }
@@ -1936,4 +1936,142 @@ test('acl: runAclScan with missing root returns ok false', () => {
   assert.strictEqual(result.ok, false);
   assert.strictEqual(result.scanStatus, 'incomplete');
   assert.ok(result.error);
+});
+
+test('acl: aclPermissions meta is review-only, always rendered, heuristic', () => {
+  const meta = PATTERN_META.aclPermissions;
+  assert.strictEqual(meta.strategy, 'acl-scan');
+  assert.deepStrictEqual(meta.bpaSlugs, []);
+  assert.strictEqual(meta.heuristic, true);
+  assert.strictEqual(meta.alwaysRender, true);
+  assert.strictEqual(meta.severity, 'high');
+  assert.strictEqual(meta.checklist.length, 8);
+  assert.strictEqual(sourceLabel('acl-scan'), 'ACL scan');
+  assert.match(meta.description, /not proof of effective access/);
+  assert.match(meta.description, /Review-only: nothing is changed\./);
+});
+
+test('acl: gatherFindings runs the ACL scan with migrationPaths', async () => {
+  const root = mkworkspace();
+  const contentRoot = writeContentPackage(root, 'ui.apps', {
+    filters: [{ root: '/conf/acme/other' }],
+  });
+  write(root, path.relative(root, path.join(contentRoot, 'jcr_root/conf/acme/lists/x/_rep_policy.xml')),
+    aclPolicyXml('<allow jcr:primaryType="rep:GrantACE" rep:principalName="example-editors" rep:privileges="{Name}[jcr:read]"/>'));
+  const migrationPaths = ['/conf/acme/lists/x'];
+
+  const gathered = await gatherFindings({ workspaceRoot: root, migrationPaths });
+
+  assert.strictEqual(gathered.sourceByPattern.aclPermissions, 'acl-scan');
+  assert.strictEqual(gathered.findingsByPattern.aclPermissions.length, 1);
+  assert.strictEqual(gathered.scanStatusByPattern.aclPermissions, 'complete');
+  assert.ok(!gathered.needsLlmScan.includes('aclPermissions'));
+  assert.deepStrictEqual(gathered.migrationPaths, migrationPaths);
+});
+
+test('acl: gatherFindings rejects invalid migrationPaths before scanning', async () => {
+  const root = mkworkspace();
+  let scanCalled = false;
+  await assert.rejects(
+    gatherFindings({
+      workspaceRoot: root,
+      migrationPaths: ['content/x'],
+      aclScan: () => { scanCalled = true; },
+    }),
+    TypeError
+  );
+  assert.strictEqual(scanCalled, false);
+});
+
+test('acl: zero findings still render section and checklist, never clean', async () => {
+  const root = mkworkspace();
+  const gathered = await gatherFindings({ workspaceRoot: root, migrationPaths: ['/content/site'] });
+  const markdown = renderRunbook(gathered, { workspaceRoot: root, generatedAt: 'now' });
+
+  assert.match(markdown, /## ACLs \/ Permissions for Migrated Content \(`aclPermissions`\)/);
+  assert.match(markdown, /No ACL definitions found in code for the scoped paths\. This does not mean the source repository has no ACLs\./);
+  assert.match(markdown, /### Customer checklist/);
+  const checklist = markdown.slice(markdown.indexOf('### Customer checklist'));
+  assert.strictEqual((checklist.match(/^- \[ \] /gm) || []).length, 8);
+  assert.match(markdown, /\| ACLs \/ Permissions for Migrated Content \| high \| — \(verify in JCR\) \| ACL scan \|/);
+  const cleanBlock = markdown.split('## Scanned — no findings')[1] || '';
+  assert.doesNotMatch(cleanBlock, /aclPermissions/);
+});
+
+test('acl: scanner failure is incomplete and stays incomplete after LLM merge', async () => {
+  const root = mkworkspace();
+  const gathered = await gatherFindings({
+    workspaceRoot: root,
+    migrationPaths: ['/content/site'],
+    aclScan: () => ({
+      ok: false,
+      error: 'boom',
+      findings: [],
+      rawFindings: [],
+      warnings: [],
+      scanStatus: 'incomplete',
+      unreadable: [],
+    }),
+  });
+  assert.ok(gathered.needsLlmScan.includes('aclPermissions'));
+  assert.strictEqual(gathered.scanStatusByPattern.aclPermissions, 'incomplete');
+  assert.ok(gathered.analyzerWarnings.includes('aclPermissions scan did not run: boom'));
+
+  mergeLlmFindings(gathered, {
+    aclPermissions: [{ file: 'a.xml', line: 3, detail: 'x' }],
+  });
+
+  assert.strictEqual(gathered.scanStatusByPattern.aclPermissions, 'incomplete');
+  assert.ok(!gathered.needsLlmScan.includes('aclPermissions'));
+  const markdown = renderRunbook(gathered, { workspaceRoot: root, generatedAt: 'now' });
+  assert.match(markdown, /\| ACLs \/ Permissions for Migrated Content \| high \| \*\*1\*\* \| LLM scan — \*\*incomplete — verify in JCR\*\* \|/);
+  assert.match(markdown, /> ⚠️ \*\*ACL scan incomplete — verify in JCR\.\*\* Treat the ACL review as not done\./);
+});
+
+test('acl: partial ACL scan keeps findings, is incomplete, and LLM findings are appended', async () => {
+  const root = mkworkspace();
+  const gathered = await gatherFindings({
+    workspaceRoot: root,
+    migrationPaths: ['/content/site'],
+    aclScan: () => ({
+      ok: true,
+      findings: [{ location: 'policy.xml', detail: 'source ACE', severity: 'high' }],
+      rawFindings: [{ pattern: 'aclPermissions', file: 'policy.xml', restrictions: [] }],
+      warnings: [],
+      scanStatus: 'incomplete',
+      unreadable: ['policy.xml'],
+    }),
+  });
+  assert.strictEqual(gathered.findingsByPattern.aclPermissions.length, 1);
+  assert.ok(gathered.needsLlmScan.includes('aclPermissions'));
+
+  mergeLlmFindings(gathered, {
+    aclPermissions: [{ file: 'a.xml', line: 3, detail: 'LLM ACE' }],
+  });
+
+  assert.strictEqual(gathered.findingsByPattern.aclPermissions.length, 2);
+  assert.strictEqual(gathered.sourceByPattern.aclPermissions, 'acl-scan+llm');
+  assert.strictEqual(gathered.scanStatusByPattern.aclPermissions, 'incomplete');
+});
+
+test('acl: cache includes migrationPaths, scanStatus and full ACE fields', async () => {
+  const root = mkworkspace();
+  const contentRoot = writeContentPackage(root, 'ui.apps', {
+    filters: [{ root: '/content/site' }],
+    acHandling: 'merge',
+  });
+  write(root, path.relative(root, path.join(contentRoot, 'jcr_root/content/site/_rep_policy.xml')),
+    aclPolicyXml('<allow jcr:primaryType="rep:GrantACE" rep:principalName="example-editors" rep:privileges="{Name}[jcr:read]" rep:glob="*/jcr:content*"/>'));
+  const migrationPaths = ['/content/site'];
+  const out = path.join(root, 'runbook.md');
+  const cachePath = path.join(root, 'runbook.json');
+
+  await generateRunbook({ workspaceRoot: root, migrationPaths, outputPath: out, cachePath });
+
+  const cache = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+  assert.deepStrictEqual(cache.migrationPaths, migrationPaths);
+  assert.strictEqual(cache.scanStatusByPattern.aclPermissions, 'complete');
+  assert.ok(Object.prototype.hasOwnProperty.call(cache.findingsByPattern.aclPermissions[0], 'restrictions'));
+  assert.ok(Object.prototype.hasOwnProperty.call(cache.findingsByPattern.aclPermissions[0], 'importVerdict'));
+  assert.strictEqual(cache.findingsByPattern.aclPermissions[0].confidence, 'heuristic');
 });

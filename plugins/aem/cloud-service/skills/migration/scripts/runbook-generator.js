@@ -76,6 +76,7 @@ const { runVaultPackageScan } = require('./vault-package-scan-runner.js');
 const { runLuiScan, runCdwScan } = require('./legacy-ui-runner.js');
 const { runTemplateScan } = require('./template-scan-runner.js');
 const { runDispatcherScan } = require('./dispatcher-inventory.js');
+const { runAclScan, validateMigrationPaths } = require('./acl-scan-runner.js');
 
 // Canonical pattern taxonomy for the runbook — every pattern the migration
 // skill can address. Each declares a detection `strategy`:
@@ -234,6 +235,27 @@ const PATTERN_META = {
     promptPattern: 'dispatcher conversion',
     sampleOverride: 'Use the migration skill: convert my dispatcher configuration to AEM as a Cloud Service.',
   },
+  aclPermissions: {
+    label: 'ACLs / Permissions for Migrated Content',
+    severity: 'high',
+    strategy: 'acl-scan',
+    bpaSlugs: [],
+    heuristic: true,
+    alwaysRender: true,
+    description: 'Access-control entries defined in code (`_rep_policy.xml`, inline `rep:policy`, RepoInit `set ACL`) on the migration path, its ancestors and descendants — principals, allow/deny, privileges and restrictions, with a conservative package-filter / acHandling import-eligibility label. Code shows intended ACLs only; the source JCR is the source of truth, and ancestor ACEs are potentially relevant, not proof of effective access. Review-only: nothing is changed.',
+    promptPattern: 'acl review',
+    sampleOverride: 'Use the migration skill: explain the ACL findings in my migration runbook and what I must verify in the source and target repositories.',
+    checklist: [
+      'Export and review the **source JCR ACLs** on each migration path *and its ancestors* (for example with the permissions console or an ACL export). Code shows intended ACLs, not what is actually in the repository.',
+      'Confirm the **intended permissions** for every principal listed, and that those groups exist (or are migrated) on the target.',
+      'For `ancestor` ACLs: they are potentially relevant through inheritance but sit outside the migration set. They are not proof of effective access, because restrictions, other policies, ACE order and group memberships decide the result at runtime. Decide how they reach the target: migrate them, deploy them via RepoInit, or recreate them deliberately.',
+      'For `not-eligible-for-acl-import` / `unknown` code ACLs: do not assume they exist on the target. Even `eligible-for-acl-import` is a configuration signal, not proof that the ACL exists.',
+      'For `acl-clear-review`: review which existing ACLs this package would remove before installing it.',
+      'If the scan status is `incomplete`, treat the ACL review as not done: verify everything directly in the source and target JCR.',
+      'After migration, **validate access** on the target using representative users for each principal.',
+      'CUG and repository-level policies were not scanned.',
+    ],
+  },
 };
 
 // content-scan strategy → the runner that produces that pattern's findings.
@@ -316,6 +338,7 @@ function urcBpaTarget(t) {
  * }>}
  */
 async function gatherFindings(options = {}) {
+  const migrationPaths = validateMigrationPaths(options.migrationPaths);
   const {
     bpaFilePath,
     collectionsDir = './unified-collections',
@@ -325,6 +348,7 @@ async function gatherFindings(options = {}) {
     workspaceRoot = process.cwd(),
     analyzeScript = DEFAULT_ANALYZE_SCRIPT,
     getEffectivePom,
+    aclScan = runAclScan,
   } = options;
 
   const sources = checkAvailableSources({ bpaFilePath, collectionsDir, projectId, mcpFetcher });
@@ -354,6 +378,7 @@ async function gatherFindings(options = {}) {
   const rawFindingsByPattern = {};
   const sourceByPattern = {};
   const scannedBy = {};
+  const scanStatusByPattern = {};
   CANONICAL_PATTERNS.forEach(p => { findingsByPattern[p] = []; rawFindingsByPattern[p] = []; });
 
   const cascadePatterns = CANONICAL_PATTERNS.filter(p => PATTERN_META[p].strategy === 'cascade');
@@ -538,6 +563,22 @@ async function gatherFindings(options = {}) {
     }
   }
 
+  // ── Strategy 'acl-scan': source ACL code (independent of the other tiers) ──
+  if (workspaceRoot) {
+    const res = aclScan(workspaceRoot, { migrationPaths });
+    if (res.warnings && res.warnings.length) scanWarnings.push(...res.warnings);
+    if (res.ok) {
+      findingsByPattern.aclPermissions = res.findings;
+      rawFindingsByPattern.aclPermissions = res.rawFindings;
+      sourceByPattern.aclPermissions = 'acl-scan';
+      scannedBy.aclPermissions = 'acl-scan';
+      scanStatusByPattern.aclPermissions = res.scanStatus;
+    } else {
+      scanWarnings.push(`aclPermissions scan did not run: ${res.error || 'unknown error'}`);
+      scanStatusByPattern.aclPermissions = 'incomplete';
+    }
+  }
+
   // ── Strategy 'content-scan': lui / cdw / templateModernization / dispatcherConversion
   //    (fallback when no BPA source scanned the pattern; dispatcherConversion has no BPA
   //     subtype, so it always runs here) ──────────────────────────────────────
@@ -559,9 +600,21 @@ async function gatherFindings(options = {}) {
   }
 
   // ── Tier 4: anything still unscanned → LLM scan (agent handles it) ───────
-  const needsLlmScan = CANONICAL_PATTERNS.filter(p => !scannedBy[p]);
+  const needsLlmScan = CANONICAL_PATTERNS.filter(p =>
+    !scannedBy[p] || scanStatusByPattern[p] === 'incomplete'
+  );
 
-  return { findingsByPattern, rawFindingsByPattern, sourceByPattern, needsLlmScan, analyzerWarnings: scanWarnings, bpaMode, analyzerUsed };
+  return {
+    findingsByPattern,
+    rawFindingsByPattern,
+    sourceByPattern,
+    needsLlmScan,
+    analyzerWarnings: scanWarnings,
+    bpaMode,
+    analyzerUsed,
+    migrationPaths,
+    scanStatusByPattern,
+  };
 }
 
 /** Build the per-pattern copy-paste sample prompt. */
@@ -640,10 +693,16 @@ function renderRunbook(gathered, ctx = {}) {
   for (const p of CANONICAL_PATTERNS) {
     const meta = PATTERN_META[p];
     const count = actionable(findingsByPattern[p]).length;
-    const src = needsLlmScan.includes(p)
+    let src = needsLlmScan.includes(p)
       ? '_needs LLM scan_'
       : sourceLabel(sourceByPattern[p]);
-    lines.push(`| ${meta.label} | ${meta.severity} | ${count === 0 ? '—' : `**${count}**`} | ${src} |`);
+    if (gathered.scanStatusByPattern?.[p] === 'incomplete') {
+      src += ' — **incomplete — verify in JCR**';
+    }
+    const countLabel = count === 0
+      ? (meta.alwaysRender ? '— (verify in JCR)' : '—')
+      : `**${count}**`;
+    lines.push(`| ${meta.label} | ${meta.severity} | ${countLabel} | ${src} |`);
   }
   lines.push('');
 
@@ -658,8 +717,8 @@ function renderRunbook(gathered, ctx = {}) {
 
   for (const p of CANONICAL_PATTERNS) {
     const targets = findingsByPattern[p];
-    if (targets.length === 0) continue;
     const meta = PATTERN_META[p];
+    if (targets.length === 0 && !meta.alwaysRender) continue;
 
     const actCount = actionable(targets).length;
     const infoCount = targets.length - actCount;
@@ -669,6 +728,10 @@ function renderRunbook(gathered, ctx = {}) {
     lines.push('');
     lines.push(meta.description);
     lines.push('');
+    if (gathered.scanStatusByPattern?.[p] === 'incomplete') {
+      lines.push('> ⚠️ **ACL scan incomplete — verify in JCR.** Treat the ACL review as not done.');
+      lines.push('');
+    }
     if (meta.heuristic) {
       lines.push(`> ⚠️ **Heuristic detection** (${sourceLabel(sourceByPattern[p], 'non-deterministic')}) — these are candidate matches, not compiler/BPA-validated findings. Re-confirm each one before editing.`);
       if (meta.needsReview) {
@@ -676,16 +739,27 @@ function renderRunbook(gathered, ctx = {}) {
       }
       lines.push('');
     }
-    lines.push('### Affected');
-    lines.push('');
-    lines.push('| Location | Detail | Severity |');
-    lines.push('|----------|--------|----------|');
-    for (const t of targets) {
-      const detail = (t.detail || '').replace(/\|/g, '\\|');
-      const location = relPath(t.location, root);
-      lines.push(`| \`${location}\` | \`${detail || '—'}\` | ${t.severity || 'high'} |`);
+    if (targets.length === 0 && meta.alwaysRender) {
+      lines.push('No ACL definitions found in code for the scoped paths. This does not mean the source repository has no ACLs.');
+      lines.push('');
+    } else {
+      lines.push('### Affected');
+      lines.push('');
+      lines.push('| Location | Detail | Severity |');
+      lines.push('|----------|--------|----------|');
+      for (const t of targets) {
+        const detail = (t.detail || '').replace(/\|/g, '\\|');
+        const location = relPath(t.location, root);
+        lines.push(`| \`${location}\` | \`${detail || '—'}\` | ${t.severity || 'high'} |`);
+      }
+      lines.push('');
     }
-    lines.push('');
+    if (meta.checklist) {
+      lines.push('### Customer checklist');
+      lines.push('');
+      for (const item of meta.checklist) lines.push(`- [ ] ${item}`);
+      lines.push('');
+    }
     lines.push('### Sample prompt');
     lines.push('');
     lines.push('```');
@@ -696,7 +770,11 @@ function renderRunbook(gathered, ctx = {}) {
     lines.push('');
   }
 
-  const clean = CANONICAL_PATTERNS.filter(p => findingsByPattern[p].length === 0 && !needsLlmScan.includes(p));
+  const clean = CANONICAL_PATTERNS.filter(p =>
+    findingsByPattern[p].length === 0 &&
+    !needsLlmScan.includes(p) &&
+    !PATTERN_META[p].alwaysRender
+  );
   if (clean.length > 0) {
     lines.push('## Scanned — no findings');
     lines.push('');
@@ -724,6 +802,7 @@ const SOURCE_LABEL = {
   'html-scan': 'HTL scan',
   'config-scan': 'config scan',
   'content-scan': 'content scan',
+  'acl-scan': 'ACL scan',
   llm: 'LLM scan',
 };
 
@@ -758,6 +837,8 @@ function writeRunbookCache(gathered, ctx, cachePath = DEFAULT_CACHE_PATH) {
     // resolves them with `path.join(workspaceRoot, file)`.
     workspaceRoot: root || null,
     sourceByPattern: gathered.sourceByPattern,
+    migrationPaths: gathered.migrationPaths || [],
+    scanStatusByPattern: gathered.scanStatusByPattern || {},
     findingsByPattern: {},
   };
   // Copy raw findings, relativizing `file` and tagging heuristic patterns
@@ -789,15 +870,31 @@ function mergeLlmFindings(gathered, llmByPattern) {
   for (const [pattern, raws] of Object.entries(llmByPattern || {})) {
     if (!CANONICAL_PATTERNS.includes(pattern)) continue;
     const rawArr = Array.isArray(raws) ? raws : [];
-    gathered.rawFindingsByPattern[pattern] = rawArr.map(r => ({
+    const llmRaw = rawArr.map(r => ({
       pattern, file: r.file || null, line: r.line ?? null, snippet: r.snippet ?? null,
     }));
-    gathered.findingsByPattern[pattern] = rawArr.map(r => ({
+    const llmFindings = rawArr.map(r => ({
       location: (r.file && r.line) ? `${r.file}:${r.line}` : (r.file || '—'),
       detail: r.detail || r.snippet || '',
       severity: r.severity || 'high',
     }));
-    gathered.sourceByPattern[pattern] = 'llm';
+    if (gathered.scanStatusByPattern?.[pattern] === 'incomplete') {
+      gathered.rawFindingsByPattern[pattern] = [
+        ...(gathered.rawFindingsByPattern[pattern] || []),
+        ...llmRaw,
+      ];
+      gathered.findingsByPattern[pattern] = [
+        ...(gathered.findingsByPattern[pattern] || []),
+        ...llmFindings,
+      ];
+      gathered.sourceByPattern[pattern] = gathered.sourceByPattern[pattern]
+        ? `${gathered.sourceByPattern[pattern]}+llm`
+        : 'llm';
+    } else {
+      gathered.rawFindingsByPattern[pattern] = llmRaw;
+      gathered.findingsByPattern[pattern] = llmFindings;
+      gathered.sourceByPattern[pattern] = 'llm';
+    }
     gathered.needsLlmScan = gathered.needsLlmScan.filter(p => p !== pattern);
   }
   return gathered;
