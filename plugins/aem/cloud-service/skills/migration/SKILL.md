@@ -71,6 +71,10 @@ Applies to **finding and editing the user's AEM project** (Java, bundles, config
 
 ## Required delegation (do this first)
 
+**ACL review — early, review-only route:** If the request names `aclPermissions`, **ACL review**, or permissions for migrated content, reuse the runbook's ACL findings, scan status and customer checklist. If the runbook is missing or needs refreshing, generate it using **Step 0**, passing every known migration-set path via `--migration-path`. Explain the findings and what the user must verify in the source and target JCR.
+
+**Stop after the ACL review.** Bypass the code-assessment catalog, Branches A–E, and the apply/target handoff below for this review. `aclPermissions` has no apply flow: never edit `_rep_policy.xml`, RepoInit or filters, and never connect to a JCR. Unknown or incomplete input is not clean, and code ACLs do not establish effective access.
+
 **Branch A — OSGi configs → Cloud Manager** (no Java BPA pattern this session): If the user asks to **scan config files**, **create / set up Cloud Manager environment secrets or variables**, move **passwords or secrets** out of **OSGi / `.cfg.json` / `ui.config`**, or mentions **`$[secret:]`** / **`$[env:]`** for AEM CS, then **read [references/osgi-cfg-json-cloud-manager.md](references/osgi-cfg-json-cloud-manager.md) immediately** and follow the **product rules and workflow** defined in that file (Adobe AEM as a Cloud Service OSGi + Cloud Manager behavior is reproduced there—no external doc URL required). Sleek prompts are enough — **no** need to name the reference file. **Skip** branch B for that work.
 
 **Branch B — Java / HTL / BPA pattern migration:**
@@ -249,8 +253,11 @@ The runbook covers **every pattern the migration skill can address**. Each patte
 | `lui`, `cdw`, `templateModernization` | BPA `cascade` → `content-scan` fallback | When a BPA CSV/CAM source is present, these come from BPA (subtypes `custom.classic.widget`; `legacy.dialog.classic`/`.coral2`; `legacy.static.template` + `custom.static.template`). With no BPA source, a heuristic `.content.xml` scan is the fallback — for `templateModernization` it walks `apps/<appId>/templates/**` at **any depth** (nested/grouped templates included) and classifies each static template as `custom.static.template` or `legacy.static.template` from its page-component resource type, so the custom-vs-legacy distinction survives even without a BPA report. Sample prompts route to **Branch D** (legacy-ui) / **Branch C** (templates), not code-assessment |
 | `guavaCache` | `bpa-only` (no analyzer, no content-scan) | BPA is the **sole** source of truth (subtype `custom.guava.cache`), one finding per **bundle** — `identifier` on this subtype is a Guava-internal class, not a customer class, so raw rows are deduped to the bundle named in the message, not surfaced per row. With no BPA source, `guavaCache` has no deterministic fallback and surfaces under **Tier 4 — LLM scan**: the agent greps `.java` files for `import com.google.common.cache` per module, per [references/guava-cache.md](references/guava-cache.md), and tags the result `confidence: llm`. There is deliberately no compiled analyzer detector for this pattern — it does not run inside `code-assessment`'s own discovery. |
 | `dispatcherConversion` | `content-scan` | Heuristic scan for an AMS / on-prem Dispatcher config layout (a monolithic `dispatcher.any` + `conf.vhost.d/`, or `conf.dispatcher.d/` AMS trees). Detected by `dispatcher-inventory.js`; the sample prompt routes to **Branch E**. |
+| `aclPermissions` | `acl-scan` | read-only scan of `_rep_policy.xml` / inline `rep:policy` / RepoInit ACLs on the migration paths, ancestors and descendants — principals, allow/deny, privileges, restrictions, conservative import label; never edits, never connects to a JCR |
 
-`htlLint`, `osgiConfig`, `vault-package-dependencies`, and the content-scan **fallback** for `lui`/`cdw`/`templateModernization` are **heuristic** (tagged `confidence: heuristic` in the cache) — candidate matches, not compiler-validated. BPA-sourced `lui`/`cdw`/`templateModernization`/`replication`/`guavaCache` findings are authoritative. Out of scope: `inject-in-sling-model` and `outdated-dependencies` (those belong to code-assessment's own runbook, not migration).
+`htlLint`, `osgiConfig`, `vault-package-dependencies`, `aclPermissions`, and the content-scan **fallback** for `lui`/`cdw`/`templateModernization` are **heuristic** (tagged `confidence: heuristic` in the cache) — candidate matches, not compiler-validated. BPA-sourced `lui`/`cdw`/`templateModernization`/`replication`/`guavaCache` findings are authoritative. Out of scope: `inject-in-sling-model` and `outdated-dependencies` (those belong to code-assessment's own runbook, not migration).
+
+Absence of ACLs in code is not evidence of correct permissions — the runbook always includes the ACL checklist.
 
 **BPA is the source of truth when a report is available.** `lui`/`cdw`/`templateModernization`/`replication` are read from the BPA CSV/CAM (the parser now extracts these subtypes and excludes `_COUNT_*`/`_STAT` summary rows), so the runbook counts match your BPA report's LUI-dialog / CDW / static-template / REP tallies. `lui` keeps only the dialog sub-types (`legacy.custom.component` → create-component; `legacy.static.template` is counted under `templateModernization`). The `.content.xml` scan is only the fallback when no BPA source is present — and it can **undercount** relative to BPA when the flagged legacy nodes live in packages (e.g. acs-commons) not in the project source. `replication`: BPA `replication.agent` findings when a report is present, else the analyzer detects `Replicator` usage from source.
 
@@ -260,9 +267,11 @@ The runbook is produced by a **single CLI command**. It runs the local analyzer 
 
 1. **Base (always):**
    ```bash
-   node scripts/runbook-generator.js <workspaceRoot> --out ./migration-runbook.md --cache ./migration-runbook.json
+   node scripts/runbook-generator.js <workspaceRoot> [--migration-path <jcrPath> ...] --out ./migration-runbook.md --cache ./migration-runbook.json
    ```
    This alone covers the local analyzer (Java cascade patterns), `html-scan`, `config-scan`, `pom-scan`, and the `content-scan` patterns.
+
+   Pass `--migration-path` for every Content Transfer Tool migration-set path the user named; an invalid value fails with exit code 2.
 
 2. **If you have a BPA CSV:** add `--csv ./reports/bpa.csv`.
 
@@ -287,7 +296,7 @@ After the command finishes, tell the user (numbers come from the printed summary
 
 The command also writes the sidecar findings cache (default `./migration-runbook.json`) alongside the markdown, holding each pattern's raw findings and their source. **Step 3** below reads this cache first before falling back to a live BPA/analyzer/scan lookup.
 
-**Skip Step 0** when the user names a **specific pattern** up front (e.g. *"fix scheduler findings"*, *"fix htlLint in ui.apps"*, *"scan my config files for Cloud Manager secrets"*) — go straight to the relevant apply flow. Step 0 is only for a **broad review/scan** request with no single pattern named.
+**Skip Step 0** when the user names a **specific apply pattern** up front (e.g. *"fix scheduler findings"*, *"fix htlLint in ui.apps"*, *"scan my config files for Cloud Manager secrets"*) — go straight to the relevant apply flow. ACL review uses the early review-only route above; it never enters an apply flow.
 
 > **Advanced (programmatic).** The same behavior is available as an API — `generateRunbook({ workspaceRoot, bpaFilePath, preFetchedBpa, llmByPattern, outputPath, cachePath })` and `mergeLlmFindings(gathered, llmByPattern)` from `./scripts/runbook-generator.js` — for callers that need to drive it in-process (e.g. an in-session `mcpFetcher` instead of `--bpa-json`). Prefer the CLI above; reach for the API only when the CLI can't express what you need.
 
@@ -298,6 +307,8 @@ The command also writes the sidecar findings cache (default `./migration-runbook
 If the user asks to fix everything or BPA mixes patterns, **ask which pattern first**. Prefer one commit per pattern session.
 
 ### Step 1: Pattern id
+
+For `aclPermissions` / ACL review, follow the **early, review-only route** above and stop before catalog availability or target/apply handling.
 
 First check the non-Java branches (routed in full under **Required delegation**), which take **no BPA pattern id**:
 

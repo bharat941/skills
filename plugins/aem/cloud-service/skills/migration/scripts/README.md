@@ -40,6 +40,7 @@ Each pattern declares a **detection strategy** in `PATTERN_META`:
 | `replication` | `cascade` | BPA/CAM → CSV (`replication.agent`) → analyzer → LLM scan |
 | `htlLint` | `html-scan` | `htl-lint-runner.js` (pure-Node regex over `.html`) |
 | `osgiConfig` | `config-scan` | `osgi-config-runner.js` (config-file scan) |
+| `aclPermissions` | `acl-scan` | `acl-scan-runner.js` (code ACLs — review-only, heuristic) |
 | `lui`, `cdw`, `templateModernization` | BPA + `content-scan` | BPA/CAM → CSV first (`legacy-ui-runner.js` / `template-scan-runner.js` as fallback) |
 | `dispatcherConversion` | `content-scan` | `dispatcher-inventory.js` (`runDispatcherScan` — heuristic, no BPA subtype) |
 
@@ -65,6 +66,7 @@ const result = await generateRunbook({
 **CLI (the canonical Step-0 path — one command, no in-process bridge):**
 ```bash
 node scripts/runbook-generator.js <workspaceRoot> \
+  [--migration-path <jcrPath> ...] \
   [--csv <bpaFilePath>] \
   [--bpa-json <file>] \      # pre-fetched CAM/MCP findings, { "<slug>": [ <target>, … ] } — no mcpFetcher bridge needed
   [--llm-findings <file>] \  # Tier-4 results, { "<pattern>": [ { file, line, snippet }, … ] } — merged + re-rendered in one pass
@@ -86,6 +88,14 @@ The `html-scan` strategy for `htlLint`. Pure-Node fs walk + regex over `.html` f
 ### `osgi-config-runner.js`
 
 The `config-scan` strategy for `osgiConfig`. Scans OSGi config files (`.cfg.json`, legacy `.cfg`/`.config`) under `config*` folders for secret-looking keys and `$[secret:]`/`$[env:]` placeholders, per `{migration}/references/osgi-cfg-json-cloud-manager.md`. **Reports key names + locations only — never secret values** (the runbook is written to disk / often committed). Heuristic and review-only: classification (real secret? Adobe-owned PID?) is deferred to apply time.
+
+### `acl-scan-runner.js`
+
+The `acl-scan` strategy for `aclPermissions`. `runAclScan(workspaceRoot, { migrationPaths })` reads FileVault `_rep_policy.xml` and inline `.content.xml` policies plus Sling RepoInit initializer configs and in-workspace `file:` references. It is read-only and has no JCR connection. Pass repeatable absolute JCR migration paths to focus findings; without paths, findings are explicitly unscoped. Parent policies are marked **potentially relevant (inherited)**, not treated as proof of effective access. Restrictions, other policies, and principal memberships still require runtime validation. Unreadable files make the scan incomplete; unknown or malformed ACL input is never treated as clean. Findings are heuristic and review-only.
+
+Package metadata comes from the nearest directory with sibling `jcr_root/` and `META-INF/vault/` directories, normally `src/main/content/`. POM handling is limited to FileVault/content-package plugin configuration; comments and unrelated plugins cannot establish eligibility, and ambiguous settings remain unknown. Standard Java-properties declarations are accepted without fetching a DTD. `acHandling: not-set` notes FileVault's default of `ignore`, but retains an unknown verdict because build/install configuration is not visible.
+
+RepoInit config values must be strings or string arrays; multiline Felix arrays and legacy property continuations are supported. Malformed configs warn and retain an unknown finding. Cached ACE status is `parsed` or `unknown`, distinct from scan status `complete` or `incomplete`. Unreadable ACL files retain per-file unknown entries, and LLM merges append to deterministic ACL findings even after a complete scan. The ACL API requires an explicit `workspaceRoot`; a missing root or scanner exception keeps the review incomplete (the CLI supplies its current directory when no root is named).
 
 ### `legacy-ui-runner.js`
 
