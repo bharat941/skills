@@ -30,9 +30,9 @@ Every view renders the same fix list. A fix is one section of a page (or of a te
 | Visual sections (all viewports together) | section | `Section root-container looks different (12.5% of pixels)` |
 | Everything else | check | the finding's summary |
 
-The fix id is the area letter (`C` content, `V` visual, `I` integration) and 6 hex characters of a hash of that scope. It does not include the page, so the same problem keeps its id when it appears on more or fewer pages, and across runs.
+The fix id is the area letter (`C` content, `V` visual, `I` integration) and 8 hex characters of a hash of that scope. It does not include the page, so the same problem keeps its id when it appears on more or fewer pages, and across runs.
 
-`fixes.json` is `{ generatedAt, source, destination, verdict, parity, fixes, fixed }`. Each fix: `id, priority, area, title, section, component, fixType (content | code | config), owner, checks, pages [{ source, destination }], siteWide, count, expected, actual, items (up to 50, each with its page), truncated, evidence { before, after, diff }` (visual fixes) and, with `--baseline`, `status` (`new` or `open`). `fixed` lists the earlier run's fixes whose ids are gone.
+`fixes.json` is `{ generatedAt, source, destination, verdict, parity, fixes, fixed, notRechecked, accepted }`. Each fix: `id, priority, area, title, section, component, fixType (content | code | config), owner, checks, pages [{ source, destination }], siteWide, count, expected, actual, items (up to 50, each with its page), truncated, evidence { before, after, diff }` (visual fixes) and, with `--baseline`, `status` (`new` or `open`). `fixed`, `notRechecked` and `accepted` list the earlier run's fixes whose ids are gone (see `--baseline`). For placeholder, empty-state and new text, `expected` is empty and `actual` is the text found on the destination.
 
 **Parity:** content parity is 100 minus the share of source text missing on the destination; visual parity is the share of source sections (at every viewport) that match. The run value is the mean over compared pages; a page that could not be compared has none.
 
@@ -81,7 +81,7 @@ One row per fix: `fix_id, priority, area, section, fix_type, owner, problem, how
 
 ## --baseline
 
-`--baseline <dir>` reads `<dir>/fixes.json` from an earlier run (the earlier `--out` folder). Current fixes whose id is in it are `open`, others `new`; earlier fixes whose id is gone are listed under "Fixed since last run". A missing or invalid `fixes.json` stops the run with exit code 2 before any page loads.
+`--baseline <dir>` reads `<dir>/fixes.json` from an earlier run (the earlier `--out` folder). Current fixes whose id is in it are `open`, others `new`. An earlier fix whose id is gone is **fixed** only when every page it was on was compared in this run; if some of its pages were not compared (a rerun of a subset, or a blocked page) it is **not rechecked**, and if the difference was accepted it is **accepted**. Page files in a multi-page run do not repeat the run-wide progress. A missing or invalid `fixes.json` stops the run with exit code 2 before any page loads.
 
 ## accepted.json
 

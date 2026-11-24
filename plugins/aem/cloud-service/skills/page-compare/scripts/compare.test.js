@@ -517,8 +517,8 @@ test('issues.csv and pages.csv carry the priority', () => {
   const files = renderMarkdownFiles(leadRun());
   const issues = csvRows(files['issues.csv']);
   assert.match(issues[0], /^fix_id,priority,area,/);
-  assert.match(issues[1], /^C-[0-9a-f]{6},P1,/);
-  assert.ok(issues.some((r) => /^I-[0-9a-f]{6},expected,/.test(r) && r.includes('robots.txt')));
+  assert.match(issues[1], /^C-[0-9a-f]{8},P1,/);
+  assert.ok(issues.some((r) => /^I-[0-9a-f]{8},expected,/.test(r) && r.includes('robots.txt')));
   const pages = csvRows(files['pages.csv']);
   assert.match(pages[1], /,fail,pass,fail,3,1,2,1,0,/);
 });
@@ -936,7 +936,7 @@ test('report: --rules priority overrides reach report.md, issues.csv and pages.c
   const rules = { ...RULES, priority: { ...RULES.priority, 'nav.item': 'P1' } };
   const files = renderMarkdownFiles(run, rules);
   assert.match(files['report.md'], /\*\*Not ready: 1 blocker\*\*/);
-  assert.match(files['issues.csv'].split('\n')[1], /^[CVI]-[0-9a-f]{6},P1,/);
+  assert.match(files['issues.csv'].split('\n')[1], /^[CVI]-[0-9a-f]{8},P1,/);
   assert.match(files['pages.csv'].split('\n')[1], /,0,1,1,0,0,/);
   assert.match(renderMarkdownFiles(run)['report.md'], /No blocking differences found/);
 });
@@ -1059,7 +1059,7 @@ test('fixes: id is the same for the same problem on 1 page and on 3 pages', () =
   const one = buildFixes(actionRun([pairOf(1, f())]))[0];
   const three = buildFixes(actionRun([pairOf(1, f()), pairOf(2, f()), pairOf(3, f())]))[0];
   assert.equal(one.id, three.id);
-  assert.match(one.id, /^C-[0-9a-f]{6}$/);
+  assert.match(one.id, /^C-[0-9a-f]{8}$/);
   assert.equal(three.pages.length, 3);
 });
 
@@ -1136,11 +1136,11 @@ test('reportModel: single pair shows URLs, many pairs show hosts; verdict from f
 test('fixes.json parses and every fix has id, priority, area, title, fixType, pages, expected, actual', () => {
   const files = renderMarkdownFiles(leadRun());
   const data = JSON.parse(files['fixes.json']);
-  assert.deepEqual(Object.keys(data).sort(), ['destination', 'fixed', 'fixes', 'generatedAt', 'parity', 'source', 'verdict']);
+  assert.deepEqual(Object.keys(data).sort(), ['accepted', 'destination', 'fixed', 'fixes', 'generatedAt', 'notRechecked', 'parity', 'source', 'verdict']);
   assert.ok(data.fixes.length > 0);
   for (const f of data.fixes) {
     for (const k of ['id', 'priority', 'area', 'title', 'section', 'component', 'fixType', 'owner', 'pages', 'expected', 'actual', 'count']) assert.ok(k in f, `${f.id} lacks ${k}`);
-    assert.match(f.id, /^[CVI]-[0-9a-f]{6}$/);
+    assert.match(f.id, /^[CVI]-[0-9a-f]{8}$/);
   }
   assert.equal(data.verdict.label, 'Not ready');
 });
@@ -1205,14 +1205,14 @@ test('report.md: verdict and scorecard with content and visual parity', () => {
 test('report.md: fix rows show id, section, and source vs destination with changed figures in bold', () => {
   const md = toMarkdown(fixRun());
   const content = md.split('## Content parity')[1].split('\n## ')[0];
-  assert.match(content, /\| `C-[0-9a-f]{6}` \| 🔴 P1 \| Key features \| Key features: figures changed \(1\.25, 25% → 1\.3, 20%\) \| With speeds up to \*\*1\.25\*\* times faster and \*\*25%\*\*[^|]*\| With speeds \*\*1\.3\*\* times faster and \*\*20%\*\*[^|]*\| content \|/);
+  assert.match(content, /\| `C-[0-9a-f]{8}` \| 🔴 P1 \| Key features \| Key features: figures changed \(1\.25, 25% → 1\.3, 20%\) \| With speeds up to \*\*1\.25\*\* times faster and \*\*25%\*\*[^|]*\| With speeds \*\*1\.3\*\* times faster and \*\*20%\*\*[^|]*\| content \|/);
   assert.match(content, /\| FAQs \| FAQs: 1 text block\(s\) missing \| What is LPDDR5X\? \| — \| content \|/);
-  assert.match(content, /\*\*Minor:\*\* Header: 1 item\(s\) missing \(`C-[0-9a-f]{6}`\)/);
+  assert.match(content, /\*\*Minor:\*\* Header: 1 item\(s\) missing \(`C-[0-9a-f]{8}`\)/);
 });
 
 test('report.md: visual fixes link source, destination and diff screenshots', () => {
   const visual = toMarkdown(fixRun()).split('## Visual parity')[1].split('\n## ')[0];
-  assert.match(visual, /\| `V-[0-9a-f]{6}` \| 🟠 P2 \| root-container \| Section root-container looks different \(12% of pixels\) \| \[source\]\(pairs\/lp-1\/visual\/b\.png\) · \[destination\]\(pairs\/lp-1\/visual\/a\.png\) · \[diff\]\(pairs\/lp-1\/visual\/d\.png\) \|/);
+  assert.match(visual, /\| `V-[0-9a-f]{8}` \| 🟠 P2 \| root-container \| Section root-container looks different \(12% of pixels\) \| \[source\]\(pairs\/lp-1\/visual\/b\.png\) · \[destination\]\(pairs\/lp-1\/visual\/a\.png\) · \[diff\]\(pairs\/lp-1\/visual\/d\.png\) \|/);
 });
 
 test('report.md: integration lists broken links as Status | Link | Link text', () => {
@@ -1224,7 +1224,7 @@ test('report.md: integration lists broken links as Status | Link | Link text', (
 test('report.md: expected-on-preview items are listed with their ids, not as fixes', () => {
   const md = toMarkdown(fixRun());
   const expected = md.split('## Expected on preview — recheck at launch')[1].split('\n## ')[0];
-  assert.match(expected, /- robots\.txt on the after site disallows everything \(Disallow: \/ for all agents\) \(`I-[0-9a-f]{6}`\)/);
+  assert.match(expected, /- robots\.txt on the after site disallows everything \(Disallow: \/ for all agents\) \(`I-[0-9a-f]{8}`\)/);
   assert.match(expected, /- Report suite differs from the before page: prodsuite → testsuite/);
   assert.ok(!/robots\.txt/.test(md.split('## Integration & SEO')[1].split('\n## ')[0]));
 });
@@ -1442,4 +1442,53 @@ test('html: images load eagerly (printable) and embedding stops at the byte budg
   const budget = htmlOut(reportModel(fixRun()), { embedBytes: PNG_1PX.length * 2 });
   assert.equal((budget.match(/src="data:image\/png;base64,/g) || []).length, 2);
   assert.match(budget, /src="pairs\/lp-1\/visual\/d\.png"/);
+});
+
+// ---------- final review fixes ----------
+
+test('fixes: placeholder, empty-state and added text are destination values, not source values', () => {
+  const run = actionRun([pairOf(1, [
+    { check: 'content.placeholder', severity: 'fail', summary: '1 placeholder text(s) on the after page', items: [{ text: 'Disclaimer text 1', region: 'main', heading: 'Key features' }] },
+    { check: 'content.text.added', severity: 'review', summary: '1 new text block(s) on the after page', items: [{ text: 'Brand new copy', region: 'main', heading: 'Intro' }] },
+  ])]);
+  const fixes = buildFixes(run);
+  const ph = fixes.find((f) => f.checks.includes('content.placeholder'));
+  assert.deepEqual([ph.expected, ph.actual], ['', 'Disclaimer text 1']);
+  const added = fixes.find((f) => f.checks.includes('content.text.added'));
+  assert.deepEqual([added.expected, added.actual], ['', 'Brand new copy']);
+});
+
+test('baseline: fixes on pages not compared this run are not rechecked, not fixed', () => {
+  const brokenLink = (i) => ({ check: 'link.broken', severity: 'fail', summary: '1 link', items: [{ url: `https://www.a.com/gone-${i}`, status: 404 }] });
+  const first = JSON.parse(renderMarkdownFiles(actionRun([pairOf(1, [brokenLink(1)]), pairOf(2, [brokenLink(2)]), pairOf(3, [brokenLink(3)])]))['fixes.json']);
+  const subset = renderMarkdownFiles(actionRun([pairOf(1, [brokenLink(1)])]), undefined, first);
+  const json = JSON.parse(subset['fixes.json']);
+  assert.deepEqual(json.fixed, []);
+  assert.equal(json.notRechecked.length, 2);
+  assert.match(subset['report.md'], /0 fixed, 0 new, 2 not rechecked\./);
+  const blocked = JSON.parse(renderMarkdownFiles(actionRun([pairOf(1, [brokenLink(1)]), pairOf(2, [], { blocked: 'waf', status: 'blocked' }), pairOf(3, [])]), undefined, first)['fixes.json']);
+  assert.deepEqual(blocked.fixed.map((f) => f.title), ['Link to /gone-3 returns 404 (1 link(s))']);
+  assert.equal(blocked.notRechecked.length, 1);
+});
+
+test('baseline: an accepted difference is listed as accepted, not fixed', () => {
+  const f = () => ({ check: 'meta.title', severity: 'fail', summary: 'Title changed', before: 'A', after: 'B' });
+  const first = JSON.parse(renderMarkdownFiles(actionRun([pairOf(1, [f()])]))['fixes.json']);
+  const json = JSON.parse(renderMarkdownFiles(actionRun([pairOf(1, [{ ...f(), accepted: { reason: 'new title' } }])]), undefined, first)['fixes.json']);
+  assert.deepEqual(json.fixed, []);
+  assert.equal(json.accepted.length, 1);
+});
+
+test('baseline: per-page reports in a multi-page run do not show run-wide progress', () => {
+  const brokenLink = (i) => ({ check: 'link.broken', severity: 'fail', summary: '1 link', items: [{ url: `https://www.a.com/gone-${i}`, status: 404 }] });
+  const first = JSON.parse(renderMarkdownFiles(actionRun([pairOf(1, [brokenLink(1)]), pairOf(2, [brokenLink(2)])]))['fixes.json']);
+  const files = renderMarkdownFiles(actionRun([pairOf(1, [brokenLink(1)]), pairOf(2, [])]), undefined, first);
+  const page = files['pages/p1.md'];
+  assert.ok(!/^Since /m.test(page), page);
+  assert.ok(!/^## Fixed since last run/m.test(page));
+  assert.match(files['report.md'], /1 fixed, 0 new/);
+});
+
+test('fixes: ids are 8 hex characters', () => {
+  assert.match(fixId('content', 'x'), /^C-[0-9a-f]{8}$/);
 });

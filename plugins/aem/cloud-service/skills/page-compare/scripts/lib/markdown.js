@@ -165,14 +165,20 @@ function areaSection(model, area, prefix) {
 function progressLine(model) {
   const p1 = model.fixes.filter((f) => f.priority === 'P1').length;
   const fresh = model.fixes.filter((f) => f.status === 'new').length;
-  return `Since ${String(model.baselineAt || 'the last run').slice(0, 10)}: P1 ${model.baselineP1} → ${p1}, ${model.fixed.length} fixed, ${fresh} new.`;
+  const extra = [(model.notRechecked || []).length && `${model.notRechecked.length} not rechecked`, (model.accepted || []).length && `${model.accepted.length} accepted`].filter(Boolean);
+  return `Since ${String(model.baselineAt || 'the last run').slice(0, 10)}: P1 ${model.baselineP1} → ${p1}, ${model.fixed.length} fixed, ${fresh} new${extra.map((e) => `, ${e}`).join('')}.`;
 }
 
 function fixedSection(model) {
   if (!model.hasBaseline) return [];
-  if (!model.fixed.length) return ['## Fixed since last run', '_Nothing from the last run is fixed yet._'];
+  const out = ['## Fixed since last run'];
+  if (!model.fixed.length) out.push('_Nothing from the last run is fixed yet._');
   const shown = model.fixed.slice(0, MAX_FIXES * 2);
-  return ['## Fixed since last run', shown.map((f) => `- ${cell(f.title || f.id, 200)} (${idCell(f)})`).join('\n'), ...more(model.fixed, shown.length)];
+  if (shown.length) out.push(shown.map((f) => `- ${cell(f.title || f.id, 200)} (${idCell(f)})`).join('\n'), ...more(model.fixed, shown.length));
+  const ids = (list) => list.slice(0, MAX_FIXES).map(idCell).join(', ') + (list.length > MAX_FIXES ? ', …' : '');
+  if ((model.notRechecked || []).length) out.push(`_Not rechecked (their pages were not compared in this run): ${ids(model.notRechecked)}._`);
+  if ((model.accepted || []).length) out.push(`_Accepted as intended: ${ids(model.accepted)}._`);
+  return out;
 }
 
 function expectedSection(model) {
@@ -237,8 +243,8 @@ function issuesCsv(fixes) {
 
 /** fixes.json: the fix list an agent works from. */
 function fixesJson(model) {
-  const { generatedAt, source, destination, verdict, parity, fixes, fixed } = model;
-  return `${JSON.stringify({ generatedAt, source, destination, verdict, parity, fixes, fixed }, null, 2)}\n`;
+  const { generatedAt, source, destination, verdict, parity, fixes, fixed, notRechecked = [], accepted = [] } = model;
+  return `${JSON.stringify({ generatedAt, source, destination, verdict, parity, fixes, fixed, notRechecked, accepted }, null, 2)}\n`;
 }
 
 // ---------- pages ----------

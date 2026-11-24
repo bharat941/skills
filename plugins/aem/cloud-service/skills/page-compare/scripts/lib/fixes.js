@@ -21,10 +21,12 @@ const MISSING = new Set(['content.text.missing', 'image.missing']);
 const ASSET = new Set(['image.broken', 'request.failed', 'image.alt.changed']);
 const VISUAL = new Set(['visual.section.missing', 'visual.section', 'visual.height']);
 const CHROME_REGIONS = new Set(['header', 'footer']);
+// Checks whose items are text found on the destination page, not text the source had.
+const DESTINATION_TEXT = new Set(['content.placeholder', 'content.empty_state', 'content.text.added']);
 
-/** Stable id for a fix: area letter + 6 hex of sha1(scope key). The scope key never contains the page. */
+/** Stable id for a fix: area letter + 8 hex of sha1(scope key). The scope key never contains the page. */
 function fixId(area, scopeKey) {
-  return `${AREA_LETTER[area] || 'I'}-${crypto.createHash('sha1').update(scopeKey).digest('hex').slice(0, 6)}`;
+  return `${AREA_LETTER[area] || 'I'}-${crypto.createHash('sha1').update(scopeKey).digest('hex').slice(0, 8)}`;
 }
 
 /** A readable name for a visual section id: "main-3:#cm-semi-breadcrumb" → "cm-semi-breadcrumb". */
@@ -90,7 +92,7 @@ function valuesOf(f, it) {
     if (f.check === 'link.broken' || f.check === 'request.failed') return { expected: '', actual: `${it.url || it.src} → ${it.status || 'failed'}` };
     if (f.check === 'image.broken') return { expected: '', actual: `${it.src} → fails to load` };
     if (it.before !== undefined || it.after !== undefined) return { expected: it.before, actual: it.after };
-    if (it.text !== undefined) return { expected: it.text, actual: '' };
+    if (it.text !== undefined) return DESTINATION_TEXT.has(f.check) ? { expected: '', actual: it.text } : { expected: it.text, actual: '' };
     if (it.src !== undefined) return { expected: it.src, actual: '' };
   }
   if (f.before !== undefined || f.after !== undefined) return { expected: f.before, actual: f.after };
@@ -290,7 +292,14 @@ function reportModel(run, rules = DEFAULT_RULES, baseline = null) {
   const pairs = run.pairs || [];
   const single = pairs.length === 1;
   const built = buildFixes(run, rules);
-  const { fixes, fixed } = baseline ? applyBaseline(built, baseline) : { fixes: built, fixed: [] };
+  let compared = new Set();
+  let acceptedIds = new Set();
+  if (baseline) {
+    compared = new Set(pairs.filter((p) => !p.blocked && !p.error).map((p) => p.after));
+    const unaccepted = { ...run, pairs: pairs.map((p) => ({ ...p, findings: (p.findings || []).map(({ accepted, ...f }) => f) })) };
+    acceptedIds = new Set(buildFixes(unaccepted, rules).map((f) => f.id));
+  }
+  const { fixes, fixed, notRechecked, accepted } = baseline ? applyBaseline(built, baseline, { compared, acceptedIds }) : { fixes: built, fixed: [], notRechecked: [], accepted: [] };
   const notCompared = pairs.filter((p) => p.blocked || p.error).length;
   const model = {
     generatedAt: run.generatedAt,
@@ -302,6 +311,8 @@ function reportModel(run, rules = DEFAULT_RULES, baseline = null) {
     parity: runParity(pairs),
     fixes,
     fixed,
+    notRechecked,
+    accepted,
     hasBaseline: !!baseline,
     baselineAt: baseline ? baseline.generatedAt || null : null,
     baselineP1: baseline ? (baseline.fixes || []).filter((f) => f.priority === 'P1').length : null,
@@ -327,13 +338,26 @@ function loadBaseline(dir) {
   return data;
 }
 
-/** Marks fixes as new or open against an earlier run, and lists the earlier fixes that are gone. */
-function applyBaseline(fixes, baseline) {
+/**
+ * Marks fixes as new or open against an earlier run. An earlier fix that is gone counts as fixed only when
+ * every page it was on was compared this run (site-wide fixes: when any page was); otherwise it is not rechecked.
+ * One that is gone because the difference was accepted is listed as accepted.
+ * Without `compared`, every page counts as compared.
+ */
+function applyBaseline(fixes, baseline, { compared = null, acceptedIds = new Set() } = {}) {
   const before = new Set((baseline.fixes || []).map((f) => f.id));
   const now = new Set(fixes.map((f) => f.id));
+  const rechecked = (f) => {
+    if (!compared) return true;
+    const pages = Array.isArray(f.pages) ? f.pages : [];
+    return pages.length ? pages.every((p) => compared.has(p.destination)) : compared.size > 0;
+  };
+  const gone = (baseline.fixes || []).filter((f) => !now.has(f.id));
   return {
     fixes: fixes.map((f) => ({ ...f, status: before.has(f.id) ? 'open' : 'new' })),
-    fixed: (baseline.fixes || []).filter((f) => !now.has(f.id)),
+    fixed: gone.filter((f) => !acceptedIds.has(f.id) && rechecked(f)),
+    notRechecked: gone.filter((f) => !acceptedIds.has(f.id) && !rechecked(f)),
+    accepted: gone.filter((f) => acceptedIds.has(f.id)),
   };
 }
 
@@ -354,6 +378,10 @@ function pageModel(model, pair) {
     parity: pageParity(pair),
     fixes,
     fixed: [],
+    notRechecked: [],
+    accepted: [],
+    // Progress is run-wide; a page file does not repeat it.
+    hasBaseline: false,
     pair,
     verdict: verdictOf(fixes, { notCompared: pair.blocked || pair.error ? 1 : 0, pages: 1 }),
   };

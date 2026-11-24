@@ -7,6 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const { numbersIn } = require('./content');
 const { pathOf } = require('./actions');
+const { progressLine } = require('./markdown');
 
 const AREAS = [['content', 'Content parity', 'Content'], ['visual', 'Visual parity', 'Visual'], ['integration', 'Integration & SEO', 'Integration & SEO']];
 const PRIORITY_TEXT = { P1: 'P1 Blocker', P2: 'P2 Major', P3: 'P3 Minor', expected: 'Expected' };
@@ -86,7 +87,7 @@ function renderLeadershipHtml(model, { outDir = '.', embedMax = 12, embedBytes =
     const src = embed ? `data:image/png;base64,${fs.readFileSync(file).toString('base64')}` : encodeURI(rel);
     return `<figure><div class="frame"><img src="${esc(src)}" alt="${esc(caption)}"></div><figcaption>${esc(caption)}</figcaption></figure>`;
   };
-  const progress = (m) => `Since ${String(m.baselineAt || 'the last run').slice(0, 10)}: P1 ${m.baselineP1} → ${m.fixes.filter((f) => f.priority === 'P1').length}, ${m.fixed.length} fixed, ${m.fixes.filter((f) => f.status === 'new').length} new.`;
+  const progress = (m) => progressLine(m);
   const chip = (p) => `<span class="chip ${esc(p)}">${esc(PRIORITY_TEXT[p] || p)}</span>`;
   const pagesText = (f) => (f.siteWide ? 'site-wide' : f.pages.length === 1 ? pathOf({ after: f.pages[0].destination }) : `${f.pages.length} pages`);
   const sub = (f) => [f.section && `Section: ${f.section}`, f.component && f.component !== f.section && `Component: ${f.component}`, `Pages: ${pagesText(f)}`, `Fix type: ${f.fixType}`, `Owner: ${f.owner}`].filter(Boolean).map(esc).join(' · ');

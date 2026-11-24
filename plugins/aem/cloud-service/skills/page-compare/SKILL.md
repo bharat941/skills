@@ -107,7 +107,7 @@ When asked to fix what a report found:
 2. Take fixes by priority, P1 first. Skip `expected`: those are fine on a preview host.
 3. Only take a `fixType` you can change: `content` needs author or repository access to the AEM content (text, images, links), `code` needs the front-end code, `config` needs Dispatcher, CDN, SEO or analytics setup. Report the others with their ids instead of guessing.
 4. Fix one id at a time. Fixes that share a cause (all images under one path, one broken link on many pages) are already one fix: fix the cause once.
-5. Verify: run the same comparison again for the affected pages with `--baseline <the earlier --out folder>`. A fix is done when its id is listed under "Fixed since last run"; never claim it is done before that.
+5. Verify: run the comparison again with `--baseline <the earlier --out folder>`, covering every page the fix lists. A fix is done when its id is listed under "Fixed since last run"; an id listed as "not rechecked" means some of its pages were not in the rerun. Never claim a fix is done before that.
 
 ## Accepting differences
 
