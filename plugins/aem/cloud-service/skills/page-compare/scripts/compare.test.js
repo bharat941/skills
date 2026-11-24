@@ -1434,3 +1434,11 @@ e2e('capture: a heading with hidden responsive copies is read once; a cookie com
     await browser.close();
   }
 });
+
+test('html: images load eagerly (printable) and embedding stops at the byte budget', () => {
+  const html = htmlOut(reportModel(fixRun()));
+  assert.ok(!/loading="lazy"/.test(html));
+  const budget = htmlOut(reportModel(fixRun()), { embedBytes: PNG_1PX.length * 2 });
+  assert.equal((budget.match(/src="data:image\/png;base64,/g) || []).length, 2);
+  assert.match(budget, /src="pairs\/lp-1\/visual\/d\.png"/);
+});

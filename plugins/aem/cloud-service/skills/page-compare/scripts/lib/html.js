@@ -63,22 +63,28 @@ const CSS = `
 .chip{display:inline-block;border-radius:999px;padding:1px 9px;font-size:12px;font-weight:600;white-space:nowrap}.P1{background:#fde2e2;color:#9b1c1c}.P2{background:#ffedd5;color:#9a3412}.P3{background:#fef9c3;color:#854d0e}.expected{background:#eef0f3;color:#475467}
 .card{background:#fff;border:1px solid #e3e5e8;border-radius:10px;padding:14px 16px;margin:10px 0;break-inside:avoid}.card .top{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}.card .t{font-weight:600;font-size:15px}.card .id{margin-left:auto;font:12px ui-monospace,Menlo,monospace;color:#5b6370}
 .card .sub{color:#5b6370;font-size:13px;margin-top:2px}.sxs{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}.sxs>div{background:#f8f9fb;border-radius:8px;padding:10px}.sxs .h{font-size:12px;color:#5b6370;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px}
-.shots{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:10px}.shots figure{margin:0}.shots img{width:100%;border:1px solid #e3e5e8;border-radius:6px;background:#fff}.shots figcaption{font-size:12px;color:#5b6370}.na{border:1px dashed #cfd4da;border-radius:6px;padding:24px 8px;text-align:center;color:#8a93a0;font-size:12px}
+.shots{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:10px}.shots figure{margin:0}.shots .frame{max-height:520px;overflow:auto;border:1px solid #e3e5e8;border-radius:6px;background:#fff}.shots img{width:100%;display:block}.shots figcaption{font-size:12px;color:#5b6370}.na{border:1px dashed #cfd4da;border-radius:6px;padding:24px 8px;text-align:center;color:#8a93a0;font-size:12px}
 mark{background:#fde68a;padding:0 2px;border-radius:3px}table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #e3e5e8;border-radius:10px;overflow:hidden;margin:8px 0}th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #eef0f3;vertical-align:top}th{background:#f8f9fb;font-size:12px;color:#5b6370;text-transform:uppercase;letter-spacing:.04em}td{word-break:break-word}
 details{background:#fff;border:1px solid #e3e5e8;border-radius:10px;padding:10px 16px;margin:10px 0}summary{cursor:pointer;font-weight:600}ul{margin:6px 0;padding-left:20px}.empty{color:#5b6370;font-style:italic}.foot{margin-top:40px;color:#5b6370;font-size:13px}code{font:12px ui-monospace,Menlo,monospace;background:#eef0f3;padding:1px 4px;border-radius:4px}
-@media print{body{background:#fff}.wrap{padding:0}.card,table,details,.tile{break-inside:avoid}details{display:block}}
+@media print{body{background:#fff}.wrap{padding:0}.shots .frame{max-height:none;overflow:visible}.card,table,details,.tile{break-inside:avoid}details{display:block}}
 `;
 
-/** report.html for a report model. Screenshots are read from outDir; the first embedMax are embedded, the rest linked. */
-function renderLeadershipHtml(model, { outDir = '.', embedMax = 12 } = {}) {
+/** report.html for a report model. Screenshots are read from outDir; up to embedMax of them and embedBytes in total are embedded, the rest linked. */
+function renderLeadershipHtml(model, { outDir = '.', embedMax = 12, embedBytes = 5000000 } = {}) {
   let embedded = 0;
+  let bytes = 0;
   const img = (rel, caption) => {
     if (!rel) return `<figure><div class="na">screenshot not available</div><figcaption>${esc(caption)}</figcaption></figure>`;
     const file = path.join(outDir, rel);
     if (!fs.existsSync(file)) return `<figure><div class="na">screenshot not available</div><figcaption>${esc(caption)}</figcaption></figure>`;
-    const src = embedded < embedMax ? `data:image/png;base64,${fs.readFileSync(file).toString('base64')}` : encodeURI(rel);
-    if (embedded < embedMax) embedded++;
-    return `<figure><img src="${esc(src)}" alt="${esc(caption)}" loading="lazy"><figcaption>${esc(caption)}</figcaption></figure>`;
+    const size = fs.statSync(file).size;
+    const embed = embedded < embedMax && bytes + size <= embedBytes;
+    if (embed) {
+      embedded++;
+      bytes += size;
+    }
+    const src = embed ? `data:image/png;base64,${fs.readFileSync(file).toString('base64')}` : encodeURI(rel);
+    return `<figure><div class="frame"><img src="${esc(src)}" alt="${esc(caption)}"></div><figcaption>${esc(caption)}</figcaption></figure>`;
   };
   const progress = (m) => `Since ${String(m.baselineAt || 'the last run').slice(0, 10)}: P1 ${m.baselineP1} → ${m.fixes.filter((f) => f.priority === 'P1').length}, ${m.fixed.length} fixed, ${m.fixes.filter((f) => f.status === 'new').length} new.`;
   const chip = (p) => `<span class="chip ${esc(p)}">${esc(PRIORITY_TEXT[p] || p)}</span>`;
