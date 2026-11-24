@@ -34,6 +34,9 @@ function numbersIn(text) {
   return [...String(text || '').matchAll(NUMBER)].map((m) => m[0].toLowerCase().replace(/\s+/g, ''));
 }
 
+/** Heading and component of a block or image, when the capture recorded them. */
+const placeOf = (x) => ({ ...(x.heading !== undefined ? { heading: x.heading } : {}), ...(x.component !== undefined ? { component: x.component } : {}) });
+
 const sameNumbers = (a, b) => a.length === b.length && [...a].sort().join('|') === [...b].sort().join('|');
 
 function diffBlocks(beforeBlocks, afterBlocks, volatile = []) {
@@ -80,11 +83,11 @@ function diffBlocks(beforeBlocks, afterBlocks, volatile = []) {
     }
     if (best && bestSim >= 0.85) {
       available.delete(best);
-      changed.push({ before: b.text, after: best.text, similarity: round(bestSim), region: b.region, hidden: !!b.hidden, numbersBefore: numbersIn(b.text), numbersAfter: numbersIn(best.text) });
+      changed.push({ before: b.text, after: best.text, similarity: round(bestSim), region: b.region, hidden: !!b.hidden, numbersBefore: numbersIn(b.text), numbersAfter: numbersIn(best.text), ...placeOf(b) });
     } else if (allAfter.includes(` ${b.norm} `)) {
       regrouped++;
     } else {
-      missing.push({ text: b.text, region: b.region, hidden: !!b.hidden, chars: b.norm.length, norm: b.norm });
+      missing.push({ text: b.text, region: b.region, hidden: !!b.hidden, chars: b.norm.length, norm: b.norm, ...placeOf(b) });
     }
   }
   const addedRaw = [...available].filter((a) => !allBefore.includes(` ${a.norm} `));
@@ -106,10 +109,10 @@ function diffBlocks(beforeBlocks, afterBlocks, volatile = []) {
     if (usedM.has(m) || usedA.has(a)) continue;
     usedM.add(m);
     usedA.add(a);
-    rewritten.push({ before: m.text, after: a.text, similarity: round(s), region: m.region, hidden: m.hidden, numbersBefore: numbersIn(m.text), numbersAfter: numbersIn(a.text) });
+    rewritten.push({ before: m.text, after: a.text, similarity: round(s), region: m.region, hidden: m.hidden, numbersBefore: numbersIn(m.text), numbersAfter: numbersIn(a.text), ...placeOf(m) });
   }
   const stillMissing = missing.filter((m) => !usedM.has(m)).map(({ norm, ...m }) => m);
-  const added = addedRaw.filter((a) => !usedA.has(a)).map((a) => ({ text: a.text, region: a.region, chars: a.norm.length }));
+  const added = addedRaw.filter((a) => !usedA.has(a)).map((a) => ({ text: a.text, region: a.region, chars: a.norm.length, ...placeOf(a) }));
 
   const totalChars = bl.reduce((n, b) => n + b.norm.length, 0);
   const partly = (list) => list.reduce((n, c) => n + (1 - c.similarity) * normalizeText(c.before).length, 0);
@@ -140,7 +143,7 @@ function textFindings(before, after, rules, volatile) {
     out.push(finding('content.facts.changed', 'fail', `${facts.length} text block(s) state different figures on the after page`, cap(facts)));
   }
   if (d.missing.length) {
-    out.push(finding('content.text.missing', sev, `${d.missing.length} text block(s) from the before page are missing on the after page (${d.missingPct}% of text)`, cap(d.missing)));
+    out.push(finding('content.text.missing', sev, `${d.missing.length} text block(s) from the before page are missing on the after page (${d.missingPct}% of text)`, { ...cap(d.missing), pct: d.missingPct }));
   }
   if (reworded.length) {
     out.push(finding('content.text.changed', d.missing.length ? 'review' : sev, `${reworded.length} text block(s) were reworded`, cap(reworded)));
@@ -282,7 +285,7 @@ function imageFindings(before, after) {
       const left = aMap.get(imageStem(match.src));
       left.splice(left.indexOf(match), 1);
     } else {
-      missing.push({ src: img.src, alt: img.alt, inMain: img.inMain });
+      missing.push({ src: img.src, alt: img.alt, inMain: img.inMain, ...placeOf(img), ...(img.region ? { region: img.region } : {}) });
     }
   }
   const missingMain = missing.filter((m) => m.inMain);
@@ -453,6 +456,13 @@ function placeholderFindings(before, after, rules) {
   return out;
 }
 
+/** The page facts shown side by side in the report's metadata table. */
+function metaSummary(snapshot) {
+  const m = (snapshot && snapshot.meta) || {};
+  const h1 = ((snapshot && snapshot.headings) || []).find((h) => h.level === 1);
+  return { title: (snapshot && snapshot.title) || '', description: m.description || '', canonical: m.canonical || '', robots: m.robots || '', ogTitle: m['og:title'] || '', h1: h1 ? h1.text : '' };
+}
+
 function contentFindings(before, after, ctx) {
   const status = statusFindings(before, after, ctx);
   if (!status.comparable) return status.findings;
@@ -516,4 +526,4 @@ function makeCanon({ beforeUrl, afterUrl, hostMap = [], pathMap = [], rewrites =
   };
 }
 
-module.exports = { diffBlocks, numbersIn, NUMBER, contentFindings, makeCanon, beforeBase, finding, cap, counter, safeHost, MAX_ITEMS };
+module.exports = { diffBlocks, numbersIn, metaSummary, NUMBER, contentFindings, makeCanon, beforeBase, finding, cap, counter, safeHost, MAX_ITEMS };

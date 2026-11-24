@@ -70,6 +70,22 @@ function extractInPage({ masks, sectionSelectors, consentSel = '' }) {
   const footer = document.querySelector('footer, [role=contentinfo]');
   const regionOf = (el) => (footer && footer.contains(el) ? 'footer' : header && header.contains(el) ? 'header' : 'main');
 
+  // Where a block sits, for people and agents fixing it: the heading above it and the component around it.
+  const HEADING = /^H[1-6]$/;
+  const COMPONENT = /^cmp-|component|(^|[-_])block([-_]|$)/i;
+  const componentOf = (el) => {
+    let fallback = '';
+    for (let n = el; n && n !== document.body && n.nodeType === 1; n = n.parentElement) {
+      const tag = n.tagName.toLowerCase();
+      const hit = [...n.classList].find((c) => COMPONENT.test(c));
+      if (hit) return `${tag}.${hit.replace(/__.*$/, '')}`;
+      if (!fallback && n.id) fallback = `${tag}#${n.id}`;
+      else if (!fallback && n.classList.length) fallback = `${tag}.${n.classList[0]}`;
+    }
+    return fallback;
+  };
+  let lastHeading = '';
+
   const blocks = [];
   function walk(el, state) {
     for (const node of el.childNodes) {
@@ -81,6 +97,7 @@ function extractInPage({ masks, sectionSelectors, consentSel = '' }) {
           if (visible(node)) walk(node, state);
         } else {
           flush(state);
+          if (HEADING.test(node.tagName) && regionOf(node) === 'main') lastHeading = clean(node.textContent);
           const child = { buf: '', el: node, hidden: !visible(node) };
           walk(node, child);
           flush(child);
@@ -91,7 +108,9 @@ function extractInPage({ masks, sectionSelectors, consentSel = '' }) {
   function flush(state) {
     const text = clean(state.buf);
     state.buf = '';
-    if (text) blocks.push({ text, hidden: !!state.hidden, region: regionOf(state.el) });
+    if (!text) return;
+    const region = regionOf(state.el);
+    blocks.push({ text, hidden: !!state.hidden, region, heading: region === 'main' ? lastHeading : '', component: componentOf(state.el) });
   }
   const root = { buf: '', el: document.body, hidden: false };
   walk(document.body, root);
@@ -103,9 +122,19 @@ function extractInPage({ masks, sectionSelectors, consentSel = '' }) {
     text: clean(h.textContent),
   })).filter((h) => h.text);
 
+  const mainHeadings = [...document.querySelectorAll('h1,h2,h3,h4,h5,h6')].filter((h) => regionOf(h) === 'main');
+  const headingBefore = (el) => {
+    let found = '';
+    for (const h of mainHeadings) {
+      if (h.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) found = clean(h.textContent);
+      else break;
+    }
+    return found;
+  };
   const images = live('img').map((i) => {
     const src = i.currentSrc || i.getAttribute('src') || i.getAttribute('data-src') || '';
-    return { src, alt: clean(i.getAttribute('alt')), broken: !!src && !src.startsWith('data:') && i.complete && i.naturalWidth === 0, inMain: !(header && header.contains(i)) && !(footer && footer.contains(i)), tiny: (i.width <= 1 && i.height <= 1) };
+    const region = regionOf(i);
+    return { src, alt: clean(i.getAttribute('alt')), broken: !!src && !src.startsWith('data:') && i.complete && i.naturalWidth === 0, inMain: region === 'main', region, heading: region === 'main' ? headingBefore(i) : '', component: componentOf(i.parentElement), tiny: (i.width <= 1 && i.height <= 1) };
   }).filter((i) => i.src && !i.tiny);
 
   const linkText = (a) => clean(a.textContent) || clean(a.getAttribute('aria-label')) || clean(a.getAttribute('title')) || clean((a.querySelector('img') || {}).alt);

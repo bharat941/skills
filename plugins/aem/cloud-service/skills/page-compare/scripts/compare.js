@@ -8,7 +8,7 @@ const { parseArgs } = require('node:util');
 const { loadPairs } = require('./lib/pairs');
 const { loadRules, loadAccepted, rewritesFrom, applyAccepted, deriveStatus, reusableResult } = require('./lib/rules');
 const { createPacer, runPool, withRetry } = require('./lib/guard');
-const { contentFindings, diffBlocks, makeCanon, beforeBase, safeHost } = require('./lib/content');
+const { contentFindings, diffBlocks, makeCanon, beforeBase, safeHost, metaSummary } = require('./lib/content');
 const { functionalFindings } = require('./lib/functional');
 const { visualFindings } = require('./lib/visual');
 const { createFetcher, downloadFindings, brokenLinkFindings, siteFindings, redirectFindings, pageSetCoverage } = require('./lib/completeness');
@@ -207,7 +207,7 @@ async function processPair(pair, env) {
       }
     }
     const flaky = volatilePct > rules.text.volatileFlakyPct || result.retried;
-    Object.assign(result, { rawFindings: findings, noise, volatilePct, flaky, unstable, visual: { rows } });
+    Object.assign(result, { rawFindings: findings, noise, volatilePct, flaky, unstable, visual: { rows }, meta: { before: metaSummary(b1.snapshot), after: metaSummary(a1.snapshot) } });
   } catch (err) {
     if (err.blocked) result.blocked = err.blocked;
     else result.error = String(err.message || err);

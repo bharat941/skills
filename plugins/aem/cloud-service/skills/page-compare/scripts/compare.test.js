@@ -1092,3 +1092,60 @@ test('report: --rules priority overrides reach report.md, issues.csv and pages.c
 test('report: a run with no pages says nothing was compared', () => {
   assert.match(toMarkdown(actionRun([])), /\*\*Nothing compared/);
 });
+
+// ---------- fix report: heading, component and meta ----------
+
+const { extractInPage } = require('./lib/capture');
+const { metaSummary } = require('./lib/content');
+
+e2e('capture: blocks and images carry nearest heading and component', { timeout: 60000 }, async () => {
+  const { chromium } = require('playwright');
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.setContent(`<html><body><header><nav><a href="/x">Products</a></nav></header><main>
+      <h2>FAQs</h2><div class="cmp-accordion"><p>What is LPDDR5X?</p><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="20" height="20" alt="chip"></div>
+      <section id="specs"><p>Specs paragraph</p></section></main></body></html>`);
+    const x = await page.evaluate(extractInPage, { masks: [], sectionSelectors: [] });
+    const b = x.blocks.find((bl) => bl.text === 'What is LPDDR5X?');
+    assert.equal(b.heading, 'FAQs');
+    assert.equal(b.component, 'div.cmp-accordion');
+    const specs = x.blocks.find((bl) => bl.text === 'Specs paragraph');
+    assert.equal(specs.component, 'section#specs');
+    assert.equal(specs.heading, 'FAQs');
+    assert.equal(x.blocks.find((bl) => bl.text === 'Products').heading, '');
+    const img = x.images.find((i) => i.alt === 'chip');
+    assert.equal(img.heading, 'FAQs');
+    assert.equal(img.component, 'div.cmp-accordion');
+    assert.equal(img.region, 'main');
+  } finally {
+    await browser.close();
+  }
+});
+
+test('diffBlocks: missing and rewritten items keep heading and component', () => {
+  const d = diffBlocks([
+    { text: 'Answer one about memory speed and power efficiency in phones', region: 'main', heading: 'FAQs', component: 'div.cmp-accordion' },
+    { text: 'With speeds up to 1.25 times faster and 25% better power efficiency compared to before', region: 'main', heading: 'Key features', component: 'div.cmp-text' },
+  ], [{ text: 'With speeds 1.3 times faster than before and 20% better power efficiency compared', region: 'main', heading: 'Key features', component: 'div.cmp-text' }]);
+  assert.deepEqual([d.missing[0].heading, d.missing[0].component], ['FAQs', 'div.cmp-accordion']);
+  assert.deepEqual([d.rewritten[0].heading, d.rewritten[0].component], ['Key features', 'div.cmp-text']);
+});
+
+test('content.text.missing carries pct', () => {
+  const ctx = ctxFor('https://www.b.com/', 'https://www.a.com/');
+  const out = contentFindings(snap({ blocks: [{ text: 'Only paragraph on the before page with enough words', region: 'main' }] }), snap({ blocks: [] }), ctx);
+  assert.equal(out.find((x) => x.check === 'content.text.missing').pct, 100);
+});
+
+test('content: missing image keeps heading, component and region', () => {
+  const ctx = ctxFor('https://www.b.com/', 'https://www.a.com/');
+  const out = contentFindings(snap({ images: [{ src: 'https://www.b.com/a.png', alt: 'A', inMain: true, heading: 'Key features', component: 'div.cmp-image', region: 'main' }] }), snap(), ctx);
+  const it = out.find((x) => x.check === 'image.missing').items[0];
+  assert.deepEqual([it.heading, it.component, it.region], ['Key features', 'div.cmp-image', 'main']);
+});
+
+test('metaSummary picks title, description, canonical, robots, og:title and first h1', () => {
+  const m = metaSummary(snap({ title: 'T', meta: { description: 'D', canonical: 'C', 'og:title': 'O' }, headings: [{ level: 2, text: 'Sub' }, { level: 1, text: 'H' }] }));
+  assert.deepEqual(m, { title: 'T', description: 'D', canonical: 'C', robots: '', ogTitle: 'O', h1: 'H' });
+});
