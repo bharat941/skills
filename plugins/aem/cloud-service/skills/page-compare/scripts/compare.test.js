@@ -13,7 +13,7 @@ const { applyAccepted, loadAccepted, deriveStatus, worstSeverity } = require('./
 const { classifyBlock, createPacer, withRetry } = require('./lib/guard');
 const { classifyRequest } = require('./lib/functional');
 const { normalizePath } = require('./lib/util');
-const { renderHtml, toCsv, exitCode, summarize } = require('./lib/report');
+const { renderHtml, exitCode, summarize } = require('./lib/report');
 const { robotsBlocksAll, redirectFindings } = require('./lib/completeness');
 const { toMarkdown, areaOf } = require('./lib/markdown');
 const { pairSections } = require('./lib/visual');
@@ -132,7 +132,7 @@ test('visual.pairSections matches by text, then by order', () => {
   assert.equal(r.added.length, 1);
 });
 
-test('report: renders escaped html, csv and exit code', () => {
+test('report: renders escaped html and exit code', () => {
   const pairs = [
     { id: 'a-1', before: 'https://b/<x>', after: 'https://a/x', status: 'fail', findings: [{ check: 'meta.title', severity: 'fail', summary: '<script>alert(1)</script>', items: [{ text: 'Only one' }] }] },
     { id: 'b-1', before: 'https://b/y', after: 'https://a/y', status: 'pass', findings: [] },
@@ -143,7 +143,6 @@ test('report: renders escaped html, csv and exit code', () => {
   assert.equal(exitCode(pairs), 1);
   assert.equal(exitCode([pairs[1]]), 0);
   assert.equal(summarize(pairs).fail, 1);
-  assert.match(toCsv(pairs), /^status,before,after/);
 });
 
 test('completeness: findings keep items as a list so the report renders', async () => {
@@ -168,48 +167,6 @@ test('markdown: areaOf groups checks into content, visual and integration', () =
   assert.equal(areaOf('console.error'), 'integration');
   assert.equal(areaOf('link.broken'), 'integration');
   assert.equal(areaOf('site.robots'), 'integration');
-});
-
-test('markdown: report has the three areas with their own result', () => {
-  const md = toMarkdown(mdRun([mdPair([
-    { check: 'heading.missing', severity: 'review', summary: '1 heading(s) missing', items: [{ text: 'About us', level: 2 }] },
-    { check: 'link.broken', severity: 'fail', summary: '1 internal link(s) return an error', items: [{ text: 'Shop', url: 'https://a/shop', status: 404 }] },
-  ])]));
-  assert.match(md, /### Content parity: ⚠️ Review/);
-  assert.match(md, /### Visual parity: ✅ Pass/);
-  assert.match(md, /### Integration: ❌ Fail/);
-  assert.match(md, /\| Content parity \| ⚠️ Review \| 0 \| 1 \|/);
-  assert.match(md, /\| About us \| 2 \|/);
-  assert.match(md, /\| Shop \| https:\/\/a\/shop \| 404 \|/);
-  assert.match(md, /## Not tested/);
-});
-
-test('markdown: a section reported missing and added at the same spot is one content change', () => {
-  const sec = (viewport, text) => ({ section: 'main-2:.section', viewport, text });
-  const md = toMarkdown(mdRun([mdPair([
-    { check: 'visual.section.missing', severity: 'fail', summary: 'missing', items: [sec('1440', 'old testimonial'), sec('375', 'old testimonial')] },
-    { check: 'visual.section.added', severity: 'info', summary: 'added', items: [sec('1440', 'new testimonial'), sec('375', 'new testimonial')] },
-  ], { visual: { rows: [{ viewport: '1440', section: 'main-1', status: 'pass' }, { viewport: '1440', section: 'main-2', status: 'missing' }, { viewport: '1440', section: 'main-2', status: 'added' }] } })]));
-  assert.match(md, /content differs/);
-  assert.match(md, /\| main-2:\.section \| 1440px, 375px \| old testimonial \| new testimonial \|/);
-  assert.match(md, /\| 1440px \| 1 \| 1 \| 0 \| 1 \| 1 \|/);
-  assert.ok(!md.includes('Section only on the before page'));
-});
-
-test('markdown: escapes table cells and caps long lists', () => {
-  const items = Array.from({ length: 12 }, (_, i) => ({ text: i === 0 ? 'a|b <script>' : `t${i}` }));
-  const md = toMarkdown(mdRun([mdPair([{ check: 'cta.missing', severity: 'review', summary: '12 missing', items }])]));
-  assert.ok(md.includes('a\\|b &lt;script&gt;'));
-  assert.ok(!md.includes('<script>'));
-  assert.match(md, /…and 2 more/);
-});
-
-test('markdown: site-wide findings count under integration and clean pages say so', () => {
-  const md = toMarkdown(mdRun([mdPair([], { status: 'pass' })], { siteFindings: [{ check: 'site.robots', severity: 'fail', summary: 'robots.txt disallows everything' }] }));
-  assert.match(md, /\| Integration \| ❌ Fail \| 0 \| 0 \| 1 \| 1 \|/);
-  assert.match(md, /## Site-wide checks/);
-  const clean = toMarkdown(mdRun([mdPair([], { status: 'pass' })]));
-  assert.match(clean, /\*\*No blocking differences found\*\*/);
 });
 
 // ---------- accuracy fixes ----------
@@ -262,7 +219,7 @@ test('visual.pairSections treats a same-named section with the same heading as c
 
 test('report: flaky pages are flagged in csv, html and markdown even when they fail', () => {
   const pair = { id: 'f-1', before: 'https://b/x', after: 'https://a/x', status: 'fail', flaky: true, volatilePct: 13, findings: [{ check: 'meta.title', severity: 'fail', summary: 'Title missing' }] };
-  assert.match(toCsv([pair]).split('\n')[1], /,yes,/);
+  assert.match(renderMarkdownFiles({ generatedAt: 'now', viewports: [1440], pairs: [pair], completeness: {}, notTested: [] })['pages.csv'].split('\n')[1], /,yes,/);
   assert.match(renderHtml({ generatedAt: 'now', viewports: [1440], pairs: [pair], notTested: [] }), /changes between loads/);
   assert.match(toMarkdown({ generatedAt: 'now', viewports: [1440], pairs: [pair], completeness: {}, notTested: [] }), /> ⚠️ .*changes between loads/);
 });
@@ -323,7 +280,6 @@ test('markdown scale: the same issue on many pages is one issue with a page coun
   assert.match(store[0], /,90,/);
   assert.equal(rows.filter((r) => r.includes('Canonical still points')).length, 1);
   assert.equal(rows.filter((r) => r.includes('console error')).length, 1, 'cache-buster numbers must not split one console error into many');
-  assert.match(files['report.md'], /Canonical still points to a different host[^\n]*\| on 90 pages \|/);
 });
 
 test('markdown scale: every page is in pages.csv and each page with problems gets its own file', () => {
@@ -333,14 +289,15 @@ test('markdown scale: every page is in pages.csv and each page with problems get
   assert.equal(rows.length, 501);
   const pageFiles = Object.keys(files).filter((k) => k.startsWith('pages/'));
   assert.equal(pageFiles.length, 450);
-  assert.match(files[pageFiles[0]], /### Content parity/);
+  assert.match(files[pageFiles[0]], /## Content parity/);
   assert.match(files['report.md'], /pages\.csv/);
 });
 
 test('markdown scale: long lists say what was left out', () => {
-  const files = renderMarkdownFiles(scaleRun(500));
-  assert.match(files['issues.md'], /more in issues\.csv/);
-  assert.match(files['report.md'], /and \d+ more/);
+  const run = scaleRun(500);
+  for (const p of run.pairs) for (let k = 0; k < 20; k++) p.findings.push({ check: `extra.check${k}`, severity: 'fail', summary: `Extra problem ${k}` });
+  const md = renderMarkdownFiles(run)['report.md'];
+  assert.match(md, /…and \d+ more in fixes\.json/);
 });
 
 // ---------- spreadsheet input ----------
@@ -515,15 +472,13 @@ test('csv: cells that start with a formula character are neutralised in every cs
   for (const name of ['issues.csv', 'pages.csv']) {
     for (const c of firstChar(files[name])) assert.ok(!['=', '+', '-', '@', '\t', '\r'].includes(c), `${name} has a cell starting with ${JSON.stringify(c)}: ${files[name]}`);
   }
-  const summary = toCsv(run.pairs);
-  for (const c of firstChar(summary)) assert.ok(!['=', '+', '-', '@', '\t', '\r'].includes(c), `summary.csv has a cell starting with ${JSON.stringify(c)}`);
   assert.ok(files['issues.csv'].includes("'=HYPERLINK"));
 });
 
 test('csv: ordinary values and numbers are not altered', () => {
   const run = { generatedAt: 'now', viewports: [1440], completeness: {}, notTested: [], pairs: [{ id: 'x-1', before: 'https://b/x', after: 'https://a/x', status: 'fail', findings: [{ check: 'meta.title', severity: 'fail', summary: 'Title missing' }] }] };
   const rows = renderMarkdownFiles(run)['pages.csv'].trim().split('\n');
-  assert.match(rows[1], /^\/x,fail,,fail,pass,pass,1,0,0,1,0,100,,Title missing,pages\/x-1\.md,https:\/\/b\/x,https:\/\/a\/x$/);
+  assert.match(rows[1], /^\/x,fail,,fail,pass,pass,1,0,0,1,0,100,,Title missing,,https:\/\/b\/x,https:\/\/a\/x$/);
 });
 
 test('pairs: groupOf skips locale and AEM /content/<site> prefixes', () => {
@@ -557,46 +512,6 @@ const leadRun = () => mdRun([{
     { check: 'analytics.rsid', severity: 'review', summary: 'Report suite differs from the before page', before: 'prodsuite', after: 'testsuite' },
   ],
 }], { siteFindings: [{ check: 'site.robots', severity: 'fail', summary: 'robots.txt on the after site disallows everything (Disallow: / for all agents)' }] });
-
-test('report.md starts with the verdict and the action table', () => {
-  const md = toMarkdown(leadRun());
-  assert.match(md, /\*\*Not ready: 2 blockers\*\*/);
-  assert.equal(md.match(/^## .*/m)[0], '## Action items');
-  assert.match(md, /\| 1 \| 🔴 P1 \| Content parity \| text block\(s\) state different figures on the after page \| 1 \|/);
-  assert.match(md, /\| 2 \| 🔴 P1 \| Integration \| content image\(s\) fail to load on the after page \| 4 \|/);
-  assert.match(md, /\| 3 \| 🟠 P2 \| Integration \| internal link\(s\)/);
-});
-
-test('report.md has Before says / After says for facts changed, with changed numbers in bold', () => {
-  const md = toMarkdown(leadRun());
-  assert.match(md, /## Content differences/);
-  assert.match(md, /\| Before says \| After says \|/);
-  assert.match(md, /up to \*\*1\.25\*\* times faster and \*\*25%\*\*/);
-  assert.match(md, /speeds \*\*1\.3\*\* times faster and \*\*20%\*\*/);
-});
-
-test('report.md lists expected-on-preview items separately, not as action items', () => {
-  const md = toMarkdown(leadRun());
-  const actions = md.split('## Action items')[1].split('\n## ')[0];
-  assert.ok(!/robots\.txt/.test(actions), actions);
-  assert.match(md, /## Expected on preview — recheck at launch/);
-  assert.match(md, /- robots\.txt on the after site disallows everything/);
-  assert.match(md, /- Report suite differs from the before page: prodsuite → testsuite/);
-});
-
-test('report.md never says "distinct issue"', () => {
-  assert.ok(!/distinct issue/.test(toMarkdown(leadRun())));
-  assert.ok(!/distinct issue/.test(renderMarkdownFiles(scaleRun(100))['report.md']));
-});
-
-test('action table has at most 15 rows at 500 pages and says how many more', () => {
-  const run = scaleRun(500);
-  for (const p of run.pairs) for (let k = 0; k < 20; k++) p.findings.push({ check: `extra.check${k}`, severity: 'fail', summary: `Extra problem ${k}` });
-  const md = renderMarkdownFiles(run)['report.md'];
-  const table = md.split('## Action items')[1].split('\n## ')[0];
-  assert.equal(table.split('\n').filter((l) => /^\| \d+ \|/.test(l)).length, 15);
-  assert.match(table, /…and \d+ more action item\(s\) in issues\.csv/);
-});
 
 test('issues.csv and pages.csv carry the priority', () => {
   const files = renderMarkdownFiles(leadRun());
@@ -695,8 +610,8 @@ e2e('end to end: fixture site comparison', { timeout: 280000 }, async () => {
     }
     assert.ok(by['/wrapped'].visual.rows.filter((r) => r.viewport === '1440' && r.status === 'pass').length >= 5, 'sections inside single-child wrappers are compared one by one');
     assert.ok(fs.existsSync(path.join(out, 'report.html')));
-    assert.ok(fs.existsSync(path.join(out, 'summary.csv')));
-    for (const f of ['report.md', 'issues.md', 'issues.csv', 'pages.csv']) assert.ok(fs.existsSync(path.join(out, f)), `${f} missing`);
+    for (const f of ['report.md', 'fixes.json', 'issues.csv', 'pages.csv']) assert.ok(fs.existsSync(path.join(out, f)), `${f} missing`);
+    for (const f of ['issues.md', 'summary.csv']) assert.ok(!fs.existsSync(path.join(out, f)), `${f} should not be written`);
     assert.equal(fs.readFileSync(path.join(out, 'pages.csv'), 'utf8').trim().split('\n').length, paths.length + 1);
     assert.ok(fs.existsSync(path.join(out, 'pages', `${by['/text-removed'].id}.md`)));
     assert.ok(!fs.existsSync(path.join(out, 'pages', `${by['/identical'].id}.md`)), 'passing pages get no detail file');
@@ -789,56 +704,10 @@ test('content: "Learn more" alone is never flagged as placeholder or empty state
 
 // ---------- action items ----------
 
-const { buildActions, verdictOf } = require('./lib/actions');
+const { verdictOf } = require('./lib/actions');
 
 const pairOf = (i, findings, extra = {}) => ({ id: `p${i}`, before: `https://www.b.com/p${i}`, after: `https://www.a.com/p${i}`, status: 'fail', findings, ...extra });
 const actionRun = (pairs, completeness = {}) => ({ generatedAt: 'now', viewports: [1440], pairs, completeness, notTested: [] });
-
-test('actions: ten broken images are one action with count 10', () => {
-  const items = Array.from({ length: 10 }, (_, i) => ({ src: `https://cdn/x/img${i}.png` }));
-  const actions = buildActions(actionRun([pairOf(1, [{ check: 'image.broken', severity: 'fail', summary: '10 content image(s) fail to load on the after page', items }])]));
-  assert.equal(actions.length, 1);
-  assert.deepEqual([actions[0].priority, actions[0].count, actions[0].pages.length], ['P1', 10, 1]);
-  assert.equal(actions[0].title, 'content image(s) fail to load on the after page');
-  assert.equal(actions[0].owner, 'Dev / assets');
-});
-
-test('actions: the same broken link on 90 pages is one action with 90 pages', () => {
-  const pairs = Array.from({ length: 90 }, (_, i) => pairOf(i, [{ check: 'link.broken', severity: 'fail', summary: `${i % 3 + 1} internal link(s) on the after page return an error`, items: [{ url: 'https://www.a.com/store.html', status: 404 }] }]));
-  const actions = buildActions(actionRun(pairs));
-  assert.equal(actions.length, 1);
-  assert.deepEqual([actions[0].count, actions[0].pages.length], [1, 90]);
-});
-
-test('actions: P1 content before P1 integration before P2', () => {
-  const actions = buildActions(actionRun([pairOf(1, [
-    { check: 'link.broken', severity: 'fail', summary: '1 internal link(s) return an error', items: [{ url: 'https://www.a.com/x' }] },
-    { check: 'image.broken', severity: 'fail', summary: '1 content image(s) fail to load', items: [{ src: 'https://cdn/a.png' }] },
-    { check: 'content.text.missing', severity: 'fail', summary: '3 text block(s) missing (40% of text)', items: [{ text: 'FAQs' }] },
-  ])]));
-  assert.deepEqual(actions.map((a) => `${a.priority} ${a.area} ${a.check}`), ['P1 content content.text.missing', 'P1 integration image.broken', 'P2 integration link.broken']);
-  assert.equal(actions[0].title, 'text block(s) missing');
-});
-
-test('actions: duplicate items are counted once, and one section at three viewports is one section', () => {
-  const sec = (vp) => ({ check: 'visual.section.missing', severity: 'fail', summary: `1 section(s) from the before page have no match on the after page at ${vp}`, items: [{ section: 'main-4:.faq', viewport: vp }] });
-  const actions = buildActions(actionRun([pairOf(1, [
-    { check: 'content.text.missing', severity: 'fail', summary: '3 text block(s) missing', items: [{ text: 'FAQs' }, { text: 'FAQs' }, { text: 'What is it?' }] },
-    sec('1440'), sec('768'), sec('375'),
-  ])]));
-  assert.equal(actions.find((a) => a.check === 'content.text.missing').count, 2);
-  const visual = actions.filter((a) => a.check === 'visual.section.missing');
-  assert.equal(visual.length, 1);
-  assert.equal(visual[0].count, 1);
-});
-
-test('actions: preview host puts robots and analytics under expected', () => {
-  const run = actionRun([{ ...pairOf(1, [{ check: 'analytics.rsid', severity: 'review', summary: 'Report suite differs', before: 'prod', after: 'test' }]), after: 'https://publish-p1-e2.adobeaemcloud.com/p1' }],
-    { siteFindings: [{ check: 'site.robots', severity: 'fail', summary: 'robots.txt on the after site disallows everything' }] });
-  const actions = buildActions(run);
-  assert.deepEqual(actions.map((a) => a.priority), ['expected', 'expected']);
-  assert.ok(actions.find((a) => a.check === 'site.robots').siteWide);
-});
 
 test('verdict: any P1 is Not ready, only P2 is Ready after fixes, none is No blocking differences found', () => {
   assert.equal(verdictOf([{ priority: 'P1' }, { priority: 'P2' }]).label, 'Not ready');
@@ -1058,25 +927,6 @@ test('priority: robots and canonical review findings on production are P2, fail 
 test('priority: header/footer text missing is P3, main text missing is P1', () => {
   assert.equal(priorityOf(f('content.text.missing', 'review', { items: [{ text: 'Careers', region: 'footer' }] }), prod), 'P3');
   assert.equal(priorityOf(f('content.text.missing', 'review', { items: [{ text: 'Careers', region: 'footer' }, { text: 'FAQs', region: 'main' }] }), prod), 'P1');
-});
-
-test('actions: missing header/footer text is its own P3 action; P1 example is main text', () => {
-  const items = [{ text: 'Tech Blog', region: 'header' }, { text: 'Careers', region: 'footer' }, { text: 'What is LPDDR5X', region: 'main' }];
-  const run = actionRun([pairOf(1, [{ check: 'content.text.missing', severity: 'fail', summary: '3 text block(s) from the before page are missing on the after page', items }])]);
-  const actions = buildActions(run).filter((a) => a.check === 'content.text.missing');
-  assert.deepEqual(actions.map((a) => [a.priority, a.count]), [['P1', 1], ['P3', 2]]);
-  assert.equal(actions[0].example.detail, 'What is LPDDR5X');
-  assert.match(actions[1].title, /header\/footer/);
-  const footerOnly = actionRun([pairOf(1, [{ check: 'content.text.missing', severity: 'review', summary: '1 text block(s) missing', items: [{ text: 'Careers', region: 'footer' }] }])]);
-  assert.equal(verdictOf(buildActions(footerOnly)).label, 'No blocking differences found');
-});
-
-test('actions: a capped list repeated on 90 pages counts its items once', () => {
-  const items = Array.from({ length: 50 }, (_, i) => ({ text: `Nav ${i}`, region: 'header' }));
-  const pairs = Array.from({ length: 90 }, (_, i) => pairOf(i, [{ check: 'nav.item', severity: 'review', summary: '120 navigation item(s) missing', items, truncated: 70 }]));
-  assert.equal(buildActions(actionRun(pairs))[0].count, 120);
-  const dup = [...items.slice(0, 47), items[0], items[1], items[2]];
-  assert.equal(buildActions(actionRun([pairOf(1, [{ check: 'nav.item', severity: 'review', summary: '99 navigation item(s) missing', items: dup, truncated: 49 }])]))[0].count, 99);
 });
 
 test('report: --rules priority overrides reach report.md, issues.csv and pages.csv', () => {
@@ -1308,4 +1158,123 @@ test('pages.csv has content_parity and visual_parity', () => {
   const cells = rows[1].split(',');
   assert.equal(cells[head.indexOf('content_parity')], '70');
   assert.equal(cells[head.indexOf('visual_parity')], '50');
+});
+
+// ---------- report.md from fixes ----------
+
+const fixRun = () => mdRun([{
+  id: 'lp-1', before: 'https://www.b.com/lpddr5x', after: 'https://publish-p1-e2.adobeaemcloud.com/lpddr5x', status: 'fail', noise: 0,
+  visual: { rows: [{ status: 'pass' }, { status: 'fail' }] },
+  meta: { before: { title: 'LPDDR5X | DRAM', description: 'Fast memory', canonical: 'https://www.b.com/lpddr5x', robots: '', ogTitle: '', h1: 'LPDDR5X' }, after: { title: 'LPDDR5X | DRAM | Features', description: 'Fast memory', canonical: 'https://www.b.com/lpddr5x', robots: '', ogTitle: '', h1: 'LPDDR5X' } },
+  findings: [
+    { check: 'content.facts.changed', severity: 'fail', summary: '1 text block(s) state different figures on the after page', items: [{ before: 'With speeds up to 1.25 times faster and 25% better power efficiency', after: 'With speeds 1.3 times faster and 20% better power efficiency', region: 'main', heading: 'Key features', numbersBefore: ['1.25', '25%'], numbersAfter: ['1.3', '20%'] }] },
+    missingText([txt('What is LPDDR5X?', 'FAQs', 'main', 'div.cmp-accordion'), txt('Tech Blog', '', 'header')]),
+    { check: 'visual.section', severity: 'fail', summary: '1 section(s) look different at 1440', items: [{ section: 'main-2:#root-container', viewport: '1440', pct: 12, files: { before: 'b.png', after: 'a.png', diff: 'd.png' } }] },
+    { check: 'image.broken', severity: 'fail', summary: '4 content image(s) fail to load on the after page', items: [1, 2, 3, 4].map((i) => ({ src: `https://cdn.x.com/dev/image/img${i}.png` })) },
+    { check: 'link.broken', severity: 'fail', summary: '17 internal link(s) on the after page return an error', items: [{ text: 'SAMSUNG', url: 'https://publish-p1-e2.adobeaemcloud.com/', status: 404 }] },
+    { check: 'analytics.rsid', severity: 'review', summary: 'Report suite differs from the before page', before: 'prodsuite', after: 'testsuite' },
+  ],
+}], { siteFindings: [{ check: 'site.robots', severity: 'fail', summary: 'robots.txt on the after site disallows everything (Disallow: / for all agents)' }] });
+
+const headings = (md) => md.split('\n').filter((l) => /^## /.test(l));
+
+test('report.md: Content parity comes before Visual parity before Integration & SEO', () => {
+  const h = headings(toMarkdown(fixRun()));
+  assert.deepEqual(h.slice(0, 4), ['## Content parity', '## Visual parity', '## Integration & SEO', '## Expected on preview — recheck at launch']);
+  assert.equal(h[h.length - 1], '## For agents');
+});
+
+test('report.md: shows Source and Destination URLs for one page and hosts for many', () => {
+  const md = toMarkdown(fixRun());
+  assert.match(md, /^# Migration comparison\n\n- \*\*Source:\*\* https:\/\/www\.b\.com\/lpddr5x\n- \*\*Destination:\*\* https:\/\/publish-p1-e2\.adobeaemcloud\.com\/lpddr5x\n/);
+  const many = renderMarkdownFiles(scaleRun(20))['report.md'];
+  assert.match(many, /- \*\*Source:\*\* www\.b\.com\n- \*\*Destination:\*\* www\.a\.com\n/);
+});
+
+test('report.md: verdict and scorecard with content and visual parity', () => {
+  const md = toMarkdown(fixRun());
+  assert.match(md, /\*\*Not ready: 3 blockers\*\*/);
+  assert.match(md, /\| Area \| Parity \| 🔴 P1 \| 🟠 P2 \| 🟡 P3 \|/);
+  assert.match(md, /\| Content \| 70% \| 2 \| 0 \| 1 \|/);
+  assert.match(md, /\| Visual \| 50% \| 0 \| 1 \| 0 \|/);
+  assert.match(md, /\| Integration & SEO \| — \| 1 \| 1 \| 0 \|/);
+});
+
+test('report.md: fix rows show id, section, and source vs destination with changed figures in bold', () => {
+  const md = toMarkdown(fixRun());
+  const content = md.split('## Content parity')[1].split('\n## ')[0];
+  assert.match(content, /\| `C-[0-9a-f]{6}` \| 🔴 P1 \| Key features \| Key features: figures changed \(1\.25, 25% → 1\.3, 20%\) \| With speeds up to \*\*1\.25\*\* times faster and \*\*25%\*\*[^|]*\| With speeds \*\*1\.3\*\* times faster and \*\*20%\*\*[^|]*\| content \|/);
+  assert.match(content, /\| FAQs \| FAQs: 1 text block\(s\) missing \| What is LPDDR5X\? \| — \| content \|/);
+  assert.match(content, /\*\*Minor:\*\* Header: 1 item\(s\) missing \(`C-[0-9a-f]{6}`\)/);
+});
+
+test('report.md: visual fixes link source, destination and diff screenshots', () => {
+  const visual = toMarkdown(fixRun()).split('## Visual parity')[1].split('\n## ')[0];
+  assert.match(visual, /\| `V-[0-9a-f]{6}` \| 🟠 P2 \| root-container \| Section root-container looks different \(12% of pixels\) \| \[source\]\(pairs\/lp-1\/visual\/b\.png\) · \[destination\]\(pairs\/lp-1\/visual\/a\.png\) · \[diff\]\(pairs\/lp-1\/visual\/d\.png\) \|/);
+});
+
+test('report.md: integration lists broken links as Status | Link | Link text', () => {
+  const integ = toMarkdown(fixRun()).split('## Integration & SEO')[1].split('\n## ')[0];
+  assert.match(integ, /Files under cdn\.x\.com\/dev\/image\/ fail to load \(4\)/);
+  assert.match(integ, /### Broken links\n\n\| Status \| Link \| Link text \|\n[^\n]*\n\| 404 \| https:\/\/publish-p1-e2\.adobeaemcloud\.com\/ \| SAMSUNG \|/);
+});
+
+test('report.md: expected-on-preview items are listed with their ids, not as fixes', () => {
+  const md = toMarkdown(fixRun());
+  const expected = md.split('## Expected on preview — recheck at launch')[1].split('\n## ')[0];
+  assert.match(expected, /- robots\.txt on the after site disallows everything \(Disallow: \/ for all agents\) \(`I-[0-9a-f]{6}`\)/);
+  assert.match(expected, /- Report suite differs from the before page: prodsuite → testsuite/);
+  assert.ok(!/robots\.txt/.test(md.split('## Integration & SEO')[1].split('\n## ')[0]));
+});
+
+test('report.md: single page has a Metadata table', () => {
+  const content = toMarkdown(fixRun()).split('## Content parity')[1].split('\n## ')[0];
+  assert.match(content, /### Metadata\n\n\| Property \| Source \| Destination \| Match \|/);
+  assert.match(content, /\| Title \| LPDDR5X \\\| DRAM \| LPDDR5X \\\| DRAM \\\| Features \| ❌ \|/);
+  assert.match(content, /\| Description \| Fast memory \| Fast memory \| ✅ \|/);
+});
+
+test('report.md: never shows check ids or region/hidden/chars', () => {
+  const md = toMarkdown(fixRun()) + renderMarkdownFiles(scaleRun(20))['report.md'];
+  for (const bad of ['content.text.missing', 'content.facts.changed', 'link.broken', 'site.robots', 'region', 'hidden', 'chars', 'similarity', 'numbersBefore']) assert.ok(!md.includes(bad), bad);
+});
+
+test('report.md: | and newlines in a fix title do not break the table', () => {
+  const run = mdRun([mdPair([missingText([txt('a | b\nc <script>', 'Q | A')])])]);
+  const md = toMarkdown(run);
+  const row = md.split('\n').find((l) => l.includes('Q \\| A'));
+  assert.ok(row, md);
+  assert.ok(!md.includes('<script>'));
+  assert.equal(row.split(/(?<!\\)\|/).length, 9, row);
+});
+
+test('report.md: 500 pages stays under 120 lines', () => {
+  const run = scaleRun(500);
+  for (const p of run.pairs) for (let k = 0; k < 20; k++) p.findings.push({ check: `extra.check${k}`, severity: 'fail', summary: `Extra problem ${k}` });
+  const md = renderMarkdownFiles(run)['report.md'];
+  assert.ok(md.split('\n').length < 120, `${md.split('\n').length} lines`);
+  assert.match(md, /## Pages with most blockers/);
+});
+
+test('report.md: a clean run says no differences, site-wide findings still listed', () => {
+  const clean = toMarkdown(mdRun([mdPair([], { status: 'pass' })]));
+  assert.match(clean, /\*\*No blocking differences found\*\*/);
+  assert.match(clean, /## Content parity\n\n_No differences found\._/);
+});
+
+test('report.md: a section replaced at the same spot says its content differs', () => {
+  const sec = (viewport, text) => ({ section: 'main-2:.section', viewport, text });
+  const md = toMarkdown(mdRun([mdPair([
+    { check: 'visual.section.missing', severity: 'fail', summary: 'missing', items: [sec('1440', 'old testimonial'), sec('375', 'old testimonial')] },
+    { check: 'visual.section.added', severity: 'info', summary: 'added', items: [sec('1440', 'new testimonial'), sec('375', 'new testimonial')] },
+  ])]));
+  assert.match(md, /Section section has different content on the destination/);
+});
+
+test('pages/<id>.md only for multi-page runs, with the page as source and destination', () => {
+  assert.deepEqual(Object.keys(renderMarkdownFiles(fixRun())).filter((k) => k.startsWith('pages/')), []);
+  const files = renderMarkdownFiles(scaleRun(20));
+  const page = files['pages/p1-abc.md'];
+  assert.match(page, /- \*\*Source:\*\* https:\/\/www\.b\.com\/p1\n- \*\*Destination:\*\* https:\/\/www\.a\.com\/p1\n/);
+  assert.match(page, /## Integration & SEO/);
 });

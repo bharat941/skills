@@ -1,6 +1,5 @@
 'use strict';
 
-const { csvCell } = require('./util');
 
 const STATUS_ORDER = ['blocked', 'error', 'fail', 'flaky', 'unstable', 'review', 'pass'];
 
@@ -16,27 +15,6 @@ function summarize(pairs) {
 
 function exitCode(pairs) {
   return pairs.some((p) => ['fail', 'error', 'blocked'].includes(p.status)) ? 1 : 0;
-}
-
-function toCsv(pairs) {
-  const head = ['status', 'before', 'after', 'label', 'fail', 'review', 'accepted', 'noise_pct', 'flaky', 'top_finding'];
-  const rows = pairs.map((p) => {
-    const open = (p.findings || []).filter((f) => !f.accepted);
-    const top = open.find((f) => f.severity === 'fail') || open.find((f) => f.severity === 'review');
-    return [
-      p.status,
-      p.before,
-      p.after,
-      p.label || '',
-      open.filter((f) => f.severity === 'fail').length,
-      open.filter((f) => f.severity === 'review').length,
-      (p.findings || []).filter((f) => f.accepted).length,
-      p.noise ?? '',
-      p.flaky || p.retried ? 'yes' : '',
-      top ? top.summary : p.error || p.blocked || '',
-    ].map(csvCell).join(',');
-  });
-  return [head.join(','), ...rows].join('\n') + '\n';
 }
 
 function pageKey(p) {
@@ -143,4 +121,4 @@ function renderJson(run) {
   return JSON.stringify({ ...run, summary: summarize(run.pairs) }, null, 2);
 }
 
-module.exports = { STATUS_ORDER, summarize, exitCode, toCsv, renderHtml, renderJson, esc, acceptEntry };
+module.exports = { STATUS_ORDER, summarize, exitCode, renderHtml, renderJson, esc, acceptEntry };

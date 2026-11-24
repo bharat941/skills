@@ -117,7 +117,7 @@ function titleOf(fx) {
       return `Link to ${S} returns ${it.status || 'an error'} (${fx.occurrences} link(s))`;
     }
     case 'visual': {
-      if (first.check === 'visual.section.missing') return `Section ${S} is missing on the destination`;
+      if (first.check === 'visual.section.missing') return fx.replaced ? `Section ${S} has different content on the destination` : `Section ${S} is missing on the destination`;
       if (first.check === 'visual.section') return `Section ${S} looks different (${Math.max(...fx.items.map((x) => Number(x.pct) || 0))}% of pixels)`;
       const pick = fx.items.find((x) => String(x.viewport) === '1440') || fx.items[0] || {};
       const m = /is (\d+)px (taller|shorter)/.exec(pick.summary || first.summary || '');
@@ -168,7 +168,7 @@ function evidenceOf(items, pair) {
 function buildFixes(run, rules = DEFAULT_RULES) {
   const pairs = run.pairs || [];
   const map = new Map();
-  const add = (f, pair, previewHost) => {
+  const add = (f, pair, previewHost, replaced = new Set()) => {
     for (const scope of scopesOf(f)) {
       const part = { ...f, items: scope.items.length ? scope.items : f.items };
       const priority = priorityOf(part, { previewHost }, rules);
@@ -207,11 +207,14 @@ function buildFixes(run, rules = DEFAULT_RULES) {
         }
       }
       if (scope.kind === 'visual' && !fx.component) fx.component = (scope.items[0] && scope.items[0].section) || '';
+      if (f.check === 'visual.section.missing' && scope.items.some((it) => it && replaced.has(it.section))) fx.replaced = true;
     }
   };
   for (const p of pairs) {
     const previewHost = isPreviewHost(hostOf(p.after));
-    for (const f of p.findings || []) add(f, p, previewHost);
+    // A section missing and another added under the same name: the section is there, its content changed.
+    const replaced = new Set((p.findings || []).filter((f) => f.check === 'visual.section.added').flatMap((f) => (f.items || []).map((it) => it && it.section)));
+    for (const f of p.findings || []) add(f, p, previewHost, replaced);
   }
   const c = run.completeness || {};
   const sitePreview = pairs.length ? isPreviewHost(hostOf(pairs[0].after)) : false;
@@ -290,9 +293,34 @@ function reportModel(run, rules = DEFAULT_RULES) {
     fixed: [],
     hasBaseline: false,
     baselineAt: null,
+    pair: single ? pairs[0] : null,
+    flaky: pairs.filter((p) => p.flaky).length,
+    notTested: run.notTested || [],
   };
   model.verdict = verdictOf(fixes, { notCompared, pages: pairs.length });
   return model;
 }
 
-module.exports = { buildFixes, fixId, pageParity, runParity, reportModel, sectionLabel, assetPrefix, AREA_ORDER };
+/** The model narrowed to one page: its fixes, with only that page's items, its own parity and verdict. */
+function pageModel(model, pair) {
+  const page = pathOf(pair);
+  const fixes = model.fixes.filter((f) => f.pages.some((p) => p.destination === pair.after)).map((f) => ({
+    ...f,
+    pages: f.pages.filter((p) => p.destination === pair.after),
+    items: f.items.filter((it) => !it.page || it.page === page),
+  }));
+  return {
+    ...model,
+    source: pair.before,
+    destination: pair.after,
+    single: true,
+    pages: 1,
+    parity: pageParity(pair),
+    fixes,
+    fixed: [],
+    pair,
+    verdict: verdictOf(fixes, { notCompared: pair.blocked || pair.error ? 1 : 0, pages: 1 }),
+  };
+}
+
+module.exports = { pageModel, buildFixes, fixId, pageParity, runParity, reportModel, sectionLabel, assetPrefix, AREA_ORDER };

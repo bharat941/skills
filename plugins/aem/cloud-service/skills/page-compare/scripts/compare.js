@@ -12,7 +12,7 @@ const { contentFindings, diffBlocks, makeCanon, beforeBase, safeHost, metaSummar
 const { functionalFindings } = require('./lib/functional');
 const { visualFindings } = require('./lib/visual');
 const { createFetcher, downloadFindings, brokenLinkFindings, siteFindings, redirectFindings, pageSetCoverage } = require('./lib/completeness');
-const { renderHtml, renderJson, toCsv, summarize, exitCode } = require('./lib/report');
+const { renderHtml, renderJson, summarize, exitCode } = require('./lib/report');
 const { renderMarkdownFiles, writeReportFiles } = require('./lib/markdown');
 const { normalizePath, hash, normalizeText } = require('./lib/util');
 const { parseCsv } = require('./lib/pairs');
@@ -358,7 +358,6 @@ async function main() {
   fs.writeFileSync(path.join(outDir, 'report.html'), renderHtml(run));
   writeReportFiles(outDir, renderMarkdownFiles(run, rules));
   fs.writeFileSync(path.join(outDir, 'report.json'), renderJson(run));
-  fs.writeFileSync(path.join(outDir, 'summary.csv'), toCsv(finalPairs));
 
   const counts = summarize(finalPairs);
   console.log(Object.entries(counts).filter(([, n]) => n).map(([s, n]) => `${s}: ${n}`).join('  '));
