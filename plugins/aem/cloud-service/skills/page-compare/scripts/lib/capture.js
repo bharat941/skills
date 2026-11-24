@@ -123,7 +123,7 @@ function extractInPage({ masks, sectionSelectors, consentSel = '' }) {
   const live = (sel) => [...document.querySelectorAll(sel)].filter((e) => !isMasked(e));
   const headings = live('h1,h2,h3,h4,h5,h6,[role=heading][aria-level]').map((h) => ({
     level: /^H\d$/.test(h.tagName) ? Number(h.tagName[1]) : Number(h.getAttribute('aria-level')),
-    text: clean(h.textContent),
+    text: headingText(h),
   })).filter((h) => h.text);
 
   const mainHeadings = [...document.querySelectorAll('h1,h2,h3,h4,h5,h6')].filter((h) => regionOf(h) === 'main');

@@ -1428,6 +1428,7 @@ e2e('capture: a heading with hidden responsive copies is read once; a cookie com
       <div id="cookie_component" class="CO11_cookie"><p>${'Real product copy that happens to sit inside a wrapper named cookie. '.repeat(30)}</p></div></main></body></html>`);
     const x = await page.evaluate(extractInPage, { masks: [], sectionSelectors: [], consentSel: require('./lib/capture').CONSENT_SELECTORS.join(',') });
     assert.equal(x.blocks.find((b) => b.text === 'Body copy').heading, 'Pioneering DRAM');
+    assert.equal(x.headings[0].text, 'Pioneering DRAM');
     assert.ok(!x.blocks.some((b) => /cookies|Accept all/.test(b.text)), JSON.stringify(x.blocks));
     assert.ok(x.blocks.some((b) => b.text.startsWith('Real product copy')), 'a large wrapper whose id and class say cookie is still content');
   } finally {
