@@ -80,6 +80,7 @@ function renderLeadershipHtml(model, { outDir = '.', embedMax = 12 } = {}) {
     if (embedded < embedMax) embedded++;
     return `<figure><img src="${esc(src)}" alt="${esc(caption)}" loading="lazy"><figcaption>${esc(caption)}</figcaption></figure>`;
   };
+  const progress = (m) => `Since ${String(m.baselineAt || 'the last run').slice(0, 10)}: P1 ${m.baselineP1} → ${m.fixes.filter((f) => f.priority === 'P1').length}, ${m.fixed.length} fixed, ${m.fixes.filter((f) => f.status === 'new').length} new.`;
   const chip = (p) => `<span class="chip ${esc(p)}">${esc(PRIORITY_TEXT[p] || p)}</span>`;
   const pagesText = (f) => (f.siteWide ? 'site-wide' : f.pages.length === 1 ? pathOf({ after: f.pages[0].destination }) : `${f.pages.length} pages`);
   const sub = (f) => [f.section && `Section: ${f.section}`, f.component && f.component !== f.section && `Component: ${f.component}`, `Pages: ${pagesText(f)}`, `Fix type: ${f.fixType}`, `Owner: ${f.owner}`].filter(Boolean).map(esc).join(' · ');
@@ -90,7 +91,8 @@ function renderLeadershipHtml(model, { outDir = '.', embedMax = 12 } = {}) {
       ? `<div class="sxs"><div><div class="h">Source says</div>${facts ? markFigures(f.expected, f.actual) : esc(short(f.expected)) || '—'}</div><div><div class="h">Destination says</div>${facts ? markFigures(f.actual, f.expected) : esc(short(f.actual)) || '<span class="empty">not on the destination</span>'}</div></div>`
       : '';
     const shots = f.area === 'visual' && f.evidence ? `<div class="shots">${img(f.evidence.before, 'Source')}${img(f.evidence.after, 'Destination')}${img(f.evidence.diff, 'Differences')}</div>` : '';
-    return `<div class="card"><div class="top">${chip(f.priority)}<span class="t">${esc(f.title)}</span><span class="id">${esc(f.id)}</span></div><div class="sub">${sub(f)}</div>${values}${shots}</div>`;
+    const status = f.status === 'new' ? ' <span class="chip expected">new</span>' : '';
+    return `<div class="card"><div class="top">${chip(f.priority)}${status}<span class="t">${esc(f.title)}</span><span class="id">${esc(f.id)}</span></div><div class="sub">${sub(f)}</div>${values}${shots}</div>`;
   };
 
   const area = ([id, title]) => {
@@ -132,9 +134,11 @@ function renderLeadershipHtml(model, { outDir = '.', embedMax = 12 } = {}) {
     `<div class="meta">${esc(String(model.generatedAt || '').slice(0, 10))} · ${plural(model.pages, 'page')}${(model.viewports || []).length ? ` · viewports ${esc(model.viewports.join(', '))}` : ''}</div>`,
     `<div class="verdict ${cls}"><strong>${esc(head)}</strong>${esc(hint)} ${model.verdict.p1} P1 · ${model.verdict.p2} P2 · ${model.verdict.p3} P3 · ${model.verdict.expected} to recheck at launch.</div>`,
     model.flaky ? `<p class="empty">${plural(model.flaky, 'page')} change between loads (rotating or random content); some differences may be noise.</p>` : '',
+    model.hasBaseline ? `<p><strong>${esc(progress(model))}</strong></p>` : '',
     `<div class="score">${tiles}</div>`,
     ...AREAS.map(area),
     expected.length ? `<h2>Expected on preview — recheck at launch</h2><p>The destination is a preview or publish host, where these usually differ by design. Check them again on the launch domain.</p><ul>${expected.map((f) => `<li>${esc(f.title)} <code>${esc(f.id)}</code></li>`).join('')}</ul>` : '',
+    model.hasBaseline ? `<h2>Fixed since last run</h2>${model.fixed.length ? `<ul>${model.fixed.map((f) => `<li>${esc(f.title || f.id)} <code>${esc(f.id)}</code></li>`).join('')}</ul>` : '<p class="empty">Nothing from the last run is fixed yet.</p>'}` : '',
     '<h2>For agents</h2><p>Work from <code>fixes.json</code>: one entry per fix with the same id as above, its section and component, the source and destination values and the fix type. Verify a fix by running the comparison again with <code>--baseline &lt;this folder&gt;</code>. To accept a difference as intended, open <code>review.html</code>.</p>',
     (model.notTested || []).length ? `<p class="foot">Not tested: ${model.notTested.map(esc).join('; ')}.</p>` : '',
   ].filter(Boolean);

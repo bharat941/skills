@@ -4,6 +4,8 @@
 // Every report view (report.md, report.html, fixes.json, the CSVs) is rendered from the model built here.
 
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const { priorityOf, ownerOf, DEFAULT_RULES } = require('./rules');
 const { isPreviewHost, hostOf } = require('./util');
 const { areaOf, pathOf, issueTitle, countKey, verdictOf, PRIORITY_ORDER } = require('./actions');
@@ -276,10 +278,11 @@ function runParity(pairs) {
 const hostsOf = (urls) => [...new Set(urls.map(hostOf).filter(Boolean))].join(', ');
 
 /** Everything a report view needs: where the comparison ran, the verdict, parity and the fixes. */
-function reportModel(run, rules = DEFAULT_RULES) {
+function reportModel(run, rules = DEFAULT_RULES, baseline = null) {
   const pairs = run.pairs || [];
   const single = pairs.length === 1;
-  const fixes = buildFixes(run, rules);
+  const built = buildFixes(run, rules);
+  const { fixes, fixed } = baseline ? applyBaseline(built, baseline) : { fixes: built, fixed: [] };
   const notCompared = pairs.filter((p) => p.blocked || p.error).length;
   const model = {
     generatedAt: run.generatedAt,
@@ -290,15 +293,40 @@ function reportModel(run, rules = DEFAULT_RULES) {
     viewports: run.viewports || [],
     parity: runParity(pairs),
     fixes,
-    fixed: [],
-    hasBaseline: false,
-    baselineAt: null,
+    fixed,
+    hasBaseline: !!baseline,
+    baselineAt: baseline ? baseline.generatedAt || null : null,
+    baselineP1: baseline ? (baseline.fixes || []).filter((f) => f.priority === 'P1').length : null,
     pair: single ? pairs[0] : null,
     flaky: pairs.filter((p) => p.flaky).length,
     notTested: run.notTested || [],
   };
   model.verdict = verdictOf(fixes, { notCompared, pages: pairs.length });
   return model;
+}
+
+/** Reads a previous run's fixes.json for --baseline. Throws with a message that says what to fix. */
+function loadBaseline(dir) {
+  const file = path.join(dir, 'fixes.json');
+  if (!fs.existsSync(file)) throw new Error(`--baseline: ${file} not found; point --baseline at the --out folder of an earlier run`);
+  let data;
+  try {
+    data = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (e) {
+    throw new Error(`--baseline: ${file} is not valid JSON`);
+  }
+  if (!data || !Array.isArray(data.fixes)) throw new Error(`--baseline: ${file} has no "fixes" list`);
+  return data;
+}
+
+/** Marks fixes as new or open against an earlier run, and lists the earlier fixes that are gone. */
+function applyBaseline(fixes, baseline) {
+  const before = new Set((baseline.fixes || []).map((f) => f.id));
+  const now = new Set(fixes.map((f) => f.id));
+  return {
+    fixes: fixes.map((f) => ({ ...f, status: before.has(f.id) ? 'open' : 'new' })),
+    fixed: (baseline.fixes || []).filter((f) => !now.has(f.id)),
+  };
 }
 
 /** The model narrowed to one page: its fixes, with only that page's items, its own parity and verdict. */
@@ -323,4 +351,4 @@ function pageModel(model, pair) {
   };
 }
 
-module.exports = { pageModel, buildFixes, fixId, pageParity, runParity, reportModel, sectionLabel, assetPrefix, AREA_ORDER };
+module.exports = { loadBaseline, applyBaseline, pageModel, buildFixes, fixId, pageParity, runParity, reportModel, sectionLabel, assetPrefix, AREA_ORDER };

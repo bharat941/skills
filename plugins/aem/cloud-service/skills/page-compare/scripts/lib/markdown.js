@@ -161,6 +161,20 @@ function areaSection(model, area, prefix) {
   return out;
 }
 
+/** "Since 2026-11-13: P1 6 → 2, 4 fixed, 0 new." */
+function progressLine(model) {
+  const p1 = model.fixes.filter((f) => f.priority === 'P1').length;
+  const fresh = model.fixes.filter((f) => f.status === 'new').length;
+  return `Since ${String(model.baselineAt || 'the last run').slice(0, 10)}: P1 ${model.baselineP1} → ${p1}, ${model.fixed.length} fixed, ${fresh} new.`;
+}
+
+function fixedSection(model) {
+  if (!model.hasBaseline) return [];
+  if (!model.fixed.length) return ['## Fixed since last run', '_Nothing from the last run is fixed yet._'];
+  const shown = model.fixed.slice(0, MAX_FIXES * 2);
+  return ['## Fixed since last run', shown.map((f) => `- ${cell(f.title || f.id, 200)} (${idCell(f)})`).join('\n'), ...more(model.fixed, shown.length)];
+}
+
 function expectedSection(model) {
   const list = model.fixes.filter((f) => f.priority === 'expected');
   if (!list.length) return [];
@@ -194,10 +208,11 @@ function agentsSection(model) {
 /** report.md (or pages/<page>.md with prefix '../') for a model. */
 function reportMd(model, { pairs = [], prefix = '' } = {}) {
   const out = [...header(model), verdictLine(model.verdict)];
+  if (model.hasBaseline) out.push(progressLine(model));
   if (model.flaky) out.push(`> ⚠️ ${plural(model.flaky, 'page')} changes between loads (rotating or random content); some differences may be noise. They are marked "flaky" in pages.csv.`);
   out.push(scorecard(model));
   for (const a of AREA_IDS) out.push(...areaSection(model, a, prefix));
-  out.push(...expectedSection(model), ...worstPages(model, pairs), ...agentsSection(model));
+  out.push(...expectedSection(model), ...fixedSection(model), ...worstPages(model, pairs), ...agentsSection(model));
   return `${out.join('\n\n')}\n`;
 }
 
@@ -268,11 +283,11 @@ function pagesCsv(pairs, rules = DEFAULT_RULES, single = false) {
 /**
  * All Markdown, CSV and JSON report files for a run, keyed by path relative to the output directory:
  * report.md, fixes.json, issues.csv, pages.csv, and pages/<id>.md for every page that did not pass in a multi-page run.
- * `rules` are the run's rules, so --rules priority and owner overrides apply.
+ * `rules` are the run's rules, so --rules priority and owner overrides apply; `baseline` is an earlier fixes.json (--baseline).
  */
-function renderMarkdownFiles(run, rules = DEFAULT_RULES) {
+function renderMarkdownFiles(run, rules = DEFAULT_RULES, baseline = null) {
   const pairs = [...(run.pairs || [])].sort((a, b) => STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status));
-  const model = reportModel(run, rules);
+  const model = reportModel(run, rules, baseline);
   const files = {
     'report.md': reportMd(model, { pairs }),
     'fixes.json': fixesJson(model),
@@ -308,4 +323,4 @@ function writeReportFiles(outDir, files) {
   }
 }
 
-module.exports = { toMarkdown, renderMarkdownFiles, writeReportFiles, reportMd, areaOf, PRIORITY_LABEL };
+module.exports = { toMarkdown, renderMarkdownFiles, writeReportFiles, reportMd, progressLine, areaOf, PRIORITY_LABEL };

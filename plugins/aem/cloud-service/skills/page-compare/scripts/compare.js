@@ -15,7 +15,7 @@ const { createFetcher, downloadFindings, brokenLinkFindings, siteFindings, redir
 const { renderHtml, renderJson, summarize, exitCode } = require('./lib/report');
 const { renderMarkdownFiles, writeReportFiles } = require('./lib/markdown');
 const { renderLeadershipHtml } = require('./lib/html');
-const { reportModel } = require('./lib/fixes');
+const { reportModel, loadBaseline } = require('./lib/fixes');
 const { normalizePath, hash, normalizeText } = require('./lib/util');
 const { parseCsv } = require('./lib/pairs');
 
@@ -39,6 +39,7 @@ Options:
                             The browser's own user agent is used
   --storage-state <file>    Playwright storage state for authenticated pages
   --accept <file>           accepted.json with reviewed differences
+  --baseline <dir>          --out folder of an earlier run: marks fixes new/open and lists what was fixed
   --rules <file>            JSON overrides for thresholds
   --expect-analytics <file> JSON { rsid, datastreamId, launch } the after pages must use
   --after-sitemap <url>     Report after-site pages that are not in the compared set
@@ -85,6 +86,7 @@ function parseOptions(argv) {
       'storage-state': { type: 'string' },
       'cdp-url': { type: 'string' },
       accept: { type: 'string' },
+      baseline: { type: 'string' },
       rules: { type: 'string' },
       'expect-analytics': { type: 'string' },
       'after-sitemap': { type: 'string' },
@@ -243,8 +245,10 @@ async function main() {
   let rules;
   let accepted;
   let expect = null;
+  let baseline = null;
   try {
     rules = loadRules(opts.rules);
+    if (opts.baseline) baseline = loadBaseline(opts.baseline);
     accepted = loadAccepted(opts.accept);
     if (opts['expect-analytics']) expect = readJson(opts['expect-analytics']);
   } catch (e) {
@@ -358,8 +362,8 @@ async function main() {
     pairs: finalPairs,
   };
   fs.writeFileSync(path.join(outDir, 'review.html'), renderHtml(run));
-  writeReportFiles(outDir, renderMarkdownFiles(run, rules));
-  fs.writeFileSync(path.join(outDir, 'report.html'), renderLeadershipHtml(reportModel(run, rules), { outDir }));
+  writeReportFiles(outDir, renderMarkdownFiles(run, rules, baseline));
+  fs.writeFileSync(path.join(outDir, 'report.html'), renderLeadershipHtml(reportModel(run, rules, baseline), { outDir }));
   fs.writeFileSync(path.join(outDir, 'report.json'), renderJson(run));
 
   const counts = summarize(finalPairs);

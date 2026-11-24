@@ -1340,3 +1340,61 @@ test('html: section order matches report.md and shows the same fix ids', () => {
   assert.match(html, /Not ready: 3 blockers/);
   assert.match(html, />70%</);
 });
+
+// ---------- --baseline ----------
+
+const { loadBaseline, applyBaseline } = require('./lib/fixes');
+
+test('baseline: ids in both are open, only now are new, only before are fixed', () => {
+  const now = [{ id: 'C-aaaaaa', priority: 'P1' }, { id: 'C-bbbbbb', priority: 'P2' }];
+  const before = { generatedAt: '2026-11-13T10:00:00Z', fixes: [{ id: 'C-aaaaaa', priority: 'P1' }, { id: 'I-cccccc', priority: 'P1', title: 'Old broken images' }] };
+  const r = applyBaseline(now, before);
+  assert.deepEqual(r.fixes.map((f) => [f.id, f.status]), [['C-aaaaaa', 'open'], ['C-bbbbbb', 'new']]);
+  assert.deepEqual(r.fixed.map((f) => f.id), ['I-cccccc']);
+});
+
+test('baseline: report.md shows progress line and Fixed since last run; html too', () => {
+  const run = fixRun();
+  const first = JSON.parse(renderMarkdownFiles(run)['fixes.json']);
+  first.generatedAt = '2026-11-13T10:00:00Z';
+  first.fixes.push({ id: 'I-cccccc', priority: 'P1', area: 'integration', title: 'Files under cdn.old/dev/ fail to load (4)' });
+  const md = renderMarkdownFiles(run, undefined, first)['report.md'];
+  assert.match(md, /Since 2026-11-13: P1 4 → 3, 1 fixed, 0 new\./);
+  assert.match(md, /## Fixed since last run\n\n- Files under cdn\.old\/dev\/ fail to load \(4\) \(`I-cccccc`\)/);
+  const json = JSON.parse(renderMarkdownFiles(run, undefined, first)['fixes.json']);
+  assert.ok(json.fixes.every((f) => f.status === 'open'));
+  assert.deepEqual(json.fixed.map((f) => f.id), ['I-cccccc']);
+  const html = renderLeadershipHtml(reportModel(run, undefined, first), { outDir: os.tmpdir() });
+  assert.match(html, /Since 2026-11-13: P1 4 → 3, 1 fixed, 0 new\./);
+  assert.match(html, /<h2>Fixed since last run/);
+});
+
+test('baseline: loadBaseline reads fixes.json and explains what is wrong', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-base-'));
+  try {
+    assert.throws(() => loadBaseline(dir), /--baseline: .*fixes\.json not found/);
+    fs.writeFileSync(path.join(dir, 'fixes.json'), '{oops');
+    assert.throws(() => loadBaseline(dir), /--baseline: .*fixes\.json is not valid JSON/);
+    fs.writeFileSync(path.join(dir, 'fixes.json'), JSON.stringify({ generatedAt: 'x', fixes: [{ id: 'C-1' }] }));
+    assert.deepEqual(loadBaseline(dir).fixes, [{ id: 'C-1' }]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('cli: --baseline without a usable fixes.json exits 2 before loading pages', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-base-cli-'));
+  try {
+    const args = (base) => [path.join(__dirname, 'compare.js'), '--before', 'http://127.0.0.1:9/a', '--after', 'http://127.0.0.1:9/b', '--baseline', base, '--out', path.join(dir, 'out')];
+    const missing = spawnSync(process.execPath, args(dir), { encoding: 'utf8' });
+    assert.equal(missing.status, 2);
+    assert.match(missing.stderr, /fixes\.json not found/);
+    fs.writeFileSync(path.join(dir, 'fixes.json'), 'nope');
+    const bad = spawnSync(process.execPath, args(dir), { encoding: 'utf8' });
+    assert.equal(bad.status, 2);
+    assert.match(bad.stderr, /not valid JSON/);
+    assert.ok(!fs.existsSync(path.join(dir, 'out', 'pairs')), 'no page was loaded');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
