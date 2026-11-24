@@ -1398,3 +1398,37 @@ test('cli: --baseline without a usable fixes.json exits 2 before loading pages',
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ---------- fix report: real-run refinements ----------
+
+test('fixes: missing text and images under one heading are one fix', () => {
+  const run = actionRun([pairOf(1, [
+    missingText([txt('Card one', 'Explore more'), txt('Card two', 'Explore more')]),
+    { check: 'image.missing', severity: 'fail', summary: '1 content image(s) missing on the after page', items: [{ src: 'https://www.b.com/c.png', alt: 'c', inMain: true, region: 'main', heading: 'Explore more', component: 'div.cmp-teaser' }] },
+    { check: 'image.missing', severity: 'fail', summary: '1 content image(s) missing on the after page', items: [{ src: 'https://www.b.com/d.png', alt: 'd', inMain: true, region: 'main', heading: 'Speed', component: 'div.cmp-image' }] },
+  ])]);
+  const titles = buildFixes(run).map((f) => f.title).sort();
+  assert.deepEqual(titles, ['Explore more: 2 text block(s) and 1 image(s) missing', 'Speed: 1 image(s) missing']);
+});
+
+test('content: placeholder items keep heading and component', () => {
+  const ctx = ctxFor('https://www.b.com/', 'https://www.a.com/');
+  const out = contentFindings(snap({ blocks: [] }), snap({ blocks: [{ text: 'Disclaimer text 1', region: 'main', heading: 'Key features', component: 'div.cmp-text' }] }), ctx);
+  const it = out.find((x) => x.check === 'content.placeholder').items[0];
+  assert.deepEqual([it.heading, it.component], ['Key features', 'div.cmp-text']);
+});
+
+e2e('capture: a heading with hidden responsive copies is read once; a cookie component is consent UI', { timeout: 60000 }, async () => {
+  const { chromium } = require('playwright');
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.setContent(`<html><body><main><h2><div class="pc">Pioneering DRAM</div><div class="mo" style="display:none">Pioneering DRAM</div></h2><p>Body copy</p>
+      <div id="cookie_component_emea" class="CO35_Cookie_EMEA" style="display:none"><p>Our site uses cookies.</p><button>Accept all</button></div></main></body></html>`);
+    const x = await page.evaluate(extractInPage, { masks: [], sectionSelectors: [], consentSel: require('./lib/capture').CONSENT_SELECTORS.join(',') });
+    assert.equal(x.blocks.find((b) => b.text === 'Body copy').heading, 'Pioneering DRAM');
+    assert.ok(!x.blocks.some((b) => /cookies|Accept all/.test(b.text)), JSON.stringify(x.blocks));
+  } finally {
+    await browser.close();
+  }
+});

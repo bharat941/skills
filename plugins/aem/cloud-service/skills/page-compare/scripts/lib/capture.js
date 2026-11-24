@@ -4,7 +4,7 @@ const { classifyBlock } = require('./guard');
 const { classifyRequest, flattenDataLayer } = require('./functional');
 
 // Cookie/consent dialogs: hidden from screenshots and left out of every content check.
-const CONSENT_SELECTORS = ['#onetrust-consent-sdk', '#onetrust-banner-sdk', '#truste-consent-track', '#CybotCookiebotDialog', '.cc-window', '.cookie-banner', '.cookie-consent', '.cmp-cookie-banner', '[id^="sp_message_container"]', '.evidon-banner'];
+const CONSENT_SELECTORS = ['#onetrust-consent-sdk', '#onetrust-banner-sdk', '#truste-consent-track', '#CybotCookiebotDialog', '.cc-window', '.cookie-banner', '.cookie-consent', '.cmp-cookie-banner', '[id^="sp_message_container"]', '.evidon-banner', '[id*="cookie" i][class*="cookie" i]'];
 
 const HIDE_CSS = `
 *,*::before,*::after{animation:none!important;transition:none!important;caret-color:transparent!important;scroll-behavior:auto!important}
@@ -84,6 +84,8 @@ function extractInPage({ masks, sectionSelectors, consentSel = '' }) {
     }
     return fallback;
   };
+  // Visible text only: headings often hold the same words again for other breakpoints, hidden.
+  const headingText = (h) => clean(h.innerText) || clean(h.textContent);
   let lastHeading = '';
 
   const blocks = [];
@@ -97,7 +99,7 @@ function extractInPage({ masks, sectionSelectors, consentSel = '' }) {
           if (visible(node)) walk(node, state);
         } else {
           flush(state);
-          if (HEADING.test(node.tagName) && regionOf(node) === 'main') lastHeading = clean(node.textContent);
+          if (HEADING.test(node.tagName) && regionOf(node) === 'main') lastHeading = headingText(node);
           const child = { buf: '', el: node, hidden: !visible(node) };
           walk(node, child);
           flush(child);
@@ -126,7 +128,7 @@ function extractInPage({ masks, sectionSelectors, consentSel = '' }) {
   const headingBefore = (el) => {
     let found = '';
     for (const h of mainHeadings) {
-      if (h.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) found = clean(h.textContent);
+      if (h.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) found = headingText(h);
       else break;
     }
     return found;
@@ -395,4 +397,4 @@ async function capturePage(browser, url, opts) {
   }
 }
 
-module.exports = { launchBrowser, capturePage, extractInPage, loadPlaywright };
+module.exports = { launchBrowser, capturePage, extractInPage, loadPlaywright, CONSENT_SELECTORS };

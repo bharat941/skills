@@ -16,6 +16,8 @@ const MAX_FIX_ITEMS = 50;
 const MAX_VALUE = 300;
 
 const SECTION_TEXT = new Set(['content.text.missing', 'content.text.changed', 'content.text.rewritten', 'content.facts.changed', 'content.placeholder', 'content.empty_state', 'image.missing']);
+// Text and images missing under one heading are one fix: the section lost its content.
+const MISSING = new Set(['content.text.missing', 'image.missing']);
 const ASSET = new Set(['image.broken', 'request.failed', 'image.alt.changed']);
 const VISUAL = new Set(['visual.section.missing', 'visual.section', 'visual.height']);
 const CHROME_REGIONS = new Set(['header', 'footer']);
@@ -67,7 +69,7 @@ function scopesOf(f) {
     if (!items.length) put(`${f.check}|main`, 'section');
     for (const it of items) {
       if (f.check === 'content.text.missing' && it && CHROME_REGIONS.has(it.region)) put(`chrome|${it.region}`, 'chrome', it);
-      else put(`${f.check}|${placeOf(it) || 'main'}`, 'section', it);
+      else put(`${MISSING.has(f.check) ? 'missing' : f.check}|${placeOf(it) || 'main'}`, 'section', it);
     }
   } else if (ASSET.has(f.check) && items.length) {
     for (const it of items) put(`asset|${assetPrefix(it && (it.src || it.url))}`, 'asset', it);
@@ -103,8 +105,12 @@ function titleOf(fx) {
     case 'chrome':
       return `${S}: ${n} item(s) missing`;
     case 'section':
-      if (first.check === 'content.text.missing') return `${S}: ${n} text block(s) missing`;
-      if (first.check === 'image.missing') return `${S}: ${n} image(s) missing`;
+      if (MISSING.has(first.check)) {
+        const text = fx.keysByCheck.get('content.text.missing');
+        const img = fx.keysByCheck.get('image.missing');
+        const parts = [text && `${text.size} text block(s)`, img && `${img.size} image(s)`].filter(Boolean);
+        return `${S}: ${parts.join(' and ')} missing`;
+      }
       if (first.check === 'content.facts.changed') {
         const it = fx.items.find((x) => x.numbersBefore) || {};
         return `${S}: figures changed (${(it.numbersBefore || []).join(', ')} → ${(it.numbersAfter || []).join(', ')})`;
@@ -178,7 +184,7 @@ function buildFixes(run, rules = DEFAULT_RULES) {
       const area = areaOfScope(scope.kind, f.check);
       let fx = map.get(scope.key);
       if (!fx) {
-        fx = { key: scope.key, kind: scope.kind, area, priority, first: f, checks: new Set(), pages: [], pageKeys: new Set(), keys: new Set(), capped: 0, plain: 0, occurrences: 0, items: [], section: sectionOf(scope.kind, scope, f), component: '', evidence: null, ...valuesOf(f, scope.items[0]) };
+        fx = { key: scope.key, kind: scope.kind, area, priority, first: f, checks: new Set(), pages: [], pageKeys: new Set(), keys: new Set(), keysByCheck: new Map(), capped: 0, plain: 0, occurrences: 0, items: [], section: sectionOf(scope.kind, scope, f), component: '', evidence: null, ...valuesOf(f, scope.items[0]) };
         map.set(scope.key, fx);
       }
       if (PRIORITY_ORDER.indexOf(priority) < PRIORITY_ORDER.indexOf(fx.priority)) fx.priority = priority;
@@ -191,6 +197,8 @@ function buildFixes(run, rules = DEFAULT_RULES) {
       if (scope.items.length) {
         for (const it of scope.items) {
           fx.keys.add(countKey(it));
+          if (!fx.keysByCheck.has(f.check)) fx.keysByCheck.set(f.check, new Set());
+          fx.keysByCheck.get(f.check).add(countKey(it));
           fx.occurrences++;
           if (!fx.component && it && it.component) fx.component = it.component;
           if (fx.items.length < MAX_FIX_ITEMS) fx.items.push(it && typeof it === 'object' ? { ...it, page } : { value: it, page });

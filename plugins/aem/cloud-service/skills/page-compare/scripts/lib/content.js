@@ -449,7 +449,7 @@ function placeholderFindings(before, after, rules) {
       if (b.hidden || !key || onBefore.has(key) || seen.has(key) || !re.test(b.text)) return false;
       seen.add(key);
       return true;
-    }).map((b) => ({ text: b.text, region: b.region }));
+    }).map((b) => ({ text: b.text, region: b.region, ...placeOf(b) }));
   };
   const out = [];
   const placeholders = pick(t.placeholder);
