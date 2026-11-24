@@ -135,4 +135,4 @@ function verdictOf(actions, { notCompared = 0, pages } = {}) {
   return { label, ...counts };
 }
 
-module.exports = { buildActions, verdictOf, priorityParts, areaOf, pathOf, subjectOf, normalizeSubject, issueTitle, PRIORITY_ORDER };
+module.exports = { buildActions, verdictOf, priorityParts, countKey, areaOf, pathOf, subjectOf, normalizeSubject, issueTitle, PRIORITY_ORDER };

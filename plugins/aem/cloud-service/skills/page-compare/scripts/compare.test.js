@@ -1149,3 +1149,132 @@ test('metaSummary picks title, description, canonical, robots, og:title and firs
   const m = metaSummary(snap({ title: 'T', meta: { description: 'D', canonical: 'C', 'og:title': 'O' }, headings: [{ level: 2, text: 'Sub' }, { level: 1, text: 'H' }] }));
   assert.deepEqual(m, { title: 'T', description: 'D', canonical: 'C', robots: '', ogTitle: 'O', h1: 'H' });
 });
+
+// ---------- fix model ----------
+
+const { buildFixes, fixId, pageParity, runParity, reportModel, sectionLabel } = require('./lib/fixes');
+
+const missingText = (items, extra = {}) => ({ check: 'content.text.missing', severity: 'fail', summary: `${items.length} text block(s) from the before page are missing on the after page (30% of text)`, pct: 30, items, ...extra });
+const txt = (text, heading, region = 'main', component = '') => ({ text, region, heading, component, hidden: false, chars: text.length });
+
+test('fixes: missing blocks under three headings are three fixes, header text is a separate Header fix', () => {
+  const run = actionRun([pairOf(1, [missingText([txt('Q1', 'FAQs'), txt('Q2', 'FAQs'), txt('Fast', 'Key features'), txt('Intro', ''), txt('Tech Blog', '', 'header')])])]);
+  const fixes = buildFixes(run);
+  assert.deepEqual(fixes.map((x) => [x.priority, x.title]).sort(), [
+    ['P1', 'FAQs: 2 text block(s) missing'],
+    ['P1', 'Key features: 1 text block(s) missing'],
+    ['P1', 'Main content: 1 text block(s) missing'],
+    ['P3', 'Header: 1 item(s) missing'],
+  ]);
+  const faq = fixes.find((x) => x.section === 'FAQs');
+  assert.equal(faq.expected, 'Q1');
+  assert.equal(faq.actual, '');
+  assert.equal(faq.fixType, 'content');
+  assert.equal(faq.area, 'content');
+  assert.deepEqual(faq.pages, [{ source: 'https://www.b.com/p1', destination: 'https://www.a.com/p1' }]);
+});
+
+test('fixes: nav items and header text are one Header fix', () => {
+  const run = actionRun([pairOf(1, [missingText([txt('Tech Blog', '', 'header')]), { check: 'nav.item', severity: 'review', summary: '2 navigation item(s) missing', items: [{ text: 'DRAM' }, { text: 'SSD' }] }])]);
+  const fixes = buildFixes(run);
+  assert.equal(fixes.length, 1);
+  assert.deepEqual([fixes[0].title, fixes[0].priority, fixes[0].count], ['Header: 3 item(s) missing', 'P3', 3]);
+});
+
+test('fixes: broken images and failed requests under /dev/image/ are one fix', () => {
+  const src = (i) => `https://img.example.com/dev/image/products/x${i}.png`;
+  const run = actionRun([pairOf(1, [
+    { check: 'image.broken', severity: 'fail', summary: '4 content image(s) fail to load', items: [0, 1, 2, 3].map((i) => ({ src: src(i) })) },
+    { check: 'request.failed', severity: 'review', summary: '7 new failed request(s)', items: [0, 1, 2, 3, 4, 5, 6].map((i) => ({ url: src(i + 10), status: 404 })) },
+  ])]);
+  const fixes = buildFixes(run);
+  assert.equal(fixes.length, 1);
+  assert.deepEqual([fixes[0].priority, fixes[0].count, fixes[0].fixType, fixes[0].area], ['P1', 11, 'content', 'integration']);
+  assert.equal(fixes[0].title, 'Files under img.example.com/dev/image/ fail to load (11)');
+});
+
+test('fixes: the same broken link on many pages is one fix', () => {
+  const pairs = [1, 2, 3].map((i) => pairOf(i, [{ check: 'link.broken', severity: 'fail', summary: '1 internal link(s) return an error', items: [{ text: 'SAMSUNG', url: 'https://www.a.com/', status: 404 }] }]));
+  const fixes = buildFixes(actionRun(pairs));
+  assert.equal(fixes.length, 1);
+  assert.equal(fixes[0].title, 'Link to / returns 404 (3 link(s))');
+  assert.equal(fixes[0].actual, 'https://www.a.com/ → 404');
+  assert.equal(fixes[0].pages.length, 3);
+});
+
+test('fixes: id is the same for the same problem on 1 page and on 3 pages', () => {
+  const f = () => [missingText([txt('Q1', 'FAQs')])];
+  const one = buildFixes(actionRun([pairOf(1, f())]))[0];
+  const three = buildFixes(actionRun([pairOf(1, f()), pairOf(2, f()), pairOf(3, f())]))[0];
+  assert.equal(one.id, three.id);
+  assert.match(one.id, /^C-[0-9a-f]{6}$/);
+  assert.equal(three.pages.length, 3);
+});
+
+test('fixes: id is stable across calls and page order', () => {
+  const a = pairOf(1, [missingText([txt('Q1', 'FAQs')])]);
+  const b = pairOf(2, [{ check: 'visual.section.missing', severity: 'fail', summary: '1 section(s) have no match at 1440', items: [{ section: 'main-4:.faq', viewport: '1440' }] }]);
+  const ids = (pairs) => buildFixes(actionRun(pairs)).map((x) => x.id).sort();
+  assert.deepEqual(ids([a, b]), ids([b, a]));
+  assert.equal(fixId('content', 'x'), fixId('content', 'x'));
+  assert.notEqual(fixId('content', 'x'), fixId('visual', 'x'));
+});
+
+test('fixes: old result without heading/component groups by region and does not throw', () => {
+  const old = { check: 'content.text.missing', severity: 'fail', summary: '2 text block(s) from the before page are missing on the after page (12% of text)', items: [{ text: 'A', region: 'main' }, { text: 'B', region: 'main' }] };
+  const fixes = buildFixes(actionRun([pairOf(1, [old])]));
+  assert.deepEqual(fixes.map((x) => x.title), ['Main content: 2 text block(s) missing']);
+});
+
+test('fixes: facts changed title names the figures; values are before and after', () => {
+  const item = { before: 'With a breakthrough 32GB capacity', after: 'With a breakthrough 64GB capacity', similarity: 0.87, region: 'main', heading: 'Key features', numbersBefore: ['32gb'], numbersAfter: ['64gb'] };
+  const fix = buildFixes(actionRun([pairOf(1, [{ check: 'content.facts.changed', severity: 'fail', summary: '1 text block(s) state different figures on the after page', items: [item] }])]))[0];
+  assert.equal(fix.title, 'Key features: figures changed (32gb → 64gb)');
+  assert.deepEqual([fix.expected, fix.actual], [item.before, item.after]);
+});
+
+test('fixes: visual section at three viewports is one fix with 1440 evidence', () => {
+  const sec = (vp) => ({ check: 'visual.section', severity: 'fail', summary: `1 section(s) look different at ${vp}`, items: [{ section: 'main-2:#root-container', viewport: vp, pct: vp === '1440' ? 12.5 : 8, files: { before: `${vp}-b.png`, after: `${vp}-a.png`, diff: `${vp}-d.png` } }] });
+  const fixes = buildFixes(actionRun([pairOf(1, [sec('375'), sec('1440'), sec('768')])]));
+  assert.equal(fixes.length, 1);
+  assert.equal(fixes[0].title, 'Section root-container looks different (12.5% of pixels)');
+  assert.deepEqual(fixes[0].evidence, { before: 'pairs/p1/visual/1440-b.png', after: 'pairs/p1/visual/1440-a.png', diff: 'pairs/p1/visual/1440-d.png' });
+  assert.equal(fixes[0].count, 1);
+  assert.equal(fixes[0].fixType, 'code');
+});
+
+test('fixes: sorted P1 → P3, content before visual before integration; info and accepted left out', () => {
+  const fixes = buildFixes(actionRun([pairOf(1, [
+    { check: 'link.broken', severity: 'fail', summary: '1 link', items: [{ url: 'https://www.a.com/x', status: 404 }] },
+    { check: 'visual.section.missing', severity: 'fail', summary: '1 section', items: [{ section: 'main-4:.faq', viewport: '1440' }] },
+    missingText([txt('Q1', 'FAQs')]),
+    { check: 'content.text.regrouped', severity: 'info', summary: 'x' },
+    { check: 'meta.title', severity: 'review', summary: 'Title changed', before: 'A', after: 'B', accepted: { reason: 'ok' } },
+  ])]));
+  assert.deepEqual(fixes.map((x) => `${x.priority} ${x.area}`), ['P1 content', 'P1 visual', 'P2 integration']);
+});
+
+test('sectionLabel turns section ids into names', () => {
+  assert.equal(sectionLabel('header'), 'Header');
+  assert.equal(sectionLabel('main-3:#cm-semi-breadcrumb'), 'cm-semi-breadcrumb');
+  assert.equal(sectionLabel('main-4:.static-content'), 'static-content');
+});
+
+test('parity: content 100 − pct, parsed from summary when pct missing; visual = pass rows / source rows; blocked page is null', () => {
+  const rows = [{ status: 'pass' }, { status: 'pass' }, { status: 'fail' }, { status: 'missing' }, { status: 'added' }];
+  assert.deepEqual(pageParity(pairOf(1, [missingText([txt('A', '')])], { visual: { rows } })), { content: 70, visual: 50 });
+  const old = { check: 'content.text.missing', severity: 'fail', summary: '2 text block(s) missing (28.97% of text)', items: [] };
+  assert.equal(pageParity(pairOf(1, [old])).content, 71);
+  assert.deepEqual(pageParity(pairOf(1, [])), { content: 100, visual: null });
+  assert.deepEqual(pageParity(pairOf(1, [], { blocked: 'waf' })), { content: null, visual: null });
+  assert.deepEqual(runParity([pairOf(1, [missingText([txt('A', '')])], { visual: { rows } }), pairOf(2, [], { visual: { rows: [{ status: 'pass' }] } })]), { content: 85, visual: 75 });
+});
+
+test('reportModel: single pair shows URLs, many pairs show hosts; verdict from fixes', () => {
+  const one = reportModel(actionRun([pairOf(1, [missingText([txt('Q1', 'FAQs')])])]));
+  assert.deepEqual([one.source, one.destination, one.single, one.pages], ['https://www.b.com/p1', 'https://www.a.com/p1', true, 1]);
+  assert.equal(one.verdict.label, 'Not ready');
+  assert.deepEqual([one.fixed, one.hasBaseline], [[], false]);
+  const many = reportModel(actionRun([pairOf(1, []), pairOf(2, [])]));
+  assert.deepEqual([many.source, many.destination, many.single], ['www.b.com', 'www.a.com', false]);
+});

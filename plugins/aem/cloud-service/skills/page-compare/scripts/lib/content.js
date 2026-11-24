@@ -9,8 +9,11 @@ function finding(check, severity, summary, extra = {}) {
   return { check, severity, summary, ...extra };
 }
 
-function cap(items) {
-  return items.length > MAX_ITEMS ? { items: items.slice(0, MAX_ITEMS), truncated: items.length - MAX_ITEMS } : { items };
+// Missing text and images keep more items: they are grouped by page section later, and later sections must not be cut off.
+const MAX_CONTENT_ITEMS = 500;
+
+function cap(items, max = MAX_ITEMS) {
+  return items.length > max ? { items: items.slice(0, max), truncated: items.length - max } : { items };
 }
 
 function counter(list, keyFn) {
@@ -143,7 +146,7 @@ function textFindings(before, after, rules, volatile) {
     out.push(finding('content.facts.changed', 'fail', `${facts.length} text block(s) state different figures on the after page`, cap(facts)));
   }
   if (d.missing.length) {
-    out.push(finding('content.text.missing', sev, `${d.missing.length} text block(s) from the before page are missing on the after page (${d.missingPct}% of text)`, { ...cap(d.missing), pct: d.missingPct }));
+    out.push(finding('content.text.missing', sev, `${d.missing.length} text block(s) from the before page are missing on the after page (${d.missingPct}% of text)`, { ...cap(d.missing, MAX_CONTENT_ITEMS), pct: d.missingPct }));
   }
   if (reworded.length) {
     out.push(finding('content.text.changed', d.missing.length ? 'review' : sev, `${reworded.length} text block(s) were reworded`, cap(reworded)));
@@ -290,7 +293,7 @@ function imageFindings(before, after) {
   }
   const missingMain = missing.filter((m) => m.inMain);
   const missingOther = missing.filter((m) => !m.inMain);
-  if (missingMain.length) out.push(finding('image.missing', 'fail', `${missingMain.length} content image(s) missing on the after page`, cap(missingMain)));
+  if (missingMain.length) out.push(finding('image.missing', 'fail', `${missingMain.length} content image(s) missing on the after page`, cap(missingMain, MAX_CONTENT_ITEMS)));
   if (missingOther.length) out.push(finding('image.missing.chrome', 'review', `${missingOther.length} header/footer image(s) missing on the after page`, cap(missingOther)));
   if (altLost.length) out.push(finding('image.alt', 'review', `${altLost.length} image(s) lost their alt text`, cap(altLost)));
   if (altChanged.length) out.push(finding('image.alt.changed', 'review', `${altChanged.length} image alt text(s) changed`, cap(altChanged)));

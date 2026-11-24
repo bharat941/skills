@@ -83,6 +83,31 @@ const DEFAULT_RULES = {
     'site.sitemap': { preview: 'expected', production: 'P3' },
     'analytics.': { preview: 'expected', production: 'P2' },
   },
+  // What kind of change fixes it, by check-id prefix (longest prefix wins): content (authoring, assets and
+  // links in the CMS), code (front end) or config (Dispatcher, CDN, SEO and analytics setup). Default: code.
+  fixType: {
+    'content.': 'content',
+    'heading.': 'content',
+    'cta.': 'content',
+    'form.field': 'content',
+    'image.missing': 'content',
+    'image.alt': 'content',
+    'image.broken': 'content',
+    'request.failed': 'content',
+    'nav.': 'content',
+    'link.': 'content',
+    'meta.title': 'content',
+    'meta.description': 'content',
+    'meta.social': 'content',
+    'download.': 'content',
+    'site.': 'config',
+    'meta.robots': 'config',
+    'meta.canonical': 'config',
+    'meta.hreflang': 'config',
+    'redirect.': 'config',
+    'analytics.': 'config',
+    'consent.': 'config',
+  },
   // Who most likely fixes it, by check-id prefix (longest prefix wins). A suggestion, not an assignment.
   owner: {
     'content.': 'Content / authoring',
