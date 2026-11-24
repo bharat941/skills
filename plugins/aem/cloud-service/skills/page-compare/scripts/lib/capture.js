@@ -4,7 +4,7 @@ const { classifyBlock } = require('./guard');
 const { classifyRequest, flattenDataLayer } = require('./functional');
 
 // Cookie/consent dialogs: hidden from screenshots and left out of every content check.
-const CONSENT_SELECTORS = ['#onetrust-consent-sdk', '#onetrust-banner-sdk', '#truste-consent-track', '#CybotCookiebotDialog', '.cc-window', '.cookie-banner', '.cookie-consent', '.cmp-cookie-banner', '[id^="sp_message_container"]', '.evidon-banner', '[id*="cookie" i][class*="cookie" i]'];
+const CONSENT_SELECTORS = ['#onetrust-consent-sdk', '#onetrust-banner-sdk', '#truste-consent-track', '#CybotCookiebotDialog', '.cc-window', '.cookie-banner', '.cookie-consent', '.cmp-cookie-banner', '[id^="sp_message_container"]', '.evidon-banner'];
 
 const HIDE_CSS = `
 *,*::before,*::after{animation:none!important;transition:none!important;caret-color:transparent!important;scroll-behavior:auto!important}
@@ -45,7 +45,9 @@ async function launchBrowser({ cdpUrl } = {}) {
 // Runs inside the page. Must stay self-contained.
 function extractInPage({ masks, sectionSelectors, consentSel = '' }) {
   const maskSel = masks.join(',');
-  const isMasked = (el) => (!!maskSel && !!el.closest(maskSel)) || (!!consentSel && !!el.closest(consentSel));
+  // Custom cookie components (id and class both say "cookie"); only small ones, since some sites wrap real content in such a div.
+  const cookieBoxes = [...document.querySelectorAll('[id*="cookie" i][class*="cookie" i]')].filter((e) => (e.textContent || '').length < 1500);
+  const isMasked = (el) => (!!maskSel && !!el.closest(maskSel)) || (!!consentSel && !!el.closest(consentSel)) || cookieBoxes.some((c) => c.contains(el));
   const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'HEAD', 'IFRAME', 'SVG', 'CANVAS', 'VIDEO', 'AUDIO']);
   const INLINE = new Set(['A', 'SPAN', 'STRONG', 'B', 'EM', 'I', 'U', 'SMALL', 'SUP', 'SUB', 'ABBR', 'CODE', 'MARK', 'TIME', 'CITE', 'Q', 'S', 'DEL', 'INS', 'FONT', 'BDI', 'BDO', 'DATA', 'DFN', 'KBD', 'SAMP', 'VAR', 'WBR', 'BR', 'LABEL']);
   const visible = (el) => {
