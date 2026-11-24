@@ -6,6 +6,7 @@ const { STATUS_ORDER } = require('./report');
 const { csvCell, isPreviewHost, hostOf } = require('./util');
 const { priorityOf, DEFAULT_RULES } = require('./rules');
 const { NUMBER, numbersIn } = require('./content');
+const { reportModel, pageParity } = require('./fixes');
 const { areaOf, pathOf, subjectOf, normalizeSubject, issueTitle, buildActions, verdictOf, priorityParts, PRIORITY_ORDER } = require('./actions');
 
 const SEVERITY_ORDER = { fail: 0, review: 1, info: 2 };
@@ -242,9 +243,23 @@ function toCsvText(header, rows) {
   return `${[header, ...rows].map((r) => r.map(csvCell).join(',')).join('\n')}\n`;
 }
 
-function issuesCsv(issues) {
-  return toCsvText(['priority', 'action', 'severity', 'area', 'check', 'issue', 'pages_affected', 'example_page', 'pages'],
-    issues.map((e) => [e.priority, e.action, e.severity, AREA_TITLE[e.area], e.check, e.issue, e.siteWide ? 'site-wide' : e.pages.length, e.siteWide ? '' : e.pages[0], e.pages.slice(0, MAX_ISSUE_PAGES).join(' ') + (e.pages.length > MAX_ISSUE_PAGES ? ` (+${e.pages.length - MAX_ISSUE_PAGES} more)` : '')]));
+const FIX_AREA_TITLE = { content: 'Content parity', visual: 'Visual parity', integration: 'Integration & SEO' };
+
+/** The work list for a spreadsheet: one row per fix, with the same id as fixes.json. */
+function issuesCsv(fixes) {
+  const pathOfUrl = (u) => pathOf({ after: u });
+  return toCsvText(['fix_id', 'priority', 'area', 'section', 'fix_type', 'owner', 'problem', 'how_many', 'pages_affected', 'source_value', 'destination_value', 'example_page', 'pages'],
+    fixes.map((f) => {
+      const pages = f.pages.map((p) => pathOfUrl(p.destination));
+      return [f.id, f.priority, FIX_AREA_TITLE[f.area], f.section, f.fixType, f.owner, f.title, f.count, f.siteWide ? 'site-wide' : pages.length, f.expected, f.actual, pages[0] || '',
+        pages.slice(0, MAX_ISSUE_PAGES).join(' ') + (pages.length > MAX_ISSUE_PAGES ? ` (+${pages.length - MAX_ISSUE_PAGES} more)` : '')];
+    }));
+}
+
+/** fixes.json: the fix list an agent works from. */
+function fixesJson(model) {
+  const { generatedAt, source, destination, verdict, parity, fixes, fixed } = model;
+  return `${JSON.stringify({ generatedAt, source, destination, verdict, parity, fixes, fixed }, null, 2)}\n`;
 }
 
 function issuesMd(issues, run) {
@@ -272,13 +287,14 @@ function detailPath(p) {
 }
 
 function pagesCsv(pairs, rules = DEFAULT_RULES) {
-  return toCsvText(['page', 'status', 'flaky', 'content', 'visual', 'integration', 'fail', 'review', 'p1', 'p2', 'p3', 'top_issue', 'detail', 'before', 'after'],
+  return toCsvText(['page', 'status', 'flaky', 'content', 'visual', 'integration', 'fail', 'review', 'p1', 'p2', 'p3', 'content_parity', 'visual_parity', 'top_issue', 'detail', 'before', 'after'],
     pairs.map((p) => {
       const a = pageAreas(p);
       const c = counts(p.findings || []);
       const previewHost = isPreviewHost(hostOf(p.after));
       const pr = (want) => (p.findings || []).flatMap(priorityParts).filter((f) => priorityOf(f, { previewHost }, rules) === want).length;
-      return [pathOf(p), p.status, p.flaky || p.retried ? 'yes' : '', a.content, a.visual, a.integration, c.fail, c.review, pr('P1'), pr('P2'), pr('P3'), topIssueOf(p), p.status === 'pass' ? '' : detailPath(p), p.before, p.after];
+      const parity = pageParity(p);
+      return [pathOf(p), p.status, p.flaky || p.retried ? 'yes' : '', a.content, a.visual, a.integration, c.fail, c.review, pr('P1'), pr('P2'), pr('P3'), parity.content ?? '', parity.visual ?? '', topIssueOf(p), p.status === 'pass' ? '' : detailPath(p), p.before, p.after];
     }));
 }
 
@@ -465,11 +481,13 @@ function summaryMd(run, pairs, issues, rules = DEFAULT_RULES) {
 function renderMarkdownFiles(run, rules = DEFAULT_RULES) {
   const pairs = [...(run.pairs || [])].sort((a, b) => STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status));
   const issues = groupIssues(pairs, run, rules);
+  const model = reportModel(run, rules);
   const files = {
     'report.md': summaryMd(run, pairs, issues, rules),
     'issues.md': issuesMd(issues, run),
-    'issues.csv': issuesCsv(issues),
+    'issues.csv': issuesCsv(model.fixes),
     'pages.csv': pagesCsv(pairs, rules),
+    'fixes.json': fixesJson(model),
   };
   for (const p of pairs) if (p.status !== 'pass') files[detailPath(p)] = `${pairSection(p, '../')}\n`;
   return files;

@@ -317,19 +317,19 @@ test('markdown scale: report.md stays about the same size from 10 to 1000 pages'
 test('markdown scale: the same issue on many pages is one issue with a page count', () => {
   const files = renderMarkdownFiles(scaleRun(100));
   const rows = csvRows(files['issues.csv']);
-  assert.match(rows[0], /^priority,action,severity,area,check,issue,pages_affected,example_page/);
-  const store = rows.filter((r) => r.includes('https://www.a.com/store.html'));
+  assert.match(rows[0], /^fix_id,priority,area,section,fix_type,owner,problem,how_many,pages_affected,source_value,destination_value,example_page,pages$/);
+  const store = rows.filter((r) => r.includes('Link to /store.html'));
   assert.equal(store.length, 1);
   assert.match(store[0], /,90,/);
-  assert.equal(rows.filter((r) => r.includes('meta.canonical')).length, 1);
-  assert.equal(rows.filter((r) => r.includes('console.error')).length, 1, 'cache-buster numbers must not split one console error into many');
+  assert.equal(rows.filter((r) => r.includes('Canonical still points')).length, 1);
+  assert.equal(rows.filter((r) => r.includes('console error')).length, 1, 'cache-buster numbers must not split one console error into many');
   assert.match(files['report.md'], /Canonical still points to a different host[^\n]*\| on 90 pages \|/);
 });
 
 test('markdown scale: every page is in pages.csv and each page with problems gets its own file', () => {
   const files = renderMarkdownFiles(scaleRun(500));
   const rows = csvRows(files['pages.csv']);
-  assert.match(rows[0], /^page,status,flaky,content,visual,integration,fail,review,p1,p2,p3,top_issue,detail,before,after/);
+  assert.match(rows[0], /^page,status,flaky,content,visual,integration,fail,review,p1,p2,p3,content_parity,visual_parity,top_issue,detail,before,after/);
   assert.equal(rows.length, 501);
   const pageFiles = Object.keys(files).filter((k) => k.startsWith('pages/'));
   assert.equal(pageFiles.length, 450);
@@ -523,7 +523,7 @@ test('csv: cells that start with a formula character are neutralised in every cs
 test('csv: ordinary values and numbers are not altered', () => {
   const run = { generatedAt: 'now', viewports: [1440], completeness: {}, notTested: [], pairs: [{ id: 'x-1', before: 'https://b/x', after: 'https://a/x', status: 'fail', findings: [{ check: 'meta.title', severity: 'fail', summary: 'Title missing' }] }] };
   const rows = renderMarkdownFiles(run)['pages.csv'].trim().split('\n');
-  assert.match(rows[1], /^\/x,fail,,fail,pass,pass,1,0,0,1,0,Title missing,pages\/x-1\.md,https:\/\/b\/x,https:\/\/a\/x$/);
+  assert.match(rows[1], /^\/x,fail,,fail,pass,pass,1,0,0,1,0,100,,Title missing,pages\/x-1\.md,https:\/\/b\/x,https:\/\/a\/x$/);
 });
 
 test('pairs: groupOf skips locale and AEM /content/<site> prefixes', () => {
@@ -601,9 +601,9 @@ test('action table has at most 15 rows at 500 pages and says how many more', () 
 test('issues.csv and pages.csv carry the priority', () => {
   const files = renderMarkdownFiles(leadRun());
   const issues = csvRows(files['issues.csv']);
-  assert.match(issues[0], /^priority,action,severity,area,check,issue,/);
-  assert.match(issues[1], /^P1,/);
-  assert.ok(issues.some((r) => r.startsWith('expected,') && r.includes('site.robots')));
+  assert.match(issues[0], /^fix_id,priority,area,/);
+  assert.match(issues[1], /^C-[0-9a-f]{6},P1,/);
+  assert.ok(issues.some((r) => /^I-[0-9a-f]{6},expected,/.test(r) && r.includes('robots.txt')));
   const pages = csvRows(files['pages.csv']);
   assert.match(pages[1], /,fail,pass,fail,3,1,2,1,0,/);
 });
@@ -1084,7 +1084,7 @@ test('report: --rules priority overrides reach report.md, issues.csv and pages.c
   const rules = { ...RULES, priority: { ...RULES.priority, 'nav.item': 'P1' } };
   const files = renderMarkdownFiles(run, rules);
   assert.match(files['report.md'], /\*\*Not ready: 1 blocker\*\*/);
-  assert.match(files['issues.csv'].split('\n')[1], /^P1,/);
+  assert.match(files['issues.csv'].split('\n')[1], /^[CVI]-[0-9a-f]{6},P1,/);
   assert.match(files['pages.csv'].split('\n')[1], /,0,1,1,0,0,/);
   assert.match(renderMarkdownFiles(run)['report.md'], /No blocking differences found/);
 });
@@ -1277,4 +1277,35 @@ test('reportModel: single pair shows URLs, many pairs show hosts; verdict from f
   assert.deepEqual([one.fixed, one.hasBaseline], [[], false]);
   const many = reportModel(actionRun([pairOf(1, []), pairOf(2, [])]));
   assert.deepEqual([many.source, many.destination, many.single], ['www.b.com', 'www.a.com', false]);
+});
+
+// ---------- fixes.json and CSVs ----------
+
+test('fixes.json parses and every fix has id, priority, area, title, fixType, pages, expected, actual', () => {
+  const files = renderMarkdownFiles(leadRun());
+  const data = JSON.parse(files['fixes.json']);
+  assert.deepEqual(Object.keys(data).sort(), ['destination', 'fixed', 'fixes', 'generatedAt', 'parity', 'source', 'verdict']);
+  assert.ok(data.fixes.length > 0);
+  for (const f of data.fixes) {
+    for (const k of ['id', 'priority', 'area', 'title', 'section', 'component', 'fixType', 'owner', 'pages', 'expected', 'actual', 'count']) assert.ok(k in f, `${f.id} lacks ${k}`);
+    assert.match(f.id, /^[CVI]-[0-9a-f]{6}$/);
+  }
+  assert.equal(data.verdict.label, 'Not ready');
+});
+
+test('issues.csv rows carry fix_id that exists in fixes.json', () => {
+  const files = renderMarkdownFiles(leadRun());
+  const ids = new Set(JSON.parse(files['fixes.json']).fixes.map((f) => f.id));
+  const rows = csvRows(files['issues.csv']).slice(1);
+  assert.equal(rows.length, ids.size);
+  for (const r of rows) assert.ok(ids.has(r.split(',')[0]), r);
+});
+
+test('pages.csv has content_parity and visual_parity', () => {
+  const run = actionRun([pairOf(1, [missingText([txt('A', '')])], { visual: { rows: [{ status: 'pass' }, { status: 'fail' }] } })]);
+  const rows = csvRows(renderMarkdownFiles(run)['pages.csv']);
+  const head = rows[0].split(',');
+  const cells = rows[1].split(',');
+  assert.equal(cells[head.indexOf('content_parity')], '70');
+  assert.equal(cells[head.indexOf('visual_parity')], '50');
 });
