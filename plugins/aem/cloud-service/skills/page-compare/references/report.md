@@ -3,30 +3,53 @@
 Everything is written under `--out` (default `./page-compare-out`).
 
 ```
-report.md                 one-page summary at any number of pages: verdict and prioritised action items; start here
-issues.md, issues.csv     the work list: every item with its priority and how many pages it affects
-pages.csv                 one row per page: result per area, counts, top issue, link to detail
-pages/<id>.md             full detail for each page that did not pass
-report.html               interactive report with Accept buttons
-report.json               full results (same data as the HTML)
-summary.csv               one row per pair: status, counts, top finding
+report.html               the report to share: self-contained (inline CSS, screenshots embedded, no scripts)
+report.md                 the same report as text, about 80 lines at any number of pages; start here
+fixes.json                the fix list for agents: every fix with id, where, source and destination values, fix type
+issues.csv                one row per fix, same ids as fixes.json
+pages.csv                 one row per page: result per area, parity, P1/P2/P3 counts, link to detail
+pages/<id>.md             the report for one page (multi-page runs, pages that did not pass)
+review.html               interactive page with Accept buttons for intended differences
+report.json               full results (raw findings, used by review.html)
 pairs/<id>/result.json    stored raw findings, used by --resume
-pairs/<id>/visual/        before/after/diff PNGs, only for flagged sections
+pairs/<id>/visual/        source/destination/diff PNGs, only for flagged sections
 ```
 
-Share the whole output folder: the Markdown files link to screenshots under `pairs/`.
+`report.html` can be emailed on its own: the first 12 screenshots are embedded and later ones link to `pairs/`. Keep the folder together when sharing the Markdown files, which link to screenshots under `pairs/`.
 
-## report.md
+## Fixes
 
-The report to hand to a customer or to leadership. Its size does not grow with the number of pages. Top to bottom:
+Every view renders the same fix list. A fix is one section of a page (or of a template, across pages) with one cause:
 
-1. **Verdict**, one line: `Not ready: N blockers` (any P1), `Ready after fixes: N major issues` (P2 only), `Incomplete: N pages could not be compared` (pages blocked or failed and nothing blocking found), `Nothing compared` (no page pairs matched the input and filters), or `No blocking differences found`, followed by the count of P1, P2 and P3 action items and of items to recheck at launch.
-2. **Action items**: one row per problem, not per item. Ten broken images are one row with "How many: 10"; the same broken link on 90 pages is one row "on 90 pages". Columns: `#, Priority, Area, Problem, How many, Example, Likely owner`. Sorted by priority, content before visual before integration, then by reach. At most 15 rows; the rest are in `issues.csv`.
-3. **Content differences**: `Before says / After says` for text that says something different on the after page. Changed figures (speeds, sizes, percentages) are bold and marked 🔴. At most 10 rows.
-4. **Expected on preview — recheck at launch**: robots.txt, canonical, sitemap and analytics differences on a preview or publish host, which are expected before launch.
-5. Area summary (content, visual, integration counted in pages), a note on flaky pages, site-wide checks, **Pages that need attention** (the 10 worst pages, linked to their detail), and for a single page the full page detail.
+| Findings | One fix per | Title |
+|---|---|---|
+| Missing, reworded, rewritten text, changed figures, placeholder or empty-state text, missing images | heading the text sits under (else its component, else "Main content") | `FAQs: 6 text block(s) missing`, `Key features: figures changed (32gb → 64gb)` |
+| Images that fail to load, failed requests, image alt changes | first two path segments of the destination URL | `Files under img.example.com/dev/image/ fail to load (11)` |
+| Broken internal links | target URL | `Link to / returns 404 (17 link(s))` |
+| Navigation items, header/footer text and images | header or footer | `Header: 138 item(s) missing` (P3) |
+| Visual sections (all viewports together) | section | `Section root-container looks different (12.5% of pixels)` |
+| Everything else | check | the finding's summary |
 
-Every list that is cut says how many rows were left out and which file has them.
+The fix id is the area letter (`C` content, `V` visual, `I` integration) and 6 hex characters of a hash of that scope. It does not include the page, so the same problem keeps its id when it appears on more or fewer pages, and across runs.
+
+`fixes.json` is `{ generatedAt, source, destination, verdict, parity, fixes, fixed }`. Each fix: `id, priority, area, title, section, component, fixType (content | code | config), owner, checks, pages [{ source, destination }], siteWide, count, expected, actual, items (up to 50, each with its page), truncated, evidence { before, after, diff }` (visual fixes) and, with `--baseline`, `status` (`new` or `open`). `fixed` lists the earlier run's fixes whose ids are gone.
+
+**Parity:** content parity is 100 minus the share of source text missing on the destination; visual parity is the share of source sections (at every viewport) that match. The run value is the mean over compared pages; a page that could not be compared has none.
+
+## report.md and report.html
+
+Same order and ids in both:
+
+1. Title with **Source** and **Destination** (URLs for one page, hosts for many), date, pages, viewports.
+2. **Verdict**: `Not ready: N blockers` (any P1), `Ready after fixes: N major issues` (P2 only), `Incomplete: N pages could not be compared`, `Nothing compared`, or `No blocking differences found`; then, with `--baseline`, `Since <date>: P1 6 → 2, 4 fixed, 0 new.`
+3. **Scorecard**: Content, Visual, Integration & SEO with parity and P1/P2/P3 counts.
+4. **Content parity**, **Visual parity**, **Integration & SEO**: P1 and P2 fixes (report.md: at most 10 per area as a table `ID, Priority, Section, Problem, Source says, Destination says, Fix type`; report.html: cards with the values side by side, or source / destination / diff screenshots for visual fixes), then P3 fixes in one line (collapsed in report.html). Changed figures are bold (highlighted in HTML). A single-page run adds a **Metadata** table (`Property, Source, Destination, Match`); Integration adds **Broken links** (`Status, Link, Link text`).
+5. **Expected on preview — recheck at launch**.
+6. **Fixed since last run** (with `--baseline`).
+7. **Pages with most blockers** (multi-page runs, top 10, linked to `pages/<id>.md`).
+8. **For agents**: where to start and the file list.
+
+Human-facing text never shows check ids or internal fields; those are in `fixes.json`. Every list that is cut says how many were left out and which file has them.
 
 ### Priorities
 
@@ -37,29 +60,28 @@ Every list that is cut says how many rows were left out and which file has them.
 | 🟡 P3 Minor | Polish | navigation, missing header/footer text and sections, link targets, alt text changes, small visual shifts, console errors |
 | ⚪ Expected | Differs by design on a preview or publish host (`*.aem.page/live`, `*.hlx.page/live`, `author/publish/preview-p…-e….adobeaemcloud.com`) | robots.txt, canonical, sitemap, analytics |
 
-Missing text found in both the main content and the header/footer is split into two action items: P1 for the main content, P3 for the header/footer. The full map is `priority` in `scripts/lib/rules.js` (check id or `prefix.` → priority, `{ preview, production }` per host type, and `{ fail, review }` per severity). Override it per customer with `--rules`, for example `{"priority": {"nav.item": "P1"}}`. "Likely owner" comes from `owner` in the same file and is a suggestion.
+Missing text in the header or footer is its own P3 fix; missing main-content text is P1. The full map is `priority` in `scripts/lib/rules.js` (check id or `prefix.` → priority, `{ preview, production }` per host type, and `{ fail, review }` per severity). Override it per customer with `--rules`, for example `{"priority": {"nav.item": "P1"}}`. "Likely owner" comes from `owner` in the same file and is a suggestion.
 
 Priority is not severity. Fail / review / info, shown in the page detail and in `report.json`, say how sure a check is that something changed; the priority says how much it matters for the launch.
 
-## issues.md and issues.csv
+## issues.csv
 
-The work list behind the action items: every item, one row each, highest priority first. Findings with items (broken links, missing headings, console errors) become one row per item; others become one row per finding. Numbers that change on every page load (cache busters such as `?_=1793874404668`, long ids) are ignored when grouping, so the same console error on 300 pages is one row. Info-level findings are not listed.
-
-`issues.csv` columns: `priority, action, severity, area, check, issue, pages_affected, example_page, pages` (up to 20 page paths). `action` is the action item the row belongs to. `issues.md` shows the first 200 rows and points to the CSV for the rest.
+One row per fix: `fix_id, priority, area, section, fix_type, owner, problem, how_many, pages_affected, source_value, destination_value, example_page, pages` (up to 20 page paths). Every cell that starts with a formula character is prefixed with `'`.
 
 ## pages.csv and pages/
 
-`pages.csv` has one row per compared page: `page, status, flaky, content, visual, integration, fail, review, p1, p2, p3, top_issue, detail, before, after`. Each area is `pass`, `review`, `fail` or `not compared` (blocked or error); `p1`/`p2`/`p3` count the page's findings by priority. `detail` points to `pages/<id>.md`, which has the page's content parity, visual parity and integration sections with before/after tables and screenshot links. Pages that pass get no detail file.
+`pages.csv` has one row per compared page: `page, status, flaky, content, visual, integration, fail, review, p1, p2, p3, content_parity, visual_parity, top_issue, detail, before, after`. Each area is `pass`, `review`, `fail` or `not compared` (blocked or error); `p1`/`p2`/`p3` count the page's findings by priority. `content_parity` and `visual_parity` are the page's percentages. `detail` points to `pages/<id>.md`, the report for that one page (source and destination, verdict, its fixes). Pages that pass, and single-page runs, get no detail file.
 
-## report.html
+## review.html
 
 - Summary chips by status, with filter buttons.
 - Page-set and site checks: coverage of `--after-sitemap`, redirect results, robots.txt and sitemap findings.
 - One collapsible block per pair, worst first. Each finding shows severity, check id, summary, before/after values or items, and screenshots for visual findings.
-- **Accept** on a finding copies an `accepted.json` entry to the clipboard. The report is a static file and cannot write to disk; paste the entry into your `accepted.json` and fill in `reason`.
-- "Not tested" lists what the run does not cover.
+- **Accept** on a finding copies an `accepted.json` entry to the clipboard. The page is a static file and cannot write to disk; paste the entry into your `accepted.json` and fill in `reason`.
 
-Image links are relative, so keep `report.html` next to the `pairs/` folder when sharing it.
+## --baseline
+
+`--baseline <dir>` reads `<dir>/fixes.json` from an earlier run (the earlier `--out` folder). Current fixes whose id is in it are `open`, others `new`; earlier fixes whose id is gone are listed under "Fixed since last run". A missing or invalid `fixes.json` stops the run with exit code 2 before any page loads.
 
 ## accepted.json
 

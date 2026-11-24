@@ -63,19 +63,27 @@ Exit code: `0` no fail/error/blocked, `1` at least one, `2` usage or setup error
 
 ## Read the report
 
-Open `out/report.md` first. It reads in a minute at any number of pages and is what to share with a customer or leadership:
+Every run writes one fix list and shows it three ways, all with the same fix ids:
 
-1. A one-line **verdict**: `Not ready: N blockers`, `Ready after fixes`, `Incomplete` (pages could not be compared), `Nothing compared` (no pairs matched the filters) or `No blocking differences found`.
-2. **Action items**: one row per problem (ten broken images are one row), with a priority, how many items and pages, an example and a likely owner.
-3. **Content differences**: `Before says / After says`, with changed figures in bold.
-4. **Expected on preview**: robots.txt, canonical and analytics differences that are normal before launch on a preview or publish host.
+| File | For | What it is |
+|---|---|---|
+| `report.html` | Leadership, customers | The report to share: one self-contained file (screenshots embedded, no scripts) |
+| `report.md` | People in chat or a PR, and agents | The same report as text, about 80 lines at any number of pages |
+| `fixes.json` | Agents | The work list: every fix with where it is, the source and destination values and how to verify |
+| `issues.csv`, `pages.csv` | Spreadsheets | One row per fix, and one row per page with its parity and P1/P2/P3 counts |
+| `pages/<page>.md` | Multi-page runs | The same report for one page |
+| `review.html` | You | Accept intended differences (see below) |
 
-Priorities: 🔴 **P1** must be fixed before launch. Content is non-negotiable: lost main-content text, changed figures, placeholder text, missing images, sections and form fields are P1, as are broken pages, noindex, `Disallow: /` and a canonical pointing to another host on a production host. 🟠 **P2** should be fixed (rewritten or reworded copy, broken links, large visual or speed differences, smaller robots/canonical changes). 🟡 **P3** is polish (navigation, header/footer text and sections, small visual shifts). ⚪ **Expected** is fine on a preview host and must be rechecked on the launch domain. The map is `priority` in `scripts/lib/rules.js` and can be changed per customer with `--rules`; priority is worked out when the report is written, so `--resume --rules` re-prioritises without reloading pages (detection changes such as changed figures need a fresh run). Alongside the summary:
+Both reports read top to bottom:
 
-- `issues.md` / `issues.csv`: the work list, every item with its priority and the pages it affects. The same broken link or wrong canonical on 400 pages is one row.
-- `pages.csv`: one row per page with a result per area and its P1/P2/P3 counts; open it in a spreadsheet to sort and filter.
-- `pages/<page>.md`: full before/after detail for each page that did not pass.
-- `report.html`: interactive version with the **Accept** buttons (also `report.json`, `summary.csv`).
+1. **Source → destination**, date, pages and viewports.
+2. A one-line **verdict**: `Not ready: N blockers`, `Ready after fixes`, `Incomplete` (pages could not be compared), `Nothing compared` (no pairs matched the filters) or `No blocking differences found`; with `--baseline`, progress since that run.
+3. A **scorecard**: content parity (share of source text found on the destination), visual parity (share of sections that match) and the P1/P2/P3 count per area. There is no overall score: the verdict is the gate.
+4. **Content parity**, then **Visual parity**, then **Integration & SEO**: one fix per page section and cause, named by the heading it sits under ("FAQs: 6 text blocks missing", "Key features: figures changed (32gb → 64gb)") or by its shared cause ("Files under img.example.com/dev/image/ fail to load"), with Source says / Destination says, or source / destination / diff screenshots. A single-page run also gets a metadata table, and the integration section lists broken links.
+5. **Expected on preview**: robots.txt, canonical and analytics differences that are normal on a preview or publish host.
+6. **Fixed since last run** (with `--baseline`).
+
+Priorities: 🔴 **P1** must be fixed before launch. Content is non-negotiable: lost main-content text, changed figures, placeholder text, missing images, sections and form fields are P1, as are broken pages, noindex, `Disallow: /` and a canonical pointing to another host on a production host. 🟠 **P2** should be fixed (rewritten or reworded copy, broken links, large visual or speed differences, smaller robots/canonical changes). 🟡 **P3** is polish (navigation, header/footer text and sections, small visual shifts). ⚪ **Expected** is fine on a preview host and must be rechecked on the launch domain. The map is `priority` in `scripts/lib/rules.js` and can be changed per customer with `--rules`; priority is worked out when the report is written, so `--resume --rules` re-prioritises without reloading pages (detection changes such as changed figures need a fresh run).
 
 Pages are ordered worst first. Statuses:
 
@@ -89,11 +97,21 @@ Pages are ordered worst first. Statuses:
 | `error` | The page could not be captured |
 | `pass` | No unaccepted fail or review findings |
 
-Work through the action items top down: P1 first, then P2. For each, say what changed and whether it looks like a regression or an intended change, using the example and the page detail. Never call an action item fixed or intended without checking it. When the after site is a preview or publish host (`*.aem.page`, `*.aem.live`, `author/publish/preview-p…-e….adobeaemcloud.com`), the robots.txt, canonical, sitemap and analytics differences listed under "Expected on preview" are normal there; say they must be checked again on the launch domain. See `references/checks.md` for what each check means and `references/report.md` for the report layout and the full priority table.
+Work through the fixes top down: P1 first, then P2. For each, say what changed and whether it looks like a regression or an intended change, using the source and destination values and the screenshots. Never call a fix done or intended without checking it. When the after site is a preview or publish host (`*.aem.page`, `*.aem.live`, `author/publish/preview-p…-e….adobeaemcloud.com`), the robots.txt, canonical, sitemap and analytics differences listed under "Expected on preview" are normal there; say they must be checked again on the launch domain. See `references/checks.md` for what each check means and `references/report.md` for the report layout and the full priority table.
+
+## Fix mode (agents fixing from a report)
+
+When asked to fix what a report found:
+
+1. Read `report.md` for the verdict, then `fixes.json`. Each fix has `id`, `priority`, `area`, `title`, `section` (the heading it sits under), `component` (e.g. `div.cmp-accordion`), `pages` (source and destination URLs), `expected` (the source value), `actual` (the destination value), `fixType` and `items` (every affected text, image or link).
+2. Take fixes by priority, P1 first. Skip `expected`: those are fine on a preview host.
+3. Only take a `fixType` you can change: `content` needs author or repository access to the AEM content (text, images, links), `code` needs the front-end code, `config` needs Dispatcher, CDN, SEO or analytics setup. Report the others with their ids instead of guessing.
+4. Fix one id at a time. Fixes that share a cause (all images under one path, one broken link on many pages) are already one fix: fix the cause once.
+5. Verify: run the same comparison again for the affected pages with `--baseline <the earlier --out folder>`. A fix is done when its id is listed under "Fixed since last run"; never claim it is done before that.
 
 ## Accepting differences
 
-Intended differences are recorded in `accepted.json`; the report's **Accept** button copies an entry. Add it to the file with a `reason`, then rerun the same command with `--resume --accept accepted.json`: captures are reused and only the acceptance is reapplied. Accepted findings stay in the report, greyed out.
+Intended differences are recorded in `accepted.json`; the **Accept** button in `review.html` copies an entry. Add it to the file with a `reason`, then rerun the same command with `--resume --accept accepted.json`: captures are reused and only the acceptance is reapplied. Accepted findings stay in the report, greyed out.
 
 Never add entries on the user's behalf without them saying a difference is intended. A `reason` is required.
 

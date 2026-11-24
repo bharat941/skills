@@ -263,7 +263,7 @@ const isChromeItem = (it) => Boolean(it && CHROME_SECTIONS.has(it.region));
 
 /**
  * Launch priority of a finding: 'P1' | 'P2' | 'P3' | 'expected' (fine before launch, recheck on the launch
- * domain), or null for info-level and accepted findings, which are not action items.
+ * domain), or null for info-level and accepted findings, which are not fixes.
  */
 function priorityOf(finding, { previewHost = false } = {}, rules = DEFAULT_RULES) {
   if (!finding || finding.accepted || !['fail', 'review'].includes(finding.severity)) return null;

@@ -14,8 +14,8 @@ Pages are only loaded (GET); nothing is clicked, submitted or sent to another se
 ```bash
 cd scripts && npm run setup
 node compare.js --before https://www.example.com/en/page --after https://stage.example.com/en/page --out ./out
-open out/report.md      # verdict, prioritised action items (P1/P2/P3), content differences
-open out/report.html    # interactive version
+open out/report.html    # the report to share: verdict, parity, fixes with source vs destination and screenshots
+open out/report.md      # the same report as text; agents fix from out/fixes.json
 ```
 
 For many pages use `--pairs pages.xlsx` or `--pairs pages.csv` (before URLs in column A, after URLs in column B, optional label and group; a header row `before,after[,label][,group]` is optional) or `--sitemap <url> --map www.example.com=stage.example.com`, and start with `--per-group 2` to sample each template. The run also writes `issues.csv` (each issue once, with pages affected), `pages.csv` (one row per page) and `pages/<page>.md` (detail per page).
