@@ -14,6 +14,8 @@ const { visualFindings } = require('./lib/visual');
 const { createFetcher, downloadFindings, brokenLinkFindings, siteFindings, redirectFindings, pageSetCoverage } = require('./lib/completeness');
 const { renderHtml, renderJson, summarize, exitCode } = require('./lib/report');
 const { renderMarkdownFiles, writeReportFiles } = require('./lib/markdown');
+const { renderLeadershipHtml } = require('./lib/html');
+const { reportModel } = require('./lib/fixes');
 const { normalizePath, hash, normalizeText } = require('./lib/util');
 const { parseCsv } = require('./lib/pairs');
 
@@ -355,14 +357,16 @@ async function main() {
     completeness,
     pairs: finalPairs,
   };
-  fs.writeFileSync(path.join(outDir, 'report.html'), renderHtml(run));
+  fs.writeFileSync(path.join(outDir, 'review.html'), renderHtml(run));
   writeReportFiles(outDir, renderMarkdownFiles(run, rules));
+  fs.writeFileSync(path.join(outDir, 'report.html'), renderLeadershipHtml(reportModel(run, rules), { outDir }));
   fs.writeFileSync(path.join(outDir, 'report.json'), renderJson(run));
 
   const counts = summarize(finalPairs);
   console.log(Object.entries(counts).filter(([, n]) => n).map(([s, n]) => `${s}: ${n}`).join('  '));
-  console.log(`Report: ${path.join(outDir, 'report.html')}`);
-  console.log(`Markdown: ${path.join(outDir, 'report.md')} (issues.csv, pages.csv and pages/ alongside)`);
+  console.log(`Report: ${path.join(outDir, 'report.html')} (share this one)`);
+  console.log(`Markdown: ${path.join(outDir, 'report.md')} · fixes for agents: ${path.join(outDir, 'fixes.json')}`);
+  console.log(`Accept differences: ${path.join(outDir, 'review.html')}`);
   if (pausedHosts.size) console.log(`Bot protection blocked ${[...pausedHosts].join(', ')}; allowlist this runner or raise --pace-ms, then rerun with --resume.`);
   process.exit(exitCode(finalPairs));
 }

@@ -610,6 +610,8 @@ e2e('end to end: fixture site comparison', { timeout: 280000 }, async () => {
     }
     assert.ok(by['/wrapped'].visual.rows.filter((r) => r.viewport === '1440' && r.status === 'pass').length >= 5, 'sections inside single-child wrappers are compared one by one');
     assert.ok(fs.existsSync(path.join(out, 'report.html')));
+    assert.ok(!/<script/i.test(fs.readFileSync(path.join(out, 'report.html'), 'utf8')), 'report.html is the leadership report, without scripts');
+    assert.match(fs.readFileSync(path.join(out, 'review.html'), 'utf8'), /data-accept/, 'review.html keeps the Accept buttons');
     for (const f of ['report.md', 'fixes.json', 'issues.csv', 'pages.csv']) assert.ok(fs.existsSync(path.join(out, f)), `${f} missing`);
     for (const f of ['issues.md', 'summary.csv']) assert.ok(!fs.existsSync(path.join(out, f)), `${f} should not be written`);
     assert.equal(fs.readFileSync(path.join(out, 'pages.csv'), 'utf8').trim().split('\n').length, paths.length + 1);
@@ -1277,4 +1279,64 @@ test('pages/<id>.md only for multi-page runs, with the page as source and destin
   const page = files['pages/p1-abc.md'];
   assert.match(page, /- \*\*Source:\*\* https:\/\/www\.b\.com\/p1\n- \*\*Destination:\*\* https:\/\/www\.a\.com\/p1\n/);
   assert.match(page, /## Integration & SEO/);
+});
+
+// ---------- leadership report.html ----------
+
+const { renderLeadershipHtml } = require('./lib/html');
+const PNG_1PX = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==', 'base64');
+
+function htmlOut(model, opts = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-html-'));
+  const shotsDir = path.join(dir, 'pairs', 'lp-1', 'visual');
+  fs.mkdirSync(shotsDir, { recursive: true });
+  for (const f of opts.files || ['b.png', 'a.png', 'd.png']) fs.writeFileSync(path.join(shotsDir, f), PNG_1PX);
+  try {
+    return renderLeadershipHtml(model, { outDir: dir, ...opts });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test('html: no <script> and no external stylesheet', () => {
+  const html = htmlOut(reportModel(fixRun()));
+  assert.ok(!/<script/i.test(html));
+  assert.ok(!/<link[^>]+stylesheet/i.test(html));
+  assert.match(html, /<style>/);
+});
+
+test('html: shows Source and Destination', () => {
+  const html = htmlOut(reportModel(fixRun()));
+  assert.match(html, /Source<\/[a-z]+>\s*<a href="https:\/\/www\.b\.com\/lpddr5x">https:\/\/www\.b\.com\/lpddr5x<\/a>/);
+  assert.match(html, /Destination<\/[a-z]+>\s*<a href="https:\/\/publish-p1-e2\.adobeaemcloud\.com\/lpddr5x">/);
+});
+
+test('html: embeds screenshots as data URIs up to embedMax, links the rest', () => {
+  assert.equal((htmlOut(reportModel(fixRun())).match(/src="data:image\/png;base64,/g) || []).length, 3);
+  const html = htmlOut(reportModel(fixRun()), { embedMax: 1 });
+  assert.equal((html.match(/src="data:image\/png;base64,/g) || []).length, 1);
+  assert.match(html, /src="pairs\/lp-1\/visual\/a\.png"/);
+});
+
+test('html: missing screenshot file shows "screenshot not available"', () => {
+  const html = htmlOut(reportModel(fixRun()), { files: ['b.png'] });
+  assert.equal((html.match(/screenshot not available/g) || []).length, 2);
+});
+
+test('html: escapes <script> in a fix title', () => {
+  const html = htmlOut(reportModel(mdRun([mdPair([missingText([txt('<script>alert(1)</script>', '<img onerror=x>')])])])));
+  assert.ok(!html.includes('<script>alert(1)'));
+  assert.ok(!html.includes('<img onerror'));
+  assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+});
+
+test('html: section order matches report.md and shows the same fix ids', () => {
+  const model = reportModel(fixRun());
+  const html = htmlOut(model);
+  const order = ['Content parity', 'Visual parity', 'Integration &amp; SEO', 'Expected on preview', 'For agents'].map((h) => html.indexOf(`<h2>${h}`));
+  assert.ok(order.every((x) => x > 0), JSON.stringify(order));
+  assert.deepEqual([...order].sort((a, b) => a - b), order);
+  for (const f of model.fixes) assert.ok(html.includes(f.id), f.id);
+  assert.match(html, /Not ready: 3 blockers/);
+  assert.match(html, />70%</);
 });

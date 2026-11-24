@@ -110,8 +110,8 @@ function renderHtml(run) {
   const filters = `<div class="filters"><button data-filter="all">all</button>${STATUS_ORDER.filter((s) => counts[s]).map((s) => `<button data-filter="${s}">${s}</button>`).join('')}</div>`;
   const notTested = (run.notTested || []).length ? `<section><h2>Not tested</h2><ul>${run.notTested.map((n) => `<li>${esc(n)}</li>`).join('')}</ul></section>` : '';
   const blockedWarn = (run.blockedHosts || []).length ? `<div class="note">Bot protection blocked requests to: ${run.blockedHosts.map(esc).join(', ')}.</div>` : '';
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>page-compare report</title><style>${CSS}</style></head><body>
-<h1>page-compare report</h1><div class="k">${esc(run.generatedAt)} &middot; ${run.pairs.length} page pair(s) &middot; viewports ${esc((run.viewports || []).join(', '))}</div>
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>page-compare review</title><style>${CSS}</style></head><body>
+<h1>page-compare review: accept differences</h1><div class="k">${esc(run.generatedAt)} &middot; ${run.pairs.length} page pair(s) &middot; viewports ${esc((run.viewports || []).join(', '))}</div>
 <p>Accept copies an <code>accepted.json</code> entry to the clipboard; fill in <code>reason</code>, add it to the file and rerun with <code>--resume --accept accepted.json</code>.</p>
 <div class="sum">${chips}</div>${blockedWarn}${renderCompleteness(run.completeness)}${filters}
 ${sorted.map(renderPair).join('\n')}${notTested}<script>${SCRIPT}</script></body></html>`;
