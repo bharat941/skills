@@ -73,6 +73,7 @@ const { runAnalyzer, isAnalyzerAvailable, DEFAULT_ANALYZE_SCRIPT } = require('./
 const { runHtlLint } = require('./htl-lint-runner.js');
 const { runOsgiConfigScan, scanUnsupportedRunmodes, validateRunmodeFolder } = require('./osgi-config-runner.js');
 const { runVaultPackageScan } = require('./vault-package-scan-runner.js');
+const { runAcsCommonsScan } = require('./acs-commons-scan-runner.js');
 const { runLuiScan, runCdwScan } = require('./legacy-ui-runner.js');
 const { runTemplateScan } = require('./template-scan-runner.js');
 const { runDispatcherScan } = require('./dispatcher-inventory.js');
@@ -234,6 +235,20 @@ const PATTERN_META = {
     promptPattern: 'dispatcher conversion',
     sampleOverride: 'Use the migration skill: convert my dispatcher configuration to AEM as a Cloud Service.',
   },
+  acsCommons: {
+    label: 'ACS AEM Commons (third-party)',
+    severity: 'medium',
+    strategy: 'content-scan',
+    // ACS AEM Commons is an open-source third-party library, not part of AEM. Agreed
+    // handling: report the version and the features in use, recommend an upgrade, and
+    // never change or upgrade it — the customer owns that work.
+    bpaSlugs: [],
+    heuristic: true,
+    reportOnly: true,
+    description: 'ACS AEM Commons usage: the dependency version (and whether the Cloud Service `cloud` classifier is used), Java imports, OSGi configs and content (e.g. Redirect Manager rules), grouped per feature with what each typically needs on AEM as a Cloud Service. Third-party and **customer-owned**: upgrades and compatibility changes are custom development outside the migration skills. Detected heuristically by a text scan.',
+    promptPattern: 'acs commons',
+    sampleOverride: 'Use the migration skill: assess my ACS AEM Commons usage for AEM as a Cloud Service (report only, no upgrade).',
+  },
 };
 
 // content-scan strategy → the runner that produces that pattern's findings.
@@ -242,6 +257,7 @@ const CONTENT_SCANNERS = {
   cdw: runCdwScan,
   templateModernization: runTemplateScan,
   dispatcherConversion: runDispatcherScan,
+  acsCommons: runAcsCommonsScan,
 };
 
 const CANONICAL_PATTERNS = Object.keys(PATTERN_META);
@@ -669,6 +685,10 @@ function renderRunbook(gathered, ctx = {}) {
     lines.push('');
     lines.push(meta.description);
     lines.push('');
+    if (meta.reportOnly) {
+      lines.push('> 🧾 **Report only — third-party, customer-owned.** The migration skill never upgrades or changes it. Share this list with the customer and plan the upgrade and any rework as custom development; see `references/third-party/acs-commons.md`.');
+      lines.push('');
+    }
     if (meta.heuristic) {
       lines.push(`> ⚠️ **Heuristic detection** (${sourceLabel(sourceByPattern[p], 'non-deterministic')}) — these are candidate matches, not compiler/BPA-validated findings. Re-confirm each one before editing.`);
       if (meta.needsReview) {

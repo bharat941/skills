@@ -42,6 +42,7 @@ Each pattern declares a **detection strategy** in `PATTERN_META`:
 | `osgiConfig` | `config-scan` | `osgi-config-runner.js` (config-file scan) |
 | `lui`, `cdw`, `templateModernization` | BPA + `content-scan` | BPA/CAM → CSV first (`legacy-ui-runner.js` / `template-scan-runner.js` as fallback) |
 | `dispatcherConversion` | `content-scan` | `dispatcher-inventory.js` (`runDispatcherScan` — heuristic, no BPA subtype) |
+| `acsCommons` | `content-scan` (report only) | `acs-commons-scan-runner.js` (`runAcsCommonsScan` — heuristic; pom version and classifier, Java imports, OSGi configs, `acs-commons/…` content per feature; never changes anything; also `node acs-commons-scan-runner.js <workspaceRoot>`) |
 
 `html-scan` / `config-scan` findings, and the `content-scan` fallback for `lui`/`cdw`/`templateModernization`, are **heuristic** and tagged `confidence: "heuristic"` in the cache. BPA-sourced findings are authoritative. `osgiConfig` reports key names + locations only — **never secret values**.
 
