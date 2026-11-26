@@ -310,17 +310,21 @@ function toMarkdown(run) {
 }
 
 /**
- * Writes the report files under outDir. Page detail files of pages that no longer need one
+ * Writes the report files under outDir. Page files (pages/<id>.md, review/<id>.html) of pages that no longer need one
  * (pairs/<id>/ exists, so this tool made that page) are removed one file at a time.
  * Nothing else under outDir is deleted, so --out can point at a folder that holds other files.
  */
+// Per-page folders and the file that owns them: a folder is tidied only when its owner is written.
+const PAGE_DIRS = [['pages', '.md', 'report.md'], ['review', '.html', 'review.html']];
+
 function writeReportFiles(outDir, files) {
-  const pagesDir = path.join(outDir, 'pages');
-  if (fs.existsSync(pagesDir)) {
-    for (const entry of fs.readdirSync(pagesDir, { withFileTypes: true })) {
-      const id = entry.name.replace(/\.md$/, '');
-      const ours = entry.isFile() && entry.name.endsWith('.md') && fs.existsSync(path.join(outDir, 'pairs', id));
-      if (ours && !(`pages/${entry.name}` in files)) fs.unlinkSync(path.join(pagesDir, entry.name));
+  for (const [dir, ext, owner] of PAGE_DIRS) {
+    const full = path.join(outDir, dir);
+    if (!(owner in files) || !fs.existsSync(full)) continue;
+    for (const entry of fs.readdirSync(full, { withFileTypes: true })) {
+      const id = entry.name.slice(0, -ext.length);
+      const ours = entry.isFile() && entry.name.endsWith(ext) && fs.existsSync(path.join(outDir, 'pairs', id));
+      if (ours && !(`${dir}/${entry.name}` in files)) fs.unlinkSync(path.join(full, entry.name));
     }
   }
   for (const [rel, content] of Object.entries(files)) {

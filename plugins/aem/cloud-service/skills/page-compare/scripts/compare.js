@@ -12,7 +12,7 @@ const { contentFindings, diffBlocks, makeCanon, beforeBase, safeHost, metaSummar
 const { functionalFindings } = require('./lib/functional');
 const { visualFindings } = require('./lib/visual');
 const { createFetcher, downloadFindings, brokenLinkFindings, siteFindings, redirectFindings, pageSetCoverage } = require('./lib/completeness');
-const { renderHtml, renderJson, summarize, exitCode } = require('./lib/report');
+const { renderReviewFiles, renderJson, summarize, exitCode } = require('./lib/report');
 const { renderMarkdownFiles, writeReportFiles } = require('./lib/markdown');
 const { renderLeadershipHtml } = require('./lib/html');
 const { reportModel, loadBaseline } = require('./lib/fixes');
@@ -361,7 +361,7 @@ async function main() {
     completeness,
     pairs: finalPairs,
   };
-  fs.writeFileSync(path.join(outDir, 'review.html'), renderHtml(run));
+  writeReportFiles(outDir, renderReviewFiles(run));
   writeReportFiles(outDir, renderMarkdownFiles(run, rules, baseline));
   fs.writeFileSync(path.join(outDir, 'report.html'), renderLeadershipHtml(reportModel(run, rules, baseline), { outDir }));
   fs.writeFileSync(path.join(outDir, 'report.json'), renderJson(run));

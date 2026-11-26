@@ -72,7 +72,7 @@ Every run writes one fix list and shows it three ways, all with the same fix ids
 | `fixes.json` | Agents | The work list: every fix with where it is, the source and destination values and how to verify |
 | `issues.csv`, `pages.csv` | Spreadsheets | One row per fix, and one row per page with its parity and P1/P2/P3 counts |
 | `pages/<page>.md` | Multi-page runs | The same report for one page |
-| `review.html` | You | Accept intended differences (see below) |
+| `review.html` | You | Accept intended differences (see below); above 100 pages an index, with one `review/<page>.html` per page that did not pass |
 
 Both reports read top to bottom:
 
@@ -104,7 +104,7 @@ Work through the fixes top down: P1 first, then P2. For each, say what changed a
 When asked to fix what a report found:
 
 1. Read `report.md` for the verdict, then `fixes.json`. Each fix has `id`, `priority`, `area`, `title`, `section` (the heading it sits under), `component` (e.g. `div.cmp-accordion`), `pages` (source and destination URLs), `expected` (the source value), `actual` (the destination value), `fixType` and `items` (every affected text, image or link).
-2. Take fixes by priority, P1 first. Skip `expected`: those are fine on a preview host.
+2. Take fixes by priority, P1 first. Skip `expected`: those are fine on a preview host. On a large run, read one slice at a time instead of the whole file: `node scripts/fixes.js <out> --priority P1 --type content` (also `--area`, `--page <path text>`, `--id`) prints only the matching fixes, with each fix's pages narrowed to the filter.
 3. Only take a `fixType` you can change: `content` needs author or repository access to the AEM content (text, images, links), `code` needs the front-end code, `config` needs Dispatcher, CDN, SEO or analytics setup. Report the others with their ids instead of guessing.
 4. Fix one id at a time. Fixes that share a cause (all images under one path, one broken link on many pages) are already one fix: fix the cause once.
 5. Verify: run the comparison again with `--baseline <the earlier --out folder>`, covering every page the fix lists. A fix is done when its id is listed under "Fixed since last run"; an id listed as "not rechecked" means some of its pages were not in the rerun. Never claim a fix is done before that.

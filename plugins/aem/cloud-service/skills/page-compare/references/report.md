@@ -9,8 +9,10 @@ fixes.json                the fix list for agents: every fix with id, where, sou
 issues.csv                one row per fix, same ids as fixes.json
 pages.csv                 one row per page: result per area, parity, P1/P2/P3 counts, link to detail
 pages/<id>.md             the report for one page (multi-page runs, pages that did not pass)
-review.html               interactive page with Accept buttons for intended differences
-report.json               full results (raw findings, used by review.html)
+review.html               interactive page with Accept buttons; above 100 pages an index of the pages that did not pass
+review/<id>.html          one review page per page that did not pass (runs above 100 pages)
+report.json               results for tools: findings per page, at most 50 items each (the rest counted in `truncated`);
+                          above 100 pages a compact index: findings without items (`itemCount`), `detail` points to pairs/<id>/result.json
 pairs/<id>/result.json    stored raw findings, used by --resume
 pairs/<id>/visual/        source/destination/diff PNGs, only for flagged sections
 ```
@@ -76,6 +78,7 @@ One row per fix: `fix_id, priority, area, section, fix_type, owner, problem, how
 
 - Summary chips by status, with filter buttons.
 - Page-set and site checks: coverage of `--after-sitemap`, redirect results, robots.txt and sitemap findings.
+- Above 100 pages, `review.html` is an index (status, page, fail and review counts, linked) and each page that did not pass has its own `review/<id>.html`; one file with every finding of thousands of pages is too large for a browser.
 - One collapsible block per pair, worst first. Each finding shows severity, check id, summary, before/after values or items, and screenshots for visual findings.
 - **Accept** on a finding copies an `accepted.json` entry to the clipboard. The page is a static file and cannot write to disk; paste the entry into your `accepted.json` and fill in `reason`.
 
@@ -115,4 +118,5 @@ Priority when a page has several: `blocked`, `error`, `fail`, `flaky`, `unstable
 - A page that loads only after a retry is marked `flaky` rather than hidden.
 - `--per-group <n>` keeps n pages per template or section (the CSV `group` column, else the first path segment of the before URL after any `/content/<site>` prefix and locale such as `/en/` or `/en-us/`; two-letter sections are read as locales, so use a `group` column when a site has them). A sample of 2 per group usually surfaces every template-level issue.
 - `--resume` reuses captured pages and retries pages that were blocked or errored.
-- The report stays readable at any size: `report.md` is a fixed-size summary, and the per-page detail lives in `pages.csv` and `pages/`.
+- The report stays readable at any size: `report.md` and `report.html` are fixed-size summaries, the per-page detail lives in `pages.csv` and `pages/`, and `review.html` splits into `review/<id>.html` above 100 pages. Measured on 3,000 copies of a real page: report.md 102 lines, report.html 2 MB, reports written in about 10 s.
+- An agent working from a large run reads one slice of `fixes.json` at a time with `node scripts/fixes.js <out> --priority P1 --area content --page /dram/` (filters: `--priority`, `--area`, `--type`, `--id`, `--page`).

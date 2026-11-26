@@ -51,19 +51,19 @@ function renderImages(files, dir = '') {
   return `<div class="shots">${['before', 'after', 'diff'].filter((k) => files[k]).map((k) => `<figure><figcaption>${k}</figcaption><a href="${esc(dir + files[k])}"><img loading="lazy" src="${esc(dir + files[k])}"></a></figure>`).join('')}</div>`;
 }
 
-function renderFinding(p, f) {
+function renderFinding(p, f, prefix = '') {
   const entry = JSON.stringify(acceptEntry(p, f));
   const cls = f.accepted ? 'accepted' : f.severity;
   const files = f.files || (f.items && f.items.length === 1 && f.items[0].files) || null;
   const itemsHtml = renderItems((f.items || []).map((it) => (it && it.files ? { ...it, files: undefined } : it)));
-  const imgs = files ? renderImages(files, `pairs/${p.id}/visual/`) : '';
-  const itemImgs = (f.items || []).filter((it) => it && it.files && it.files !== files).map((it) => renderImages(it.files, `pairs/${p.id}/visual/`)).join('');
+  const imgs = files ? renderImages(files, `${prefix}pairs/${p.id}/visual/`) : '';
+  const itemImgs = (f.items || []).filter((it) => it && it.files && it.files !== files).map((it) => renderImages(it.files, `${prefix}pairs/${p.id}/visual/`)).join('');
   const ba = f.before !== undefined || f.after !== undefined ? `<div class="ba"><span class="k">before</span> ${esc(f.before)} <span class="k">after</span> ${esc(f.after)}</div>` : '';
   const acc = f.accepted ? `<div class="reason">Accepted: ${esc(f.accepted.reason)}</div>` : f.acceptedItems ? `<div class="reason">${f.acceptedItems.length} item(s) accepted: ${esc(f.acceptedReason)}</div>` : '';
   return `<div class="finding ${cls}"><div class="fhead"><span class="sev">${esc(f.accepted ? 'accepted' : f.severity)}</span> <code>${esc(f.check)}</code> ${esc(f.summary)}${f.accepted ? '' : `<button data-accept='${esc(entry)}'>Accept</button>`}</div>${ba}${itemsHtml}${imgs}${itemImgs}${acc}</div>`;
 }
 
-function renderPair(p) {
+function renderPair(p, prefix = '', open = false) {
   const findings = [...(p.findings || [])].sort((a, b) => Number(!!a.accepted) - Number(!!b.accepted) || ({ fail: 0, review: 1, info: 2 }[a.severity] - { fail: 0, review: 1, info: 2 }[b.severity]));
   const note = p.blocked ? `<div class="note">Blocked by bot protection: ${esc(p.blocked)}. Not a site defect; allowlist the runner or slow down, then rerun.</div>` : p.error ? `<div class="note">${esc(p.error)}</div>` : '';
   const flaky = p.retried ? '<div class="note">Needed a retry to load: treat as flaky.</div>' : '';
@@ -73,7 +73,7 @@ function renderPair(p) {
   const table = rows.length
     ? `<table><tr><th>viewport</th><th>section</th><th>diff %</th><th>height before/after</th><th>status</th></tr>${rows.map((r) => `<tr class="${esc(r.status)}"><td>${esc(r.viewport)}</td><td>${esc(r.section)}</td><td>${esc(r.pct ?? '')}</td><td>${esc(r.heightBefore ?? '')}/${esc(r.heightAfter ?? '')}</td><td>${esc(r.status)}</td></tr>`).join('')}</table>`
     : '';
-  return `<details class="pair ${esc(p.status)}" data-status="${esc(p.status)}"><summary><span class="badge ${esc(p.status)}">${esc(p.status)}</span> ${esc(pageKey(p))}${noise}<span class="urls">${esc(p.before)} &rarr; ${esc(p.after)}</span></summary>${note}${flaky}${volatile}${findings.map((f) => renderFinding(p, f)).join('') || '<p>No findings.</p>'}${table}</details>`;
+  return `<details class="pair ${esc(p.status)}" data-status="${esc(p.status)}"${open ? ' open' : ''}><summary><span class="badge ${esc(p.status)}">${esc(p.status)}</span> ${esc(pageKey(p))}${noise}<span class="urls">${esc(p.before)} &rarr; ${esc(p.after)}</span></summary>${note}${flaky}${volatile}${findings.map((f) => renderFinding(p, f, prefix)).join('') || '<p>No findings.</p>'}${table}</details>`;
 }
 
 function renderCompleteness(c) {
@@ -114,11 +114,56 @@ function renderHtml(run) {
 <h1>page-compare review: accept differences</h1><div class="k">${esc(run.generatedAt)} &middot; ${run.pairs.length} page pair(s) &middot; viewports ${esc((run.viewports || []).join(', '))}</div>
 <p>Accept copies an <code>accepted.json</code> entry to the clipboard; fill in <code>reason</code>, add it to the file and rerun with <code>--resume --accept accepted.json</code>.</p>
 <div class="sum">${chips}</div>${blockedWarn}${renderCompleteness(run.completeness)}${filters}
-${sorted.map(renderPair).join('\n')}${notTested}<script>${SCRIPT}</script></body></html>`;
+${sorted.map((p) => renderPair(p)).join('\n')}${notTested}<script>${SCRIPT}</script></body></html>`;
 }
 
-function renderJson(run) {
-  return JSON.stringify({ ...run, summary: summarize(run.pairs) }, null, 2);
+const MAX_REVIEW_SINGLE = 100;
+const MAX_JSON_ITEMS = 50;
+
+function page(title, body) {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${esc(title)}</title><style>${CSS}</style></head><body>${body}<script>${SCRIPT}</script></body></html>`;
 }
 
-module.exports = { STATUS_ORDER, summarize, exitCode, renderHtml, renderJson, esc, acceptEntry };
+/**
+ * review.html and, above 100 pages, one review/<id>.html per page that did not pass: a single file
+ * with every finding of thousands of pages is too large for a browser.
+ */
+function renderReviewFiles(run, { splitAbove = MAX_REVIEW_SINGLE } = {}) {
+  if ((run.pairs || []).length <= splitAbove) return { 'review.html': renderHtml(run) };
+  const counts = summarize(run.pairs);
+  const sorted = [...run.pairs].sort((a, b) => STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status));
+  const open = sorted.filter((p) => p.status !== 'pass');
+  const chips = STATUS_ORDER.filter((s) => counts[s]).map((s) => `<span class="${s}">${s}: ${counts[s]}</span>`).join('');
+  const n = (p, sev) => (p.findings || []).filter((f) => !f.accepted && f.severity === sev).length;
+  const rows = open.map((p) => `<tr class="${esc(p.status)}"><td><span class="badge ${esc(p.status)}">${esc(p.status)}</span></td><td><a href="review/${esc(p.id)}.html">${esc(pageKey(p))}</a></td><td>${n(p, 'fail')}</td><td>${n(p, 'review')}</td></tr>`).join('');
+  const files = {
+    'review.html': page('page-compare review', `<h1>page-compare review: accept differences</h1><div class="k">${esc(run.generatedAt)} &middot; ${run.pairs.length} page pair(s)</div>
+<p>Open a page to accept its differences. Accept copies an <code>accepted.json</code> entry to the clipboard; fill in <code>reason</code>, add it to the file and rerun with <code>--resume --accept accepted.json</code>. Pages that passed are not listed.</p>
+<div class="sum">${chips}</div>${renderCompleteness(run.completeness)}<table><tr><th>status</th><th>page</th><th>fail</th><th>review</th></tr>${rows}</table>`),
+  };
+  for (const p of open) files[`review/${p.id}.html`] = page(`page-compare review: ${pageKey(p)}`, `<p><a href="../review.html">&larr; all pages</a></p>${renderPair(p, '../', true)}`);
+  return files;
+}
+
+// report.json is for tools; the full item lists stay in pairs/<id>/result.json.
+function slimFinding(f) {
+  if (!Array.isArray(f.items) || f.items.length <= MAX_JSON_ITEMS) return f;
+  return { ...f, items: f.items.slice(0, MAX_JSON_ITEMS), truncated: (Number(f.truncated) || 0) + f.items.length - MAX_JSON_ITEMS };
+}
+
+// Above 100 pages report.json is an index: findings without their items, each page pointing to its full result.
+function indexFinding(f) {
+  const { items, ...rest } = f;
+  return Array.isArray(items) ? { ...rest, itemCount: items.length + (Number(f.truncated) || 0) } : rest;
+}
+
+function renderJson(run, { indexAbove = MAX_REVIEW_SINGLE } = {}) {
+  const large = (run.pairs || []).length > indexAbove;
+  const pairs = (run.pairs || []).map((p) => (large
+    ? { ...p, findings: (p.findings || []).map(indexFinding), detail: `pairs/${p.id}/result.json` }
+    : { ...p, findings: (p.findings || []).map(slimFinding) }));
+  const data = { ...run, pairs, summary: summarize(run.pairs) };
+  return large ? JSON.stringify(data) : JSON.stringify(data, null, 2);
+}
+
+module.exports = { STATUS_ORDER, summarize, exitCode, renderHtml, renderReviewFiles, renderJson, esc, acceptEntry };

@@ -327,7 +327,7 @@ function reportModel(run, rules = DEFAULT_RULES, baseline = null) {
 /** Reads a previous run's fixes.json for --baseline. Throws with a message that says what to fix. */
 function loadBaseline(dir) {
   const file = path.join(dir, 'fixes.json');
-  if (!fs.existsSync(file)) throw new Error(`--baseline: ${file} not found; point --baseline at the --out folder of an earlier run`);
+  if (!fs.existsSync(file)) throw new Error(`--baseline: ${file} not found; give the --out folder of an earlier run`);
   let data;
   try {
     data = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -387,4 +387,31 @@ function pageModel(model, pair) {
   };
 }
 
-module.exports = { loadBaseline, applyBaseline, pageModel, buildFixes, fixId, pageParity, runParity, reportModel, sectionLabel, assetPrefix, AREA_ORDER };
+const FILTERS = { priority: ['P1', 'P2', 'P3', 'expected'], area: ['content', 'visual', 'integration'], type: ['content', 'code', 'config'] };
+
+/**
+ * A fixes.json narrowed for an agent: by priority, area, fix type, fix id, and a page path substring
+ * (each fix's pages are narrowed to the matching ones). `matched` and `total` say how much was kept.
+ */
+function filterFixes(data, { priority = [], area = [], type = [], id = [], page = '' } = {}) {
+  for (const [k, list] of Object.entries({ priority, area, type })) {
+    for (const v of list) if (!FILTERS[k].includes(v)) throw new Error(`--${k} ${v}: use one of ${FILTERS[k].join(', ')}`);
+  }
+  const fixes = [];
+  for (const f of data.fixes || []) {
+    if (priority.length && !priority.includes(f.priority)) continue;
+    if (area.length && !area.includes(f.area)) continue;
+    if (type.length && !type.includes(f.fixType)) continue;
+    if (id.length && !id.includes(f.id)) continue;
+    if (page) {
+      const pages = (f.pages || []).filter((p) => String(p.destination).includes(page) || String(p.source).includes(page));
+      if (!pages.length) continue;
+      fixes.push({ ...f, pages, items: (f.items || []).filter((it) => !it || !it.page || pages.some((p) => p.destination.includes(it.page))) });
+    } else {
+      fixes.push(f);
+    }
+  }
+  return { ...data, filter: { priority, area, type, id, page }, matched: fixes.length, total: (data.fixes || []).length, fixes };
+}
+
+module.exports = { filterFixes, FILTERS, loadBaseline, applyBaseline, pageModel, buildFixes, fixId, pageParity, runParity, reportModel, sectionLabel, assetPrefix, AREA_ORDER };

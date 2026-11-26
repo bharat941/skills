@@ -1492,3 +1492,105 @@ test('baseline: per-page reports in a multi-page run do not show run-wide progre
 test('fixes: ids are 8 hex characters', () => {
   assert.match(fixId('content', 'x'), /^C-[0-9a-f]{8}$/);
 });
+
+// ---------- scale: review pages, slim report.json, fix filter ----------
+
+const { renderReviewFiles, renderJson: renderReportJson } = require('./lib/report');
+const { filterFixes } = require('./lib/fixes');
+
+const reviewRun = (n) => ({ generatedAt: 'now', viewports: [1440], completeness: {}, notTested: [], pairs: Array.from({ length: n }, (_, i) => ({
+  id: `p${i}`, before: `https://www.b.com/p${i}`, after: `https://www.a.com/p${i}`, status: i % 3 ? 'fail' : 'pass',
+  findings: i % 3 ? [{ check: 'visual.section', severity: 'fail', summary: '1 section(s) look different at 1440', items: [{ section: 'main-1', viewport: '1440', pct: 9, files: { before: 'b.png', after: 'a.png', diff: 'd.png' } }] }] : [],
+})) });
+
+test('review: up to 100 pages is one review.html with Accept buttons', () => {
+  const files = renderReviewFiles(reviewRun(30));
+  assert.deepEqual(Object.keys(files), ['review.html']);
+  assert.match(files['review.html'], /<button data-accept/);
+  assert.match(files['review.html'], /src="pairs\/p1\/visual\/b\.png"/);
+});
+
+test('review: above 100 pages review.html is an index and each page that did not pass gets review/<id>.html', () => {
+  const files = renderReviewFiles(reviewRun(300));
+  const pages = Object.keys(files).filter((k) => k.startsWith('review/'));
+  assert.equal(pages.length, 200);
+  assert.ok(!/<button data-accept/.test(files['review.html']));
+  assert.match(files['review.html'], /href="review\/p1\.html"/);
+  assert.ok(Buffer.byteLength(files['review.html']) < 200000, `${Buffer.byteLength(files['review.html'])} bytes`);
+  assert.match(files['review/p1.html'], /<button data-accept/);
+  assert.match(files['review/p1.html'], /src="\.\.\/pairs\/p1\/visual\/b\.png"/);
+  assert.match(files['review/p1.html'], /href="\.\.\/review\.html"/);
+});
+
+test('report.json keeps at most 50 items per finding and counts the rest', () => {
+  const items = Array.from({ length: 120 }, (_, i) => ({ text: `t${i}` }));
+  const run = { generatedAt: 'now', viewports: [1440], pairs: [{ id: 'x', before: 'https://b/x', after: 'https://a/x', status: 'fail', findings: [{ check: 'cta.missing', severity: 'review', summary: '130 missing', items, truncated: 10 }] }] };
+  const f = JSON.parse(renderReportJson(run)).pairs[0].findings[0];
+  assert.equal(f.items.length, 50);
+  assert.equal(f.truncated, 80);
+  assert.equal(run.pairs[0].findings[0].items.length, 120, 'the run itself is not changed');
+});
+
+const fixesDoc = () => ({ generatedAt: 'now', source: 's', destination: 'd', verdict: { label: 'Not ready' }, parity: {}, fixed: [], notRechecked: [], accepted: [], fixes: [
+  { id: 'C-11111111', priority: 'P1', area: 'content', fixType: 'content', pages: [{ source: 'https://b/dram/x', destination: 'https://a/dram/x' }] },
+  { id: 'C-22222222', priority: 'P2', area: 'content', fixType: 'content', pages: [{ source: 'https://b/ssd/y', destination: 'https://a/ssd/y' }] },
+  { id: 'V-33333333', priority: 'P1', area: 'visual', fixType: 'code', pages: [{ source: 'https://b/dram/z', destination: 'https://a/dram/z' }, { source: 'https://b/ssd/z', destination: 'https://a/ssd/z' }] },
+  { id: 'I-44444444', priority: 'expected', area: 'integration', fixType: 'config', pages: [], siteWide: true },
+] });
+
+test('filterFixes: by priority, area, fix type, page and id; pages narrowed to the filter', () => {
+  const ids = (o) => filterFixes(fixesDoc(), o).fixes.map((f) => f.id);
+  assert.deepEqual(ids({ priority: ['P1'] }), ['C-11111111', 'V-33333333']);
+  assert.deepEqual(ids({ area: ['visual'] }), ['V-33333333']);
+  assert.deepEqual(ids({ type: ['content'], priority: ['P1', 'P2'] }), ['C-11111111', 'C-22222222']);
+  assert.deepEqual(ids({ id: ['I-44444444'] }), ['I-44444444']);
+  const dram = filterFixes(fixesDoc(), { page: '/dram/' });
+  assert.deepEqual(dram.fixes.map((f) => f.id), ['C-11111111', 'V-33333333']);
+  assert.equal(dram.fixes[1].pages.length, 1);
+  assert.equal(dram.matched, 2);
+  assert.equal(dram.total, 4);
+});
+
+test('cli: fixes.js prints the filtered fixes and exits 2 without fixes.json', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-fixes-'));
+  try {
+    const cli = (args) => spawnSync(process.execPath, [path.join(__dirname, 'fixes.js'), ...args], { encoding: 'utf8' });
+    const none = cli([dir]);
+    assert.equal(none.status, 2);
+    assert.match(none.stderr, /fixes\.json not found/);
+    fs.writeFileSync(path.join(dir, 'fixes.json'), JSON.stringify(fixesDoc()));
+    const r = cli([dir, '--priority', 'P1', '--area', 'content']);
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(JSON.parse(r.stdout).fixes.map((f) => f.id), ['C-11111111']);
+    assert.equal(cli([dir, '--priority', 'P9']).status, 2, 'unknown priority is a usage error');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('output: stale review/<id>.html files from this tool are removed, user files survive', () => {
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-out-'));
+  try {
+    fs.mkdirSync(path.join(out, 'review'), { recursive: true });
+    fs.mkdirSync(path.join(out, 'pairs', 'old-1'), { recursive: true });
+    fs.writeFileSync(path.join(out, 'review', 'old-1.html'), 'stale');
+    fs.writeFileSync(path.join(out, 'review', 'mine.html'), 'keep me');
+    writeReportFiles(out, { 'review.html': 'index', 'review/new-1.html': 'page' });
+    assert.ok(!fs.existsSync(path.join(out, 'review', 'old-1.html')));
+    assert.equal(fs.readFileSync(path.join(out, 'review', 'mine.html'), 'utf8'), 'keep me');
+    assert.equal(fs.readFileSync(path.join(out, 'review', 'new-1.html'), 'utf8'), 'page');
+  } finally {
+    fs.rmSync(out, { recursive: true, force: true });
+  }
+});
+
+test('report.json above 100 pages is compact, keeps finding summaries and points to each page detail', () => {
+  const run = reviewRun(150);
+  const text = renderReportJson(run);
+  assert.ok(!text.includes('\n  '), 'compact');
+  const data = JSON.parse(text);
+  const f = data.pairs[1].findings[0];
+  assert.deepEqual([f.check, f.severity, f.items, f.itemCount], ['visual.section', 'fail', undefined, 1]);
+  assert.equal(data.pairs[1].detail, 'pairs/p1/result.json');
+  assert.equal(data.summary.fail, 100);
+});
