@@ -1875,3 +1875,21 @@ test('interaction: a destination control that could not be checked is neither a 
   assert.deepEqual(r.findings, []);
   assert.deepEqual([r.total, r.ok], [1, 1]);
 });
+
+test('fixes: the figures-changed title lists only the figures that differ', () => {
+  const item = { before: 'up to 8,000 Mbps, 2.5x higher, burst 8 to 16, banks 16 to 32', after: 'up to 7,200 Mbps, burst 8 to 16, banks 16 to 32', region: 'main', heading: 'DDR5', numbersBefore: ['8,000mbps', '2.5x', '8', '16', '16', '32'], numbersAfter: ['7,200mbps', '8', '16', '16', '32'] };
+  const fix = buildFixes(actionRun([pairOf(1, [{ check: 'content.facts.changed', severity: 'fail', summary: '1 text block(s) state different figures on the after page', items: [item] }])]))[0];
+  assert.equal(fix.title, 'DDR5: figures changed (8,000mbps, 2.5x → 7,200mbps)');
+  const removed = { ...item, numbersBefore: ['2.5x', '8'], numbersAfter: ['8'] };
+  assert.equal(buildFixes(actionRun([pairOf(1, [{ check: 'content.facts.changed', severity: 'fail', summary: 'x', items: [removed] }])]))[0].title, 'DDR5: figures changed (2.5x → —)');
+});
+
+test('fixes: a failing-files fix shows a failing file as its example, not an alt-text change', () => {
+  const src = 'https://img.example.com/dev/image/a.png';
+  const fix = buildFixes(actionRun([pairOf(1, [
+    { check: 'image.alt.changed', severity: 'review', summary: '1 image alt text(s) changed', items: [{ src, before: 'Samsung LPDDR5X Built to power', after: 'Built to power' }] },
+    { check: 'image.broken', severity: 'fail', summary: '1 content image(s) fail to load', items: [{ src }] },
+  ])]))[0];
+  assert.equal(fix.title, 'Files under img.example.com/dev/image/ fail to load (1)');
+  assert.deepEqual([fix.expected, fix.actual], ['', `${src} → fails to load`]);
+});

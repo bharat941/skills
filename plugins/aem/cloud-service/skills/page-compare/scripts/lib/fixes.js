@@ -111,6 +111,17 @@ function valuesOf(f, it) {
   return { expected: '', actual: '' };
 }
 
+/** Figures only on one side: [before-only, after-only], counting repeats. */
+function figureDiff(before, after) {
+  const rest = [...after];
+  const gone = before.filter((n) => {
+    const i = rest.indexOf(n);
+    if (i >= 0) rest.splice(i, 1);
+    return i < 0;
+  });
+  return [gone, rest];
+}
+
 function titleOf(fx) {
   const n = fx.count;
   const first = fx.first;
@@ -127,13 +138,16 @@ function titleOf(fx) {
       }
       if (first.check === 'content.facts.changed') {
         const it = fx.items.find((x) => x.numbersBefore) || {};
-        return `${S}: figures changed (${(it.numbersBefore || []).join(', ')} → ${(it.numbersAfter || []).join(', ')})`;
+        const [gone, added] = figureDiff(it.numbersBefore || [], it.numbersAfter || []);
+        return `${S}: figures changed (${gone.join(', ') || '—'} → ${added.join(', ') || '—'})`;
       }
       if (first.check === 'content.placeholder') return `${S}: placeholder text on the destination`;
       if (first.check === 'content.empty_state') return `${S}: shows an empty result`;
       return `${S}: text reworded (${n})`;
-    case 'asset':
-      return fx.checks.size === 1 && fx.checks.has('image.alt.changed') ? `Image alt text changed under ${S}/ (${n})` : `Files under ${S}/ fail to load (${n})`;
+    case 'asset': {
+      const failing = new Set([...(fx.keysByCheck.get('image.broken') || []), ...(fx.keysByCheck.get('request.failed') || [])]);
+      return failing.size ? `Files under ${S}/ fail to load (${failing.size})` : `Image alt text changed under ${S}/ (${n})`;
+    }
     case 'link': {
       const it = fx.items[0] || {};
       return `Link to ${S} returns ${it.status || 'an error'} (${fx.occurrences} link(s))`;
@@ -217,6 +231,11 @@ function buildFixes(run, rules = DEFAULT_RULES) {
         map.set(scope.key, fx);
       }
       if (PRIORITY_ORDER.indexOf(priority) < PRIORITY_ORDER.indexOf(fx.priority)) fx.priority = priority;
+      // A failing-files fix is shown with a file that fails, even when an alt-text change was found first.
+      if (fx.kind === 'asset' && fx.first.check === 'image.alt.changed' && f.check !== 'image.alt.changed') {
+        fx.first = f;
+        Object.assign(fx, valuesOf(f, scope.items[0]));
+      }
       fx.checks.add(f.check);
       if (pair && !fx.pageKeys.has(pair.after)) {
         fx.pageKeys.add(pair.after);
