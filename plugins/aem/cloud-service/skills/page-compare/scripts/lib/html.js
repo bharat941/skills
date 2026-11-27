@@ -9,7 +9,7 @@ const { numbersIn } = require('./content');
 const { pathOf } = require('./actions');
 const { progressLine } = require('./markdown');
 
-const AREAS = [['content', 'Content parity', 'Content'], ['visual', 'Visual parity', 'Visual'], ['integration', 'Integration & SEO', 'Integration & SEO']];
+const AREAS = [['content', 'Content parity', 'Content'], ['visual', 'Visual parity', 'Visual'], ['functional', 'Functional parity', 'Functional'], ['integration', 'Integration & SEO', 'Integration & SEO']];
 const PRIORITY_TEXT = { P1: 'P1 Blocker', P2: 'P2 Major', P3: 'P3 Minor', expected: 'Expected' };
 const META_ROWS = [['title', 'Title'], ['description', 'Description'], ['canonical', 'Canonical'], ['robots', 'Robots'], ['ogTitle', 'Social title'], ['h1', 'H1']];
 const MAX_CARDS = 20;
@@ -60,7 +60,7 @@ const CSS = `
 .wrap{max-width:1180px;margin:0 auto;padding:32px 24px 64px}h1{font-size:26px;margin:0 0 12px}h2{font-size:20px;margin:40px 0 12px;padding-bottom:6px;border-bottom:2px solid #e3e5e8}h3{font-size:15px;margin:20px 0 8px}
 .urls{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:0 0 8px}.urls b{color:#5b6370;font-weight:600}.urls a{color:#1d4ed8;word-break:break-all}.meta{color:#5b6370;font-size:13px}
 .verdict{border-radius:10px;padding:18px 20px;margin:24px 0 16px;border:1px solid}.verdict strong{font-size:20px;display:block}.verdict.bad{background:#fdecec;border-color:#f3b4b4;color:#8a1c1c}.verdict.warn{background:#fff6e0;border-color:#f3d48a;color:#7a5200}.verdict.good{background:#e8f6ee;border-color:#a7dcbc;color:#14532d}.verdict.none{background:#eef0f3;border-color:#cfd4da}
-.score{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.tile{background:#fff;border:1px solid #e3e5e8;border-radius:10px;padding:16px}.tile .n{font-size:32px;font-weight:700}.tile .l{color:#5b6370}.tile .c{margin-top:6px;font-size:13px}
+.score{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.tile{background:#fff;border:1px solid #e3e5e8;border-radius:10px;padding:16px}.tile .n{font-size:32px;font-weight:700}.tile .l{color:#5b6370}.tile .c{margin-top:6px;font-size:13px}
 .chip{display:inline-block;border-radius:999px;padding:1px 9px;font-size:12px;font-weight:600;white-space:nowrap}.P1{background:#fde2e2;color:#9b1c1c}.P2{background:#ffedd5;color:#9a3412}.P3{background:#fef9c3;color:#854d0e}.expected{background:#eef0f3;color:#475467}
 .card{background:#fff;border:1px solid #e3e5e8;border-radius:10px;padding:14px 16px;margin:10px 0;break-inside:avoid}.card .top{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}.card .t{font-weight:600;font-size:15px}.card .id{margin-left:auto;font:12px ui-monospace,Menlo,monospace;color:#5b6370}
 .card .sub{color:#5b6370;font-size:13px;margin-top:2px}.sxs{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}.sxs>div{background:#f8f9fb;border-radius:8px;padding:10px}.sxs .h{font-size:12px;color:#5b6370;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px}
@@ -107,7 +107,9 @@ function renderLeadershipHtml(model, { outDir = '.', embedMax = 12, embedBytes =
     const major = list.filter((f) => f.priority === 'P1' || f.priority === 'P2');
     const minor = list.filter((f) => f.priority === 'P3');
     const out = [`<h2>${esc(title)}</h2>`];
-    if (!list.length) out.push('<p class="empty">No differences found.</p>');
+    if (id === 'functional' && !model.interactionChecked && (model.interactionErrors || []).length) out.push(`<p class="empty">Interactions could not run on ${model.interactionErrors.length} page(s): ${esc(model.interactionErrors[0])}.</p>`);
+    else if (id === 'functional' && !model.interactionChecked) out.push('<p class="empty">Not checked: run with <code>--interact</code> to use accordions, tabs, carousels, menus, search and forms (dry run, nothing is sent) on both pages.</p>');
+    else if (!list.length) out.push('<p class="empty">No differences found.</p>');
     out.push(...major.slice(0, MAX_CARDS).map(card));
     if (major.length > MAX_CARDS) out.push(`<p class="empty">…and ${major.length - MAX_CARDS} more in fixes.json.</p>`);
     if (minor.length) out.push(`<details><summary>${plural(minor.length, 'minor difference')} (P3)</summary><ul>${minor.map((f) => `<li>${esc(f.title)} <code>${esc(f.id)}</code></li>`).join('')}</ul></details>`);
@@ -131,7 +133,7 @@ function renderLeadershipHtml(model, { outDir = '.', embedMax = 12, embedBytes =
 
   const [cls, head, hint] = verdictText(model.verdict);
   const n = (a, p) => model.fixes.filter((f) => f.area === a && f.priority === p).length;
-  const parity = { content: model.parity.content, visual: model.parity.visual, integration: null };
+  const parity = { content: model.parity.content, visual: model.parity.visual, functional: model.parity.functional, integration: null };
   const tiles = AREAS.map(([id, , label]) => `<div class="tile"><div class="n">${parity[id] === null || parity[id] === undefined ? '—' : `${esc(parity[id])}%`}</div><div class="l">${esc(label)}${id === 'integration' ? '' : ' parity'}</div><div class="c">${chip('P1')} ${n(id, 'P1')} &nbsp; ${chip('P2')} ${n(id, 'P2')} &nbsp; ${chip('P3')} ${n(id, 'P3')}</div></div>`).join('');
   const link = (u) => (/^https?:\/\//.test(u) ? `<a href="${esc(u)}">${esc(u)}</a>` : `<span>${esc(u)}</span>`);
   const expected = model.fixes.filter((f) => f.priority === 'expected');

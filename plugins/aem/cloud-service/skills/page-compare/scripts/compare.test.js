@@ -285,7 +285,7 @@ test('markdown scale: the same issue on many pages is one issue with a page coun
 test('markdown scale: every page is in pages.csv and each page with problems gets its own file', () => {
   const files = renderMarkdownFiles(scaleRun(500));
   const rows = csvRows(files['pages.csv']);
-  assert.match(rows[0], /^page,status,flaky,content,visual,integration,fail,review,p1,p2,p3,content_parity,visual_parity,top_issue,detail,before,after/);
+  assert.match(rows[0], /^page,status,flaky,content,visual,functional,integration,fail,review,p1,p2,p3,content_parity,visual_parity,functional_parity,top_issue,detail,before,after/);
   assert.equal(rows.length, 501);
   const pageFiles = Object.keys(files).filter((k) => k.startsWith('pages/'));
   assert.equal(pageFiles.length, 450);
@@ -478,7 +478,7 @@ test('csv: cells that start with a formula character are neutralised in every cs
 test('csv: ordinary values and numbers are not altered', () => {
   const run = { generatedAt: 'now', viewports: [1440], completeness: {}, notTested: [], pairs: [{ id: 'x-1', before: 'https://b/x', after: 'https://a/x', status: 'fail', findings: [{ check: 'meta.title', severity: 'fail', summary: 'Title missing' }] }] };
   const rows = renderMarkdownFiles(run)['pages.csv'].trim().split('\n');
-  assert.match(rows[1], /^\/x,fail,,fail,pass,pass,1,0,0,1,0,100,,Title missing,,https:\/\/b\/x,https:\/\/a\/x$/);
+  assert.match(rows[1], /^\/x,fail,,fail,pass,not checked,pass,1,0,0,1,0,100,,,Title missing,,https:\/\/b\/x,https:\/\/a\/x$/);
 });
 
 test('pairs: groupOf skips locale and AEM /content/<site> prefixes', () => {
@@ -520,7 +520,7 @@ test('issues.csv and pages.csv carry the priority', () => {
   assert.match(issues[1], /^C-[0-9a-f]{8},P1,/);
   assert.ok(issues.some((r) => /^I-[0-9a-f]{8},expected,/.test(r) && r.includes('robots.txt')));
   const pages = csvRows(files['pages.csv']);
-  assert.match(pages[1], /,fail,pass,fail,3,1,2,1,0,/);
+  assert.match(pages[1], /,fail,pass,not checked,fail,3,1,2,1,0,/);
 });
 
 // ---------- per-group sampling ----------
@@ -1114,12 +1114,12 @@ test('sectionLabel turns section ids into names', () => {
 
 test('parity: content 100 − pct, parsed from summary when pct missing; visual = pass rows / source rows; blocked page is null', () => {
   const rows = [{ status: 'pass' }, { status: 'pass' }, { status: 'fail' }, { status: 'missing' }, { status: 'added' }];
-  assert.deepEqual(pageParity(pairOf(1, [missingText([txt('A', '')])], { visual: { rows } })), { content: 70, visual: 50 });
+  assert.deepEqual(pageParity(pairOf(1, [missingText([txt('A', '')])], { visual: { rows } })), { content: 70, visual: 50, functional: null });
   const old = { check: 'content.text.missing', severity: 'fail', summary: '2 text block(s) missing (28.97% of text)', items: [] };
   assert.equal(pageParity(pairOf(1, [old])).content, 71);
-  assert.deepEqual(pageParity(pairOf(1, [])), { content: 100, visual: null });
-  assert.deepEqual(pageParity(pairOf(1, [], { blocked: 'waf' })), { content: null, visual: null });
-  assert.deepEqual(runParity([pairOf(1, [missingText([txt('A', '')])], { visual: { rows } }), pairOf(2, [], { visual: { rows: [{ status: 'pass' }] } })]), { content: 85, visual: 75 });
+  assert.deepEqual(pageParity(pairOf(1, [])), { content: 100, visual: null, functional: null });
+  assert.deepEqual(pageParity(pairOf(1, [], { blocked: 'waf' })), { content: null, visual: null, functional: null });
+  assert.deepEqual(runParity([pairOf(1, [missingText([txt('A', '')])], { visual: { rows } }), pairOf(2, [], { visual: { rows: [{ status: 'pass' }] } })]), { content: 85, visual: 75, functional: null });
 });
 
 test('reportModel: single pair shows URLs, many pairs show hosts; verdict from fixes', () => {
@@ -1182,7 +1182,7 @@ const headings = (md) => md.split('\n').filter((l) => /^## /.test(l));
 
 test('report.md: Content parity comes before Visual parity before Integration & SEO', () => {
   const h = headings(toMarkdown(fixRun()));
-  assert.deepEqual(h.slice(0, 4), ['## Content parity', '## Visual parity', '## Integration & SEO', '## Expected on preview — recheck at launch']);
+  assert.deepEqual(h.slice(0, 5), ['## Content parity', '## Visual parity', '## Functional parity', '## Integration & SEO', '## Expected on preview — recheck at launch']);
   assert.equal(h[h.length - 1], '## For agents');
 });
 
@@ -1593,4 +1593,285 @@ test('report.json above 100 pages is compact, keeps finding summaries and points
   assert.deepEqual([f.check, f.severity, f.items, f.itemCount], ['visual.section', 'fail', undefined, 1]);
   assert.equal(data.pairs[1].detail, 'pairs/p1/result.json');
   assert.equal(data.summary.fail, 100);
+});
+
+// ---------- functional parity: interactions ----------
+
+const { interactionFindings, controlKey } = require('./lib/interact');
+
+const ctl = (kind, label, extra = {}) => ({ kind, label, region: 'main', heading: 'FAQs', responded: true, navigated: false, empty: false, jsErrors: [], failed: [], submit: null, ...extra });
+const ix = (controls, term = 'memory') => ({ term, controls });
+
+test('interaction: a control that works on the source and does nothing on the destination is no_response (fail)', () => {
+  const r = interactionFindings(ix([ctl('accordion', 'What is LPDDR5X?')]), ix([ctl('accordion', 'What is LPDDR5X?', { responded: false })]));
+  const f = r.findings.find((x) => x.check === 'interaction.no_response');
+  assert.equal(f.severity, 'fail');
+  assert.deepEqual(f.items.map((i) => [i.kind, i.label, i.heading]), [['accordion', 'What is LPDDR5X?', 'FAQs']]);
+  assert.deepEqual([r.total, r.ok], [1, 0]);
+});
+
+test('interaction: a control that does nothing on both pages is not reported and not counted', () => {
+  const r = interactionFindings(ix([ctl('tab', 'Overview', { responded: false })]), ix([ctl('tab', 'Overview', { responded: false })]));
+  assert.deepEqual(r.findings, []);
+  assert.deepEqual([r.total, r.ok], [0, 0]);
+});
+
+test('interaction: new JavaScript error and failed requests on the destination', () => {
+  const r = interactionFindings(
+    ix([ctl('tab', 'Specs', { jsErrors: ['old error'] })]),
+    ix([ctl('tab', 'Specs', { jsErrors: ['old error', 'tab broken'], failed: [{ url: 'https://a/api/specs', status: 500 }] })]),
+  );
+  assert.deepEqual(r.findings.find((x) => x.check === 'interaction.js_error').items.map((i) => i.message), ['tab broken']);
+  assert.equal(r.findings.find((x) => x.check === 'interaction.request.failed').severity, 'review');
+  assert.deepEqual([r.total, r.ok], [1, 0]);
+});
+
+test('interaction: search with results on the source and an empty result on the destination', () => {
+  const r = interactionFindings(ix([ctl('search', 'Search', { navigated: true })]), ix([ctl('search', 'Search', { navigated: true, empty: true })]));
+  const f = r.findings.find((x) => x.check === 'interaction.search.empty');
+  assert.equal(f.severity, 'fail');
+  assert.equal(f.items[0].term, 'memory');
+});
+
+test('interaction: forms — not submitted, different endpoint, missing fields', () => {
+  const sent = { method: 'POST', path: '/api/lead', fields: ['email', 'name', 'consent'] };
+  const notSent = interactionFindings(ix([ctl('form', 'Send', { submit: sent })]), ix([ctl('form', 'Send', { submit: null, responded: false })]));
+  assert.equal(notSent.findings.find((x) => x.check === 'interaction.form.not_submitted').severity, 'fail');
+  assert.ok(!notSent.findings.some((x) => x.check === 'interaction.no_response'), 'a form that does not submit is reported once');
+  const moved = interactionFindings(ix([ctl('form', 'Send', { submit: sent })]), ix([ctl('form', 'Send', { submit: { method: 'POST', path: '/bin/lead', fields: ['email', 'name'] } })]));
+  const ep = moved.findings.find((x) => x.check === 'interaction.form.endpoint');
+  assert.deepEqual([ep.severity, ep.items[0].before, ep.items[0].after], ['review', 'POST /api/lead', 'POST /bin/lead']);
+  assert.deepEqual(moved.findings.find((x) => x.check === 'interaction.form.fields').items[0].missing, ['consent']);
+});
+
+test('interaction: a control only on the source is control.missing; matching uses kind, label and order', () => {
+  const r = interactionFindings(
+    ix([ctl('accordion', 'Q'), ctl('accordion', 'Q'), ctl('carousel', 'Next')]),
+    ix([ctl('accordion', 'Q'), ctl('carousel', 'Next')]),
+  );
+  const missing = r.findings.find((x) => x.check === 'interaction.control.missing');
+  assert.deepEqual(missing.items.map((i) => [i.kind, i.label]), [['accordion', 'Q']]);
+  assert.deepEqual([r.total, r.ok], [3, 2]);
+  assert.equal(controlKey(ctl('Accordion', '  What   is it? ')), 'accordion|what is it?');
+});
+
+test('interaction: nothing interactive on either page gives no findings and total 0', () => {
+  assert.deepEqual(interactionFindings(ix([]), ix([])), { findings: [], total: 0, ok: 0 });
+});
+
+e2e('interaction end to end: broken accordion, tab error, empty search and unsent form are found; no form is ever sent', { timeout: 120000 }, async () => {
+  const { start } = require('./fixtures/server');
+  const { chromium } = require('playwright');
+  const { interactPage } = require('./lib/interact');
+  const { server, port } = await start();
+  const seen = [];
+  server.on('request', (req) => seen.push(`${req.method} ${req.url}`));
+  const browser = await chromium.launch();
+  try {
+    const opts = { viewport: { width: 1440, height: 900 } };
+    const before = await interactPage(browser, `http://127.0.0.1:${port}/interactive`, opts);
+    const after = await interactPage(browser, `http://localhost:${port}/interactive`, { ...opts, term: before.term });
+    const kinds = before.controls.map((c) => c.kind).sort();
+    assert.deepEqual(kinds, ['accordion', 'form', 'search', 'tab'], JSON.stringify(before.controls));
+    assert.ok(before.controls.every((c) => c.responded), JSON.stringify(before.controls));
+    assert.deepEqual(before.controls.find((c) => c.kind === 'form').submit, { method: 'POST', path: '/api/lead', fields: ['email', 'company'] });
+    const r = interactionFindings(before, after);
+    const checks = r.findings.map((f) => f.check).sort();
+    assert.deepEqual(checks, ['interaction.form.not_submitted', 'interaction.js_error', 'interaction.no_response', 'interaction.search.empty'], JSON.stringify(r.findings));
+    assert.deepEqual(r.findings.find((f) => f.check === 'interaction.no_response').items.map((i) => i.kind).sort(), ['accordion', 'tab']);
+    assert.equal(r.findings.find((f) => f.check === 'interaction.no_response').items.find((i) => i.kind === 'accordion').heading, 'FAQs');
+    assert.deepEqual([r.total, r.ok], [4, 0]);
+    assert.ok(!seen.some((s) => !/^(GET|HEAD) /.test(s)), `a non-GET request reached the server: ${seen.filter((s) => !/^GET /.test(s))}`);
+    assert.ok(!seen.some((s) => s.includes('/api/lead')), 'the form was never sent');
+  } finally {
+    await browser.close();
+    server.close();
+  }
+});
+
+// ---------- functional parity in the fix model and reports ----------
+
+const ixFinding = (check, severity, items) => ({ check, severity, summary: check, items });
+const functionalRun = () => mdRun([{
+  id: 'lp-1', before: 'https://www.b.com/lpddr5x', after: 'https://www.a.com/lpddr5x', status: 'fail', noise: 0,
+  interaction: { total: 4, ok: 1 },
+  findings: [
+    ixFinding('interaction.no_response', 'fail', [{ kind: 'accordion', label: 'What is LPDDR5X?', heading: 'FAQs', region: 'main', error: 'nothing happened' }, { kind: 'accordion', label: 'Is it fast?', heading: 'FAQs', region: 'main', error: 'nothing happened' }]),
+    ixFinding('interaction.search.empty', 'fail', [{ kind: 'search', label: 'Search', heading: '', region: 'main', term: 'lpddr5x' }]),
+    ixFinding('interaction.form.endpoint', 'review', [{ kind: 'form', label: 'Send', heading: 'Contact us', region: 'main', before: 'POST /api/lead', after: 'POST /bin/lead' }]),
+  ],
+}]);
+
+test('fixes: interaction findings are functional fixes grouped by section, with F- ids and plain titles', () => {
+  const fixes = buildFixes(functionalRun());
+  assert.deepEqual(fixes.map((f) => [f.priority, f.area, f.title]), [
+    ['P1', 'functional', 'FAQs: 2 accordion(s) do not respond on the destination'],
+    ['P1', 'functional', 'Search returns no results on the destination (search "lpddr5x")'],
+    ['P2', 'functional', 'Contact us: form sends to a different address'],
+  ]);
+  assert.ok(fixes.every((f) => /^F-[0-9a-f]{8}$/.test(f.id)));
+  const faq = fixes[0];
+  assert.deepEqual([faq.expected, faq.actual, faq.fixType, faq.owner], ['accordion "What is LPDDR5X?" responds', 'nothing happened', 'code', 'Dev (front end)']);
+  assert.deepEqual([fixes[2].expected, fixes[2].actual], ['POST /api/lead', 'POST /bin/lead']);
+});
+
+test('parity: functional is ok / total when interactions ran, null when they did not', () => {
+  assert.equal(pageParity(functionalRun().pairs[0]).functional, 25);
+  assert.equal(pageParity(pairOf(1, [])).functional, null);
+  assert.equal(pageParity(pairOf(1, [], { interaction: { total: 0, ok: 0 } })).functional, null);
+  assert.equal(runParity(functionalRun().pairs).functional, 25);
+});
+
+test('report.md: Functional parity sits between Visual and Integration, with a scorecard row', () => {
+  const md = toMarkdown(functionalRun());
+  assert.match(md, /\| Functional \| 25% \| 2 \| 1 \| 0 \|/);
+  const section = md.split('## Functional parity')[1].split('\n## ')[0];
+  assert.match(section, /FAQs: 2 accordion\(s\) do not respond on the destination/);
+  assert.match(section, /\| accordion "What is LPDDR5X\?" responds \| nothing happened \| code \|/);
+});
+
+test('report.md and report.html say functional parity was not checked without --interact', () => {
+  const md = toMarkdown(fixRun());
+  assert.match(md, /## Functional parity\n\n_Not checked: run with `--interact`/);
+  assert.match(md, /\| Functional \| — \| 0 \| 0 \| 0 \|/);
+  const html = renderLeadershipHtml(reportModel(fixRun()), { outDir: os.tmpdir() });
+  assert.match(html, /<h2>Functional parity<\/h2>\s*<p class="empty">Not checked: run with <code>--interact<\/code>/);
+});
+
+test('report.html shows Functional parity in order with its parity tile', () => {
+  const html = renderLeadershipHtml(reportModel(functionalRun()), { outDir: os.tmpdir() });
+  const order = ['Visual parity', 'Functional parity', 'Integration &amp; SEO'].map((h) => html.indexOf(`<h2>${h}`));
+  assert.ok(order.every((x) => x > 0) && order[0] < order[1] && order[1] < order[2], JSON.stringify(order));
+  assert.match(html, />25%<\/div><div class="l">Functional parity/);
+});
+
+e2e('cli: --interact adds Functional parity to the reports and never sends a form', { timeout: 240000 }, async () => {
+  const { start } = require('./fixtures/server');
+  const { server, port } = await start();
+  const seen = [];
+  server.on('request', (req) => seen.push(`${req.method} ${req.url}`));
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-interact-'));
+  try {
+    const args = [path.join(__dirname, 'compare.js'), '--before', `http://127.0.0.1:${port}/interactive`, '--after', `http://localhost:${port}/interactive`, '--viewports', '1440', '--noise-sample', '0', '--no-link-check', '--out', out];
+    const r = await new Promise((resolve) => {
+      const p = require('child_process').spawn(process.execPath, [...args, '--interact']);
+      let output = '';
+      p.stdout.on('data', (d) => (output += d));
+      p.stderr.on('data', (d) => (output += d));
+      p.on('close', (code) => resolve({ code, output }));
+    });
+    assert.equal(r.code, 1, r.output);
+    const md = fs.readFileSync(path.join(out, 'report.md'), 'utf8');
+    const functional = md.split('## Functional parity')[1].split('\n## ')[0];
+    assert.match(functional, /FAQs: 1 accordion\(s\) do not respond on the destination/);
+    assert.match(functional, /Contact us: form does not submit on the destination/);
+    assert.match(functional, /Search returns no results on the destination/);
+    assert.match(md, /\| Functional \| 0% \|/);
+    const fixes = JSON.parse(fs.readFileSync(path.join(out, 'fixes.json'), 'utf8')).fixes.filter((f) => f.area === 'functional');
+    assert.ok(fixes.length >= 4 && fixes.every((f) => /^F-/.test(f.id)), JSON.stringify(fixes.map((f) => f.title)));
+    assert.match(fs.readFileSync(path.join(out, 'report.html'), 'utf8'), /<h2>Functional parity<\/h2>/);
+    assert.ok(!seen.some((s) => !/^(GET|HEAD) /.test(s)), `a non-GET request reached the server: ${seen.filter((s) => !/^GET /.test(s))}`);
+    const result = JSON.parse(fs.readFileSync(path.join(out, 'report.json'), 'utf8')).pairs[0];
+    assert.deepEqual([result.interaction.total, result.interaction.ok], [4, 0]);
+  } finally {
+    server.close();
+    fs.rmSync(out, { recursive: true, force: true });
+  }
+});
+
+test('interaction: fieldsOf never throws on odd request bodies', () => {
+  const { fieldsOf } = require('./lib/interact');
+  const req = (url, body) => ({ url: () => url, postData: () => body });
+  assert.deepEqual(fieldsOf(req('https://a/x?q=1', 'email=a%40b.com&bad=%E0%A4%A&name=x')).sort(), ['bad', 'email', 'name', 'q']);
+  assert.deepEqual(fieldsOf(req('https://a/x', '%%%=1')), ['%%%']);
+  assert.deepEqual(fieldsOf(req('not a url', '{"a":1,"b":2}')), ['a', 'b']);
+  assert.deepEqual(fieldsOf({ url: () => { throw new Error('x'); }, postData: () => { throw new Error('y'); } }), []);
+});
+
+// ---------- review fixes: dry run, submit choice, reloads, background noise ----------
+
+e2e('interaction safety: no form ever reaches the server (new tab, iframe, JS fetch, JSONP, late submit)', { timeout: 120000 }, async () => {
+  const { start } = require('./fixtures/server');
+  const { chromium } = require('playwright');
+  const { interactPage } = require('./lib/interact');
+  const { server, port } = await start();
+  const seen = [];
+  server.on('request', (req) => seen.push(`${req.method} ${req.url}`));
+  const browser = await chromium.launch();
+  try {
+    const r = await interactPage(browser, `http://127.0.0.1:${port}/dryrun`, { viewport: { width: 1440, height: 900 } });
+    assert.equal(r.controls.filter((c) => c.kind === 'form').length, 6, JSON.stringify(r.controls));
+    await new Promise((res) => setTimeout(res, 5500));
+    const trapped = seen.filter((s) => s.includes('/trap/'));
+    assert.deepEqual(trapped, [], `form data reached the server: ${trapped.join(', ')}`);
+    const recorded = r.controls.filter((c) => c.kind === 'form' && c.submit).map((c) => c.submit.path).sort();
+    assert.deepEqual(recorded, ['/trap/blank-get', '/trap/blank-post', '/trap/fetch-get', '/trap/iframe-get', '/trap/jsonp']);
+  } finally {
+    await browser.close();
+    server.close();
+  }
+});
+
+test('interaction: pickSubmit prefers the request carrying the form data over analytics beacons', () => {
+  const { pickSubmit } = require('./lib/interact');
+  const attempts = [
+    { method: 'POST', host: 'www.google-analytics.com', path: '/g/collect', fields: ['v', 'tid'], marked: false, analytics: true },
+    { method: 'POST', host: 'www.b.com', path: '/api/lead', fields: ['email', 'company'], marked: true, analytics: false },
+  ];
+  assert.equal(pickSubmit(attempts, ['email', 'company'], 'www.b.com').path, '/api/lead');
+  assert.equal(pickSubmit([attempts[0]], ['email'], 'www.b.com'), null, 'an analytics beacon alone is not a form submit');
+  assert.equal(pickSubmit([{ method: 'POST', host: 'www.b.com', path: '/bin/x', fields: [], marked: false, analytics: false }], ['email'], 'www.b.com').path, '/bin/x');
+});
+
+e2e('interaction: a redirecting URL is loaded once, not before every control', { timeout: 120000 }, async () => {
+  const { start } = require('./fixtures/server');
+  const { chromium } = require('playwright');
+  const { interactPage } = require('./lib/interact');
+  const { server, port } = await start();
+  const seen = [];
+  server.on('request', (req) => seen.push(`${req.method} ${req.url}`));
+  const browser = await chromium.launch();
+  try {
+    await interactPage(browser, `http://127.0.0.1:${port}/start`, { viewport: { width: 1440, height: 900 } });
+    const loads = seen.filter((s) => s === 'GET /start').length;
+    assert.ok(loads <= 2, `the redirecting page was loaded ${loads} times`);
+  } finally {
+    await browser.close();
+    server.close();
+  }
+});
+
+e2e('interaction: background changes and recurring errors are not blamed on controls', { timeout: 120000 }, async () => {
+  const { start } = require('./fixtures/server');
+  const { chromium } = require('playwright');
+  const { interactPage } = require('./lib/interact');
+  const { server, port } = await start();
+  const browser = await chromium.launch();
+  try {
+    const opts = { viewport: { width: 1440, height: 900 } };
+    const before = await interactPage(browser, `http://127.0.0.1:${port}/noisy`, opts);
+    const after = await interactPage(browser, `http://localhost:${port}/noisy`, opts);
+    assert.equal(before.controls.find((c) => c.label === 'Dead question').responded, false, 'a ticker elsewhere on the page is not a response');
+    const r = interactionFindings(before, after);
+    assert.deepEqual(r.findings, [], JSON.stringify(r.findings));
+    assert.deepEqual([r.total, r.ok], [1, 1]);
+  } finally {
+    await browser.close();
+    server.close();
+  }
+});
+
+test('report: interactions that could not run say so instead of asking for --interact; skipped pages are not checked', () => {
+  const run = mdRun([mdPair([], { interaction: { error: 'Target closed' } })]);
+  const md = toMarkdown(run);
+  assert.match(md, /## Functional parity\n\n_Interactions could not run on 1 page\(s\): Target closed\._/);
+  const skipped = mdRun([mdPair([], { interaction: { skipped: 'page not comparable' } })]);
+  assert.match(toMarkdown(skipped), /_Not checked: run with `--interact`/);
+  assert.match(renderMarkdownFiles(skipped)['pages.csv'].split('\n')[1], /,not checked,/);
+});
+
+test('interaction: a destination control that could not be checked is neither a failure nor counted', () => {
+  const r = interactionFindings(ix([ctl('search', 'Search keyword'), ctl('accordion', 'Q')]), ix([ctl('search', 'Search keyword', { responded: false, skipped: 'control not found after reloading the page' }), ctl('accordion', 'Q')]));
+  assert.deepEqual(r.findings, []);
+  assert.deepEqual([r.total, r.ok], [1, 1]);
 });

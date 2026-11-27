@@ -1,6 +1,6 @@
 ---
 name: page-compare
-description: "[BETA] Compares a live \"before\" page with its \"after\" counterpart (or 100+ pairs from a CSV, Excel sheet or sitemap) after an AEM migration or redesign, and produces a static HTML report. Checks content (text, headings, meta, images, links, forms, structured data), visual differences per section at several viewports with a noise baseline, and functional signals (JavaScript and console errors, failed assets, load timing, accessibility deltas, Adobe Analytics / Web SDK / GA4 / Launch values), plus downloads, broken links, redirects, robots.txt and page-set coverage. Use when the user asks to compare two URLs, validate a migrated site against the live one, QA before and after pages, or build a regression report across many pages. Do NOT use to validate code migration patterns (use validate-migration) or to review a single page in isolation. This skill is in beta. Verify all outputs before applying them to production projects."
+description: "[BETA] Compares a live \"before\" page with its \"after\" counterpart (or 100+ pairs from a CSV, Excel sheet or sitemap) after an AEM migration or redesign, and produces a static HTML report. Checks content (text, headings, meta, images, links, forms, structured data), visual differences per section at several viewports with a noise baseline, and functional signals (JavaScript and console errors, failed assets, load timing, accessibility deltas, Adobe Analytics / Web SDK / GA4 / Launch values), optional --interact checks that accordions, tabs, search and forms still work, plus downloads, broken links, redirects, robots.txt and page-set coverage. Use when the user asks to compare two URLs, validate a migrated site against the live one, QA before and after pages, or build a regression report across many pages. Do NOT use to validate code migration patterns (use validate-migration) or to review a single page in isolation. This skill is in beta. Verify all outputs before applying them to production projects."
 metadata:
   status: beta
 license: Apache-2.0
@@ -12,7 +12,7 @@ license: Apache-2.0
 
 # page-compare
 
-Compares live **before** and **after** pages and writes a report of what differs. The skill drives `scripts/compare.js`; you triage the report with the user. It is read-only against the sites: pages are loaded with GET, nothing is clicked or submitted, and nothing is sent to any other service.
+Compares live **before** and **after** pages and writes a report of what differs. The skill drives `scripts/compare.js`; you triage the report with the user. It is read-only against the sites: pages are loaded with GET and nothing is sent to any other service. Only with `--interact` are controls clicked, and forms are then a dry run (the request is recorded and blocked, never sent).
 
 ## When to use
 
@@ -49,6 +49,8 @@ node scripts/compare.js --pairs pages.csv --out ./out \
 
 Useful options: `--viewports 1440,768,375` (default), `--concurrency 2`, `--pace-ms 500`, `--noise-sample 20%` (noise baseline on a share of pages for faster big runs), `--include/--exclude/--limit` to run a subset first. Run `node scripts/compare.js --help` for all options.
 
+**Functional parity (`--interact`).** After a migration, add `--interact` to prove the pages still work, not only that they look the same: on both pages it opens accordions and tabs, moves carousels, opens menus, runs a search with the same term, and fills and submits forms, then compares what happened (did it respond, new JavaScript errors or failed requests, search results, where a form sends and which fields). Forms are a **dry run**: every non-GET request and every navigation a form causes is recorded and blocked, so nothing is ever sent, which makes it safe on a production site. It runs at the first viewport and adds time per page, so on large runs use it with `--per-group`. Logins, payments and multi-step flows are not covered.
+
 Run a small sample (`--limit 5`) first on large sets, check it with the user, then run the full set.
 
 For 100+ pages, work in three steps:
@@ -78,8 +80,8 @@ Both reports read top to bottom:
 
 1. **Source → destination**, date, pages and viewports.
 2. A one-line **verdict**: `Not ready: N blockers`, `Ready after fixes`, `Incomplete` (pages could not be compared), `Nothing compared` (no pairs matched the filters) or `No blocking differences found`; with `--baseline`, progress since that run.
-3. A **scorecard**: content parity (share of source text found on the destination), visual parity (share of sections that match) and the P1/P2/P3 count per area. There is no overall score: the verdict is the gate.
-4. **Content parity**, then **Visual parity**, then **Integration & SEO**: one fix per page section and cause, named by the heading it sits under ("FAQs: 6 text blocks missing", "Key features: figures changed (32gb → 64gb)") or by its shared cause ("Files under img.example.com/dev/image/ fail to load"), with Source says / Destination says, or source / destination / diff screenshots. A single-page run also gets a metadata table, and the integration section lists broken links.
+3. A **scorecard**: content parity (share of source text found on the destination), visual parity (share of sections that match), functional parity (share of source controls that behave the same, with `--interact`) and the P1/P2/P3 count per area. There is no overall score: the verdict is the gate.
+4. **Content parity**, then **Visual parity**, then **Functional parity**, then **Integration & SEO**: one fix per page section and cause, named by the heading it sits under ("FAQs: 6 text blocks missing", "Key features: figures changed (32gb → 64gb)") or by its shared cause ("Files under img.example.com/dev/image/ fail to load"), with Source says / Destination says, or source / destination / diff screenshots. A single-page run also gets a metadata table, and the integration section lists broken links.
 5. **Expected on preview**: robots.txt, canonical and analytics differences that are normal on a preview or publish host.
 6. **Fixed since last run** (with `--baseline`).
 
@@ -117,7 +119,7 @@ Never add entries on the user's behalf without them saying a difference is inten
 
 ## Limits to state in your summary
 
-Chromium only; pages are loaded, never interacted with; analytics checks cover page-view tags and values, not interaction events, consent behaviour or data arriving in reporting; no security or SEO-ranking audit. The report lists these under "Not tested". Do not describe a `pass` as proof that the page is correct, only as "no differences found by these checks".
+Chromium only; without `--interact` pages are only loaded, never clicked, and with it forms are dry runs (never sent) and logins, payments and multi-step flows are not tested; analytics checks cover page-view tags and values, not interaction events, consent behaviour or data arriving in reporting; no security or SEO-ranking audit. The report lists these under "Not tested". Do not describe a `pass` as proof that the page is correct, only as "no differences found by these checks".
 
 ## Troubleshooting
 

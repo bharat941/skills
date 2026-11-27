@@ -33,7 +33,58 @@ const base = () => doc({ body: standard() });
 const CSS_BLOCK = '.preload-screen,.hero-preloader{position:absolute;inset:0;background:#000;z-index:100;display:flex;align-items:center;justify-content:center;transition:opacity .5s ease}.hero-preloader .bar{width:40%;height:2px;background:#fff;animation:none}.hero-preloader.done{opacity:0;pointer-events:none}';
 
 // Each entry: { before, after } where a value is html, or { status, html, headers, onRequest(count) }.
+// Interactive page: works on "before", broken on "after" (accordion has no script, a tab throws,
+// search finds nothing, the lead form never submits). The search page answers both.
+const INTERACTIVE = (after) => doc({
+  body: standard(2, `<h2>FAQs</h2>
+<button class="cmp-accordion__button" aria-expanded="false" aria-controls="p1" id="a1">What does the platform do?</button>
+<div id="p1" hidden><p>It plans, builds and measures campaigns.</p></div>
+<div role="tablist"><button role="tab" aria-selected="true">Overview</button><button role="tab" aria-selected="false" id="t2">Specifications</button></div>
+<div id="tp">Overview panel</div>
+<form role="search" action="/search" method="get"><input type="search" name="q" aria-label="Search"><button type="submit">Go</button></form>
+<h2>Contact us</h2>
+<form id="lead" ${after ? '' : 'action="/api/lead" method="post"'}><input name="email" type="email" required aria-label="Email"><input name="company" aria-label="Company"><button type="submit">Send</button></form>`),
+  script: after
+    ? '<script>document.getElementById("t2").onclick=function(){throw new Error("tab handler broken after migration")};document.getElementById("lead").onsubmit=function(e){e.preventDefault()};</script>'
+    : '<script>var a1=document.getElementById("a1"),p1=document.getElementById("p1"),t2=document.getElementById("t2");a1.onclick=function(){var o=a1.getAttribute("aria-expanded")==="true";a1.setAttribute("aria-expanded",String(!o));p1.hidden=o};t2.onclick=function(){document.getElementById("tp").textContent="Specifications panel";t2.setAttribute("aria-selected","true")};</script>',
+});
+
+// Forms that must never reach /trap/: new-tab POST and GET, a GET into an iframe, a JS GET fetch, JSONP, and a late submit.
+const DRYRUN = doc({
+  body: standard(1, `<h2>Forms</h2>
+<form action="/trap/blank-post" method="post" target="_blank"><input name="email" type="email" aria-label="E1"><button type="submit">Send one</button></form>
+<form action="/trap/blank-get" method="get" target="_blank"><input name="g" aria-label="E2"><button type="submit">Send two</button></form>
+<iframe name="sink" style="width:10px;height:10px"></iframe>
+<form action="/trap/iframe-get" method="get" target="sink"><input name="i" aria-label="E3"><button type="submit">Send three</button></form>
+<form id="f4"><input name="email" type="email" aria-label="E4"><button type="submit">Send four</button></form>
+<form id="f5"><input name="email" type="email" aria-label="E5"><button type="submit">Send five</button></form>
+<form id="f6" action="/trap/late" method="get"><input name="l" aria-label="E6"><button type="submit">Send six</button></form>`),
+  script: `<script>
+document.getElementById('f4').onsubmit=function(e){e.preventDefault();fetch('/trap/fetch-get?email='+encodeURIComponent(this.email.value))};
+document.getElementById('f5').onsubmit=function(e){e.preventDefault();var s=document.createElement('script');s.src='/trap/jsonp?email='+encodeURIComponent(this.email.value);document.body.appendChild(s)};
+document.getElementById('f6').onsubmit=function(e){e.preventDefault();var f=this;setTimeout(function(){f.submit()},4500)};
+</script>`,
+});
+
+// Background activity unrelated to the control: a ticker that changes every 150 ms (before only) and a recurring error (after only).
+const NOISY = (after) => doc({
+  body: standard(1, `<p id="tick">0</p><h2>FAQ</h2><button aria-expanded="false" id="dead">Dead question</button>
+<button aria-expanded="false" id="live" aria-controls="lp">Live question</button><div id="lp" hidden><p>Live answer text.</p></div>`),
+  script: `<script>
+var live=document.getElementById('live');live.onclick=function(){live.setAttribute('aria-expanded','true');document.getElementById('lp').hidden=false};
+${after ? "setInterval(function(){throw new Error('recurring background error')},250);" : "setInterval(function(){var t=document.getElementById('tick');t.textContent=String(+t.textContent+1)},150);"}
+</script>`,
+});
+
 const scenarios = {
+  '/dryrun': { before: DRYRUN, after: DRYRUN },
+  '/noisy': { before: NOISY(false), after: NOISY(true) },
+  '/start': { before: { status: 301, html: '', headers: { location: '/interactive' } }, after: { status: 301, html: '', headers: { location: '/interactive' } } },
+  '/interactive': { before: INTERACTIVE(false), after: INTERACTIVE(true) },
+  '/search': {
+    before: doc({ title: 'Search', body: '<ul class="results"><li>Platform overview</li><li>Platform pricing</li></ul>' }),
+    after: doc({ title: 'Search', body: '<p class="empty">No results found</p>' }),
+  },
   '/identical': { before: base(), after: base() },
   '/text-removed': { before: base(), after: doc({ body: standard(2) }) },
   '/alt-changed': {

@@ -75,6 +75,22 @@ Whole-page height differences are reported per section, not as a pixel diff of t
 | `download.broken` / `download.changed` | fail / review | Linked PDFs and other downloads that do not resolve, or changed type or size (over 20%) |
 | `link.broken` | fail | Internal links on after that return an error (up to 50 checked per page). Links already broken on before are `link.broken.preexisting` (info) |
 
+## Interactions (`--interact`)
+
+With `--interact`, the controls on the source page (up to 8 per kind: accordions, tabs, carousels, menus, search fields, forms) are used on both pages at the first viewport and matched by kind and visible label. A control that does nothing on the source is not compared. Forms are filled with test data carrying a unique marker and submitted as a **dry run**: any request carrying the marker, every non-GET request, and, once a form has been used, every navigation and scripted request (in any frame or new tab) is recorded and blocked, never sent. The form's own request is the one carrying the marker or its field names; analytics beacons fired on submit do not count. A control counts as responding when its own component (its `aria-controls` target, AEM component or nearest container) changes or the page navigates; JavaScript errors and failed requests that also happen with nobody touching the page are not blamed on a control. A destination control the tool cannot get at after a page reload (it still is not there after scrolling the page) is left out of the comparison and the parity, not reported as broken. The search term is the first word of the source page's H1 (at least four letters), else `test`. These checks form the **Functional parity** area; parity is the share of source controls that behave the same on the destination.
+
+| Check | Severity | Meaning |
+|---|---|---|
+| `interaction.no_response` | fail | Works on the source (opens, changes or navigates) but nothing happens on the destination |
+| `interaction.js_error` | fail | A new JavaScript error when using the control on the destination |
+| `interaction.search.empty` | fail | Search shows results on the source but an empty result ("No results found") on the destination |
+| `interaction.form.not_submitted` | fail | The form sends a request on the source but none on the destination |
+| `interaction.control.missing` | review | A working control on the source has no match (same kind and label) on the destination |
+| `interaction.request.failed` | review | Requests fail (4xx/5xx) when using the control on the destination only |
+| `interaction.form.endpoint` | review | The form sends to a different address or with a different method |
+| `interaction.form.fields` | review | The form sends fewer fields on the destination |
+| `interaction.error` | info | Interactions could not run on this page |
+
 ## Analytics
 
 Compared from the requests a page load makes and from `adobeDataLayer` / `digitalData`.
@@ -102,4 +118,4 @@ Not covered: interaction events (clicks, form submits), consent behaviour, and w
 
 ## Not tested
 
-Form submission, login flows, search, carousels and tabs beyond what is in the initial DOM, cross-browser rendering, security headers, SEO ranking, and analytics interaction events.
+Without `--interact`: form submission, search, carousels, tabs and menus. Always: logins, payments and multi-step flows, real form delivery (forms are only ever dry runs), cross-browser rendering, security headers, SEO ranking, and analytics interaction events.

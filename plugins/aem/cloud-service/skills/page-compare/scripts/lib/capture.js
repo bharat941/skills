@@ -399,4 +399,4 @@ async function capturePage(browser, url, opts) {
   }
 }
 
-module.exports = { launchBrowser, capturePage, extractInPage, loadPlaywright, CONSENT_SELECTORS };
+module.exports = { launchBrowser, capturePage, extractInPage, loadPlaywright, CONSENT_SELECTORS, HIDE_CSS };

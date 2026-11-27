@@ -30,13 +30,14 @@ Every view renders the same fix list. A fix is one section of a page (or of a te
 | Broken internal links | target URL | `Link to / returns 404 (17 link(s))` |
 | Navigation items, header/footer text and images | header or footer | `Header: 138 item(s) missing` (P3) |
 | Visual sections (all viewports together) | section | `Section root-container looks different (12.5% of pixels)` |
+| Interactions (`--interact`) | check, control kind and the heading it sits under | `FAQs: 2 accordion(s) do not respond on the destination`, `Contact us: form does not submit on the destination` |
 | Everything else | check | the finding's summary |
 
-The fix id is the area letter (`C` content, `V` visual, `I` integration) and 8 hex characters of a hash of that scope. It does not include the page, so the same problem keeps its id when it appears on more or fewer pages, and across runs.
+The fix id is the area letter (`C` content, `V` visual, `F` functional, `I` integration) and 8 hex characters of a hash of that scope. It does not include the page, so the same problem keeps its id when it appears on more or fewer pages, and across runs.
 
 `fixes.json` is `{ generatedAt, source, destination, verdict, parity, fixes, fixed, notRechecked, accepted }`. Each fix: `id, priority, area, title, section, component, fixType (content | code | config), owner, checks, pages [{ source, destination }], siteWide, count, expected, actual, items (up to 50, each with its page), truncated, evidence { before, after, diff }` (visual fixes) and, with `--baseline`, `status` (`new` or `open`). `fixed`, `notRechecked` and `accepted` list the earlier run's fixes whose ids are gone (see `--baseline`). For placeholder, empty-state and new text, `expected` is empty and `actual` is the text found on the destination.
 
-**Parity:** content parity is 100 minus the share of source text missing on the destination; visual parity is the share of source sections (at every viewport) that match. The run value is the mean over compared pages; a page that could not be compared has none.
+**Parity:** content parity is 100 minus the share of source text missing on the destination; visual parity is the share of source sections (at every viewport) that match. The run value is the mean over compared pages; a page that could not be compared has none. Functional parity is the share of source controls (with `--interact`) that behave the same on the destination; without `--interact` it is not checked and the section says so.
 
 ## report.md and report.html
 
@@ -44,8 +45,8 @@ Same order and ids in both:
 
 1. Title with **Source** and **Destination** (URLs for one page, hosts for many), date, pages, viewports.
 2. **Verdict**: `Not ready: N blockers` (any P1), `Ready after fixes: N major issues` (P2 only), `Incomplete: N pages could not be compared`, `Nothing compared`, or `No blocking differences found`; then, with `--baseline`, `Since <date>: P1 6 → 2, 4 fixed, 0 new.`
-3. **Scorecard**: Content, Visual, Integration & SEO with parity and P1/P2/P3 counts.
-4. **Content parity**, **Visual parity**, **Integration & SEO**: P1 and P2 fixes (report.md: at most 10 per area as a table `ID, Priority, Section, Problem, Source says, Destination says, Fix type`; report.html: cards with the values side by side, or source / destination / diff screenshots for visual fixes), then P3 fixes in one line (collapsed in report.html). Changed figures are bold (highlighted in HTML). A single-page run adds a **Metadata** table (`Property, Source, Destination, Match`); Integration adds **Broken links** (`Status, Link, Link text`).
+3. **Scorecard**: Content, Visual, Functional, Integration & SEO with parity and P1/P2/P3 counts.
+4. **Content parity**, **Visual parity**, **Functional parity**, **Integration & SEO**: P1 and P2 fixes (report.md: at most 10 per area as a table `ID, Priority, Section, Problem, Source says, Destination says, Fix type`; report.html: cards with the values side by side, or source / destination / diff screenshots for visual fixes), then P3 fixes in one line (collapsed in report.html). Changed figures are bold (highlighted in HTML). A single-page run adds a **Metadata** table (`Property, Source, Destination, Match`); Integration adds **Broken links** (`Status, Link, Link text`).
 5. **Expected on preview — recheck at launch**.
 6. **Fixed since last run** (with `--baseline`).
 7. **Pages with most blockers** (multi-page runs, top 10, linked to `pages/<id>.md`).
@@ -72,7 +73,7 @@ One row per fix: `fix_id, priority, area, section, fix_type, owner, problem, how
 
 ## pages.csv and pages/
 
-`pages.csv` has one row per compared page: `page, status, flaky, content, visual, integration, fail, review, p1, p2, p3, content_parity, visual_parity, top_issue, detail, before, after`. Each area is `pass`, `review`, `fail` or `not compared` (blocked or error); `p1`/`p2`/`p3` count the page's findings by priority. `content_parity` and `visual_parity` are the page's percentages. `detail` points to `pages/<id>.md`, the report for that one page (source and destination, verdict, its fixes). Pages that pass, and single-page runs, get no detail file.
+`pages.csv` has one row per compared page: `page, status, flaky, content, visual, functional, integration, fail, review, p1, p2, p3, content_parity, visual_parity, functional_parity, top_issue, detail, before, after`. Each area is `pass`, `review`, `fail` or `not compared` (blocked or error), and `functional` is `not checked` without `--interact`; `p1`/`p2`/`p3` count the page's findings by priority. `content_parity` and `visual_parity` are the page's percentages. `detail` points to `pages/<id>.md`, the report for that one page (source and destination, verdict, its fixes). Pages that pass, and single-page runs, get no detail file.
 
 ## review.html
 

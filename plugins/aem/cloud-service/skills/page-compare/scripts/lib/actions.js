@@ -10,6 +10,7 @@ const PRIORITY_ORDER = ['P1', 'P2', 'P3', 'expected'];
 /** Which of the three report areas a check id belongs to. Unknown checks count as content. */
 function areaOf(check) {
   if (check.startsWith('visual.')) return 'visual';
+  if (check.startsWith('interaction.')) return 'functional';
   return INTEGRATION.test(check) ? 'integration' : 'content';
 }
 

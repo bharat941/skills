@@ -12,9 +12,10 @@ const { areaOf, pathOf, priorityParts } = require('./actions');
 const { STATUS_ORDER } = require('./report');
 
 const SEVERITY_ORDER = { fail: 0, review: 1, info: 2 };
-const AREA_IDS = ['content', 'visual', 'integration'];
-const AREA_TITLE = { content: 'Content parity', visual: 'Visual parity', integration: 'Integration & SEO' };
-const SCORE_TITLE = { content: 'Content', visual: 'Visual', integration: 'Integration & SEO' };
+const AREA_IDS = ['content', 'visual', 'functional', 'integration'];
+const AREA_TITLE = { content: 'Content parity', visual: 'Visual parity', functional: 'Functional parity', integration: 'Integration & SEO' };
+const SCORE_TITLE = { content: 'Content', visual: 'Visual', functional: 'Functional', integration: 'Integration & SEO' };
+const NOT_CHECKED = 'Not checked: run with `--interact` to use accordions, tabs, carousels, menus, search and forms (dry run, nothing is sent) on both pages.';
 const PRIORITY_LABEL = { P1: '🔴 P1', P2: '🟠 P2', P3: '🟡 P3', expected: '⚪ Expected' };
 const MAX_FIXES = 10;
 const MAX_CELL = 120;
@@ -105,7 +106,7 @@ function header(model) {
 
 function scorecard(model) {
   const n = (area, p) => model.fixes.filter((f) => f.area === area && f.priority === p).length;
-  const parity = { content: model.parity.content, visual: model.parity.visual, integration: null };
+  const parity = { content: model.parity.content, visual: model.parity.visual, functional: model.parity.functional, integration: null };
   return table(['Area', 'Parity', '🔴 P1', '🟠 P2', '🟡 P3'], AREA_IDS.map((a) => [SCORE_TITLE[a], pct(parity[a]), n(a, 'P1'), n(a, 'P2'), n(a, 'P3')]));
 }
 
@@ -150,7 +151,8 @@ function areaSection(model, area, prefix) {
   const major = list.filter((f) => f.priority === 'P1' || f.priority === 'P2');
   const minor = list.filter((f) => f.priority === 'P3');
   const out = [`## ${AREA_TITLE[area]}`];
-  if (!list.length) out.push('_No differences found._');
+  if (area === 'functional' && !model.interactionChecked) out.push((model.interactionErrors || []).length ? `_Interactions could not run on ${model.interactionErrors.length} page(s): ${cell(model.interactionErrors[0], 200)}._` : `_${NOT_CHECKED}_`);
+  else if (!list.length) out.push('_No differences found._');
   if (major.length) {
     const shown = major.slice(0, MAX_FIXES);
     out.push(area === 'visual' ? visualTable(shown, multi, prefix) : fixTable(shown, multi), ...more(major, shown.length));
@@ -228,7 +230,7 @@ function toCsvText(header, rows) {
   return `${[header, ...rows].map((r) => r.map(csvCell).join(',')).join('\n')}\n`;
 }
 
-const FIX_AREA_TITLE = { content: 'Content parity', visual: 'Visual parity', integration: 'Integration & SEO' };
+const FIX_AREA_TITLE = AREA_TITLE;
 
 /** The work list for a spreadsheet: one row per fix, with the same id as fixes.json. */
 function issuesCsv(fixes) {
@@ -260,9 +262,10 @@ function resultOf(findings) {
 }
 
 function pageAreas(p) {
-  const by = { content: [], visual: [], integration: [] };
+  const by = { content: [], visual: [], functional: [], integration: [] };
   for (const f of p.findings || []) by[areaOf(f.check)].push(f);
-  return Object.fromEntries(AREA_IDS.map((a) => [a, p.blocked || p.error ? 'not compared' : resultOf(by[a])]));
+  const result = (a) => (p.blocked || p.error ? 'not compared' : a === 'functional' && !(p.interaction && Number.isFinite(p.interaction.total)) ? 'not checked' : resultOf(by[a]));
+  return Object.fromEntries(AREA_IDS.map((a) => [a, result(a)]));
 }
 
 function topIssueOf(p) {
@@ -275,14 +278,14 @@ function detailPath(p) {
 }
 
 function pagesCsv(pairs, rules = DEFAULT_RULES, single = false) {
-  return toCsvText(['page', 'status', 'flaky', 'content', 'visual', 'integration', 'fail', 'review', 'p1', 'p2', 'p3', 'content_parity', 'visual_parity', 'top_issue', 'detail', 'before', 'after'],
+  return toCsvText(['page', 'status', 'flaky', 'content', 'visual', 'functional', 'integration', 'fail', 'review', 'p1', 'p2', 'p3', 'content_parity', 'visual_parity', 'functional_parity', 'top_issue', 'detail', 'before', 'after'],
     pairs.map((p) => {
       const a = pageAreas(p);
       const c = counts(p.findings || []);
       const previewHost = isPreviewHost(hostOf(p.after));
       const pr = (want) => (p.findings || []).flatMap(priorityParts).filter((f) => priorityOf(f, { previewHost }, rules) === want).length;
       const parity = pageParity(p);
-      return [pathOf(p), p.status, p.flaky || p.retried ? 'yes' : '', a.content, a.visual, a.integration, c.fail, c.review, pr('P1'), pr('P2'), pr('P3'), parity.content ?? '', parity.visual ?? '', topIssueOf(p), p.status === 'pass' || single ? '' : detailPath(p), p.before, p.after];
+      return [pathOf(p), p.status, p.flaky || p.retried ? 'yes' : '', a.content, a.visual, a.functional, a.integration, c.fail, c.review, pr('P1'), pr('P2'), pr('P3'), parity.content ?? '', parity.visual ?? '', parity.functional ?? '', topIssueOf(p), p.status === 'pass' || single ? '' : detailPath(p), p.before, p.after];
     }));
 }
 

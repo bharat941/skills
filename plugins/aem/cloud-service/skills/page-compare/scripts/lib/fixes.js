@@ -10,8 +10,8 @@ const { priorityOf, ownerOf, DEFAULT_RULES } = require('./rules');
 const { isPreviewHost, hostOf } = require('./util');
 const { areaOf, pathOf, issueTitle, countKey, verdictOf, PRIORITY_ORDER } = require('./actions');
 
-const AREA_ORDER = ['content', 'visual', 'integration'];
-const AREA_LETTER = { content: 'C', visual: 'V', integration: 'I' };
+const AREA_ORDER = ['content', 'visual', 'functional', 'integration'];
+const AREA_LETTER = { content: 'C', visual: 'V', functional: 'F', integration: 'I' };
 const MAX_FIX_ITEMS = 50;
 const MAX_VALUE = 300;
 
@@ -77,6 +77,8 @@ function scopesOf(f) {
     for (const it of items) put(`asset|${assetPrefix(it && (it.src || it.url))}`, 'asset', it);
   } else if (f.check === 'link.broken' && items.length) {
     for (const it of items) put(`link.broken|${it && it.url}`, 'link', it);
+  } else if (f.check.startsWith('interaction.') && items.length) {
+    for (const it of items) put(`${f.check}|${it && it.kind}|${(it && (it.heading || it.region)) || 'main'}`, 'interaction', it);
   } else if (VISUAL.has(f.check)) {
     if (items.length) for (const it of items) put(`${f.check}|${it && it.section}`, 'visual', it);
     else put(`${f.check}|${f.section || ''}`, 'visual', { section: f.section, viewport: f.viewport, files: f.files, summary: f.summary });
@@ -88,6 +90,16 @@ function scopesOf(f) {
 }
 
 function valuesOf(f, it) {
+  if (it && typeof it === 'object' && f.check.startsWith('interaction.')) {
+    if (it.before !== undefined || it.after !== undefined) return { expected: it.before, actual: it.after };
+    if (it.missing) return { expected: `form sends ${it.missing.join(', ')}`, actual: `missing: ${it.missing.join(', ')}` };
+    const what = `${it.kind} "${it.label}"`;
+    if (f.check === 'interaction.search.empty') return { expected: `results for "${it.term}"`, actual: 'no results' };
+    if (f.check === 'interaction.js_error') return { expected: `${what} without errors`, actual: it.message };
+    if (f.check === 'interaction.request.failed') return { expected: `${what} without failed requests`, actual: `${it.url} → ${it.status}` };
+    if (f.check === 'interaction.control.missing') return { expected: what, actual: '' };
+    return { expected: `${what} responds`, actual: it.error || 'nothing happened' };
+  }
   if (it && typeof it === 'object') {
     if (f.check === 'link.broken' || f.check === 'request.failed') return { expected: '', actual: `${it.url || it.src} → ${it.status || 'failed'}` };
     if (f.check === 'image.broken') return { expected: '', actual: `${it.src} → fails to load` };
@@ -126,6 +138,19 @@ function titleOf(fx) {
       const it = fx.items[0] || {};
       return `Link to ${S} returns ${it.status || 'an error'} (${fx.occurrences} link(s))`;
     }
+    case 'interaction': {
+      const kind = fx.items[0] ? fx.items[0].kind : 'control';
+      const check = first.check;
+      if (check === 'interaction.no_response') return `${S}: ${n} ${kind}(s) do not respond on the destination`;
+      if (check === 'interaction.js_error') return `${S}: JavaScript error when using ${n} ${kind}(s)`;
+      if (check === 'interaction.search.empty') return `Search returns no results on the destination (search "${fx.items[0].term}")`;
+      if (check === 'interaction.form.not_submitted') return `${S}: form does not submit on the destination`;
+      if (check === 'interaction.control.missing') return `${S}: ${n} ${kind}(s) missing on the destination`;
+      if (check === 'interaction.request.failed') return `${S}: requests fail when using ${n} ${kind}(s)`;
+      if (check === 'interaction.form.endpoint') return `${S}: form sends to a different address`;
+      if (check === 'interaction.form.fields') return `${S}: form sends fewer fields`;
+      return issueTitle(first);
+    }
     case 'visual': {
       if (first.check === 'visual.section.missing') return fx.replaced ? `Section ${S} has different content on the destination` : `Section ${S} is missing on the destination`;
       if (first.check === 'visual.section') return `Section ${S} looks different (${Math.max(...fx.items.map((x) => Number(x.pct) || 0))}% of pixels)`;
@@ -151,11 +176,13 @@ function sectionOf(kind, scope, f) {
     }
   }
   if (kind === 'visual') return sectionLabel(it && it.section);
+  if (kind === 'interaction') return (it && it.heading) || (it && CHROME_REGIONS.has(it.region) ? regionTitle(it.region) : 'Main content');
   return f.section ? sectionLabel(f.section) : '';
 }
 
 function areaOfScope(kind, check) {
   if (kind === 'chrome' || kind === 'section') return 'content';
+  if (kind === 'interaction') return 'functional';
   if (kind === 'asset' || kind === 'link') return 'integration';
   return areaOf(check);
 }
@@ -262,9 +289,12 @@ function buildFixes(run, rules = DEFAULT_RULES) {
     || x.id.localeCompare(y.id));
 }
 
-/** Content and visual parity of one page, in percent; null when the page could not be compared or has no sections. */
+/**
+ * Content, visual and functional parity of one page, in percent; null when the page could not be compared,
+ * has no sections, or (functional) interactions were not run or found nothing to use.
+ */
 function pageParity(pair) {
-  if (pair.blocked || pair.error) return { content: null, visual: null };
+  if (pair.blocked || pair.error) return { content: null, visual: null, functional: null };
   const missing = (pair.findings || []).find((f) => f.check === 'content.text.missing');
   let pct = 0;
   if (missing) {
@@ -272,7 +302,12 @@ function pageParity(pair) {
     pct = Number.isFinite(missing.pct) ? missing.pct : m ? Number(m[1]) : 0;
   }
   const rows = ((pair.visual && pair.visual.rows) || []).filter((r) => r.status !== 'added');
-  return { content: round1(100 - pct), visual: rows.length ? round1((100 * rows.filter((r) => r.status === 'pass').length) / rows.length) : null };
+  const ix = pair.interaction;
+  return {
+    content: round1(100 - pct),
+    visual: rows.length ? round1((100 * rows.filter((r) => r.status === 'pass').length) / rows.length) : null,
+    functional: ix && ix.total ? round1((100 * ix.ok) / ix.total) : null,
+  };
 }
 
 /** Mean parity over the compared pages. */
@@ -282,7 +317,7 @@ function runParity(pairs) {
     const v = all.map((x) => x[k]).filter((x) => x !== null);
     return v.length ? round1(v.reduce((a, b) => a + b, 0) / v.length) : null;
   };
-  return { content: mean('content'), visual: mean('visual') };
+  return { content: mean('content'), visual: mean('visual'), functional: mean('functional') };
 }
 
 const hostsOf = (urls) => [...new Set(urls.map(hostOf).filter(Boolean))].join(', ');
@@ -309,6 +344,9 @@ function reportModel(run, rules = DEFAULT_RULES, baseline = null) {
     pages: pairs.length,
     viewports: run.viewports || [],
     parity: runParity(pairs),
+    // Interactions run only with --interact; without them the Functional section says so instead of "no differences".
+    interactionChecked: pairs.some((p) => p.interaction && Number.isFinite(p.interaction.total)),
+    interactionErrors: pairs.filter((p) => p.interaction && p.interaction.error).map((p) => p.interaction.error),
     fixes,
     fixed,
     notRechecked,

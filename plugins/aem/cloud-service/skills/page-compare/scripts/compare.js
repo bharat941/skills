@@ -49,13 +49,15 @@ Options:
   --per-group <n>           Keep n pages per group: the CSV "group" column, else the first path segment after any /content/<site> and locale (/en/)
   --resume                  Reuse stored captures in --out and only reapply --accept
   --no-link-check           Skip HTTP checks of links and downloads
+  --interact                Also use accordions, tabs, carousels, menus, search and forms on both pages and compare
+                            what happens (first viewport; forms are a dry run: nothing is sent). Adds time per page
   --ua <suffix>             User-agent suffix (default page-compare/1.0)
   -h, --help
 
 Exit codes: 0 no fail/error/blocked, 1 at least one, 2 usage or setup error.`;
 
 const NOT_TESTED = [
-  'Form submissions, logins, search and other interactions (pages are only loaded, never clicked)',
+  'Logins, payments and multi-step flows. Accordions, tabs, carousels, menus, search and forms are only used with --interact (forms as a dry run: the request is recorded and blocked, never sent); without it pages are only loaded, never clicked',
   'Analytics interaction events, consent behaviour and end-to-end data arrival',
   'Performance beyond load and LCP timing, security headers, SEO ranking signals',
   'Cross-browser rendering (Chromium only)',
@@ -98,6 +100,7 @@ function parseOptions(argv) {
       'per-group': { type: 'string' },
       resume: { type: 'boolean', default: false },
       'no-link-check': { type: 'boolean', default: false },
+      interact: { type: 'boolean', default: false },
       ua: { type: 'string', default: 'page-compare/1.0' },
       help: { type: 'boolean', short: 'h', default: false },
     },
@@ -209,7 +212,23 @@ async function processPair(pair, env) {
         if (v.noise !== null) noise = Math.max(noise ?? 0, v.noise);
         if (v.unstable) unstable = true;
       }
+      if (opts.interact) {
+        const { interactPage, interactionFindings } = require('./lib/interact');
+        const { CONSENT_SELECTORS, HIDE_CSS } = require('./lib/capture');
+        const common = { viewport: primary, userAgent: opts['cdp-url'] ? undefined : `Mozilla/5.0 (compatible; ${opts.ua})`, storageState: opts['storage-state'], pacer, consentSel: CONSENT_SELECTORS.join(','), hideCss: HIDE_CSS };
+        try {
+          const ib = await interactPage(browser, pair.before, common);
+          const ia = await interactPage(browser, pair.after, { ...common, term: ib.term });
+          const r = interactionFindings(ib, ia);
+          findings.push(...r.findings);
+          result.interaction = { total: r.total, ok: r.ok, term: ib.term };
+        } catch (e) {
+          result.interaction = { error: String(e.message || e).slice(0, 200) };
+          findings.push({ check: 'interaction.error', severity: 'info', summary: `Interactions could not run: ${result.interaction.error}` });
+        }
+      }
     }
+    if (opts.interact && !comparable) result.interaction = { skipped: 'page not comparable' };
     const flaky = volatilePct > rules.text.volatileFlakyPct || result.retried;
     Object.assign(result, { rawFindings: findings, noise, volatilePct, flaky, unstable, visual: { rows }, meta: { before: metaSummary(b1.snapshot), after: metaSummary(a1.snapshot) } });
   } catch (err) {
@@ -283,7 +302,8 @@ async function main() {
     if (opts.resume && fs.existsSync(f)) {
       try {
         const r = readJson(f);
-        return reusableResult(r) ? r : null;
+        // A stored result without interactions is captured again when --interact is asked for.
+        return reusableResult(r) && !(opts.interact && !r.interaction) ? r : null;
       } catch (e) {
         return null;
       }

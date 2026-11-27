@@ -5,9 +5,10 @@ Compares live **before** and **after** pages after an AEM migration or redesign 
 - **Content**: text (including text hidden in tabs), headings, meta, images, links, navigation, forms, structured data
 - **Visual**: per-section screenshots at 1440/768/375 with a noise baseline so animated, rotating or volatile areas do not cause false failures
 - **Functional**: JavaScript and console errors, failed assets, load/LCP timing, accessibility deltas, Adobe Analytics / Web SDK / GA4 / Launch values and data layer
+- **Functional** (`--interact`): accordions, tabs, carousels, menus, search and forms behave the same on both pages
 - **Cut-over**: downloads, broken links, redirects, robots.txt, sitemap, and pages on the after site that were not compared
 
-Pages are only loaded (GET); nothing is clicked, submitted or sent to another service. Pages behind bot protection are reported as `blocked`, not as failures; with the site owner's agreement, `--cdp-url` captures them with a real Chrome instead (see [SKILL.md](SKILL.md)).
+By default pages are only loaded (GET); nothing is clicked, submitted or sent to another service. With `--interact`, accordions, tabs, carousels, menus, search and forms are used on both pages and compared (**Functional parity**); forms are a dry run: the request is recorded and blocked, never sent. Pages behind bot protection are reported as `blocked`, not as failures; with the site owner's agreement, `--cdp-url` captures them with a real Chrome instead (see [SKILL.md](SKILL.md)).
 
 ## Quick start
 
