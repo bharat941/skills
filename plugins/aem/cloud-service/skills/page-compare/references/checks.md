@@ -1,0 +1,121 @@
+# Checks reference
+
+Every finding has a `check` id, a severity (`fail`, `review`, `info`) and, where useful, `before`/`after` values or a list of `items`. Check ids are what `accepted.json` entries match on; a prefix matches all checks below it (`content.text` covers `content.text.missing`, `content.text.changed`, ...).
+
+Thresholds live in `scripts/lib/rules.js` and can be overridden with `--rules file.json`.
+
+Every fail or review finding also gets a launch **priority** (P1 blocker, P2 major, P3 minor, or expected on a preview host) that decides where it appears in `report.md`; the table is in [report.md](report.md#priorities) and the map is `priority` in `scripts/lib/rules.js`. Severity says how sure a check is that something changed; priority says how much it matters.
+
+## Page status and redirects
+
+| Check | Severity | Meaning |
+|---|---|---|
+| `page.missing` | fail | Before page loads, after page returns 404/410 |
+| `http.status` | fail / review | After page returns a non-2xx status (review when the before page failed too) |
+| `http.before` | review | Before page is not 2xx, so nothing can be compared |
+| `redirect.chain` | review | After URL needs more than 3 redirects |
+| `redirect.temporary` | review | After URL redirects with 302/303/307 |
+| `redirect.target` | info | After URL ends on a different path |
+
+When either page is not 2xx, the remaining checks are skipped for that pair.
+
+## Content
+
+| Check | Severity | Meaning |
+|---|---|---|
+| `content.text.missing` | fail above 10% of before text lost, otherwise review | Text blocks on before that have no match on after. Blocks hidden on load in the main content (tabs, accordions, FAQ answers) are included and flagged `hidden`; hidden header and footer text (menus) is not counted |
+| `content.facts.changed` | fail | Reworded or rewritten text that states different figures: speeds, sizes, percentages (`1.25x` vs `1.3x`, `25%` vs `20%`, `12nm` vs `14nm`, `32GB` vs `64GB`, `8533Mbps` vs `10700Mbps`). A unit written next to the number can be any word (`3.5mm`, `120Hz`); after a space only known units count. Digits inside names (LPDDR5X, AEC-Q100) and a number with one other letter (5G, 4K) are not figures |
+| `content.text.changed` | review | Reworded text (85% or more similar) with the same figures |
+| `content.text.rewritten` | review | A block that is missing and a new block in the same region that still say much the same thing (50% or more similar), with the same figures. Reported as one pair instead of one missing and one added block |
+| `content.placeholder` | fail | Visible text only on the after page that is left-over authoring copy: lorem ipsum, "Disclaimer text 1", placeholder, sample text, text goes here, TBD, dummy text. Patterns are `text.placeholder` in the rules |
+| `content.empty_state` | review | A list or search component on the after page that came back empty ("No results found", "No items found", "Nothing to show"). Patterns are `text.emptyState` in the rules |
+| `content.text.added` | review above 2% of before text, otherwise info | New text on after |
+| `content.text.format` | info | Same words, different spacing |
+| `content.text.regrouped` | info | Text that is on the after page but split into or merged from other blocks by new markup (for example a nav line `Owners Careers Investors` that became three items). Not counted as missing or added |
+| `heading.missing` / `heading.level` / `heading.added` | review / review / info | Heading text and level changes |
+| `meta.title`, `meta.description`, `meta.canonical`, `meta.robots`, `meta.lang`, `meta.hreflang`, `meta.social`, `meta.favicon` | fail or review | Head metadata. A missing title, a canonical pointing to the wrong host and `noindex` appearing are fails. On a preview or publish host (Edge Delivery `*.aem.page`/`.live`, `*.hlx.page`/`.live`, and AEM as a Cloud Service `author|publish|preview-p<program>-e<env>.adobeaemcloud.com`/`.net`) a canonical that still points to production is review, since those hosts keep it by design |
+| `consent.missing` | review | A cookie consent banner (OneTrust, Cookiebot, TrustArc, ...) is on the before page but not on the after page. Consent dialogs are otherwise left out of every content check and screenshot, so their headings, buttons and logos never show up as missing content |
+| `image.missing`, `image.broken` | fail | Content images missing or failing to load. Images are matched by file name, then by alt text, since Edge Delivery and DAM moves rename images (`media_<hash>.jpg`). An image with no alt text and a new name cannot be matched and shows as missing |
+| `image.alt`, `image.alt.changed` | review | Alt text lost or changed |
+| `image.missing.chrome`, `image.broken.chrome` | review | Same, for header/footer images |
+| `link.missing`, `link.target`, `link.added` | review / review / info | Links compared after mapping before hosts and paths to the after site |
+| `nav.item` | review | Navigation entry missing (priority P3 unless overridden) |
+| `cta.missing` | review | Button or call-to-action label missing |
+| `form.field.missing` | fail | A form field present before is gone |
+| `form.field.changed`, `form.action` | review | Field type, label or required flag changed; form action changed |
+| `jsonld.type` | fail | Structured data type missing |
+
+Text that differs between two loads of the before page (for example a counter) is treated as volatile and ignored. If more than 5% of the text is volatile the page is `flaky`.
+
+## Visual
+
+Pages are split into sections (header, footer, and the children of `main`, looking through wrappers that hold a single element such as AEM's `.page-body > .parsys`; override with `--sections`). A section is identified by its visible text; inline CSS and scripts inside it are ignored. The header is always paired with the header and the footer with the footer, so a changed header is compared, not reported as missing. Other sections are paired by text, then by order, and compared at each viewport. The before page is loaded twice; pixels that differ between those loads are masked out of the comparison. A section whose text differs between the two before loads (rotating testimonials, carousels) is paired by its position name instead of its text and compared with that mask, so it is never reported as missing. A section with the same name and the same opening words (usually its heading) on both pages is also treated as the same section with changed content, so a carousel that starts on a different slide is a visual difference with screenshots, not a missing section. Add `--mask <selector>` for carousels to leave them out entirely. One-pixel shifts caused by content above a section are tolerated.
+
+| Check | Severity | Meaning |
+|---|---|---|
+| `visual.section` | review above 1% pixels changed, fail above 5% | Sections that look different (diff image saved) |
+| `visual.section.missing` | fail when the section has 20 or more characters of text or is 200px or taller, otherwise review | Section on before with no match on after |
+| `visual.section.added` | info | New section on after |
+| `visual.height` | review | Section height changed by more than 10% |
+| `visual.unstable` | review | The before page changes 15% or more between two loads; the page is marked `unstable` and pixels are not compared |
+
+Whole-page height differences are reported per section, not as a pixel diff of the whole page.
+
+## Functional
+
+| Check | Severity | Meaning |
+|---|---|---|
+| `js.error` | fail | New uncaught JavaScript error on after |
+| `console.error` | review | New console error on after |
+| `resource.missing` | fail | CSS, JS or font request fails on after and not on before |
+| `request.failed` | review | Other new failed requests |
+| `request.mixed` | review | More insecure (http) requests |
+| `perf.load`, `perf.lcp` | review | Load or LCP at least 1.5x and 1000 ms slower |
+| `a11y.delta` | review | More images without alt, empty links or empty buttons |
+| `download.broken` / `download.changed` | fail / review | Linked PDFs and other downloads that do not resolve, or changed type or size (over 20%) |
+| `link.broken` | fail | Internal links on after that return an error (up to 50 checked per page). Links already broken on before are `link.broken.preexisting` (info) |
+
+## Interactions (`--interact`)
+
+With `--interact`, the controls on the source page (up to 8 per kind: accordions, tabs, carousels, menus, search fields, forms) are used on both pages at the first viewport and matched by kind and visible label. A control that does nothing on the source is not compared. Forms are filled with test data carrying a unique marker and submitted as a **dry run**: any request carrying the marker, every non-GET request, and, once a form has been used, every navigation and scripted request (in any frame or new tab) is recorded and blocked, never sent. The form's own request is the one carrying the marker or its field names; analytics beacons fired on submit do not count. A control counts as responding when its own component (its `aria-controls` target, AEM component or nearest container) changes or the page navigates; JavaScript errors and failed requests that also happen with nobody touching the page are not blamed on a control. A destination control the tool cannot get at after a page reload (it still is not there after scrolling the page) is left out of the comparison and the parity, not reported as broken. The search term is the first word of the source page's H1 (at least four letters), else `test`. These checks form the **Functional parity** area; parity is the share of source controls that behave the same on the destination.
+
+| Check | Severity | Meaning |
+|---|---|---|
+| `interaction.no_response` | fail | Works on the source (opens, changes or navigates) but nothing happens on the destination |
+| `interaction.js_error` | fail | A new JavaScript error when using the control on the destination |
+| `interaction.search.empty` | fail | Search shows results on the source but an empty result ("No results found") on the destination |
+| `interaction.form.not_submitted` | fail | The form sends a request on the source but none on the destination |
+| `interaction.control.missing` | review | A working control on the source has no match (same kind and label) on the destination |
+| `interaction.request.failed` | review | Requests fail (4xx/5xx) when using the control on the destination only |
+| `interaction.form.endpoint` | review | The form sends to a different address or with a different method |
+| `interaction.form.fields` | review | The form sends fewer fields on the destination |
+| `interaction.error` | info | Interactions could not run on this page |
+
+## Analytics
+
+Compared from the requests a page load makes and from `adobeDataLayer` / `digitalData`.
+
+| Check | Severity | Meaning |
+|---|---|---|
+| `analytics.tag` | fail / review | Tag manager (Launch, GTM) or analytics requests lost |
+| `analytics.beacon` | fail | No page-view beacon fired on after |
+| `analytics.rsid`, `analytics.datastream`, `analytics.ga4` | review | Report suite, datastream or measurement ID differs |
+| `analytics.pagename`, `analytics.channel` | review | Adobe Analytics values differ |
+| `analytics.launch` | review | Launch library differs |
+| `analytics.expected` | fail | Value differs from `--expect-analytics` |
+| `analytics.datalayer.keys` / `.values` | fail or review | Data layer keys missing, or values differ |
+
+Not covered: interaction events (clicks, form submits), consent behaviour, and whether data reaches reporting.
+
+## Site level (once per run)
+
+| Check | Severity | Meaning |
+|---|---|---|
+| `site.robots` | fail / review | After robots.txt disallows everything, or is missing when before has one. Review instead of fail on a preview or publish host (see `meta.canonical`), where blocking crawlers is by design |
+| `site.sitemap` | review | sitemap.xml missing on after |
+| `redirect.wrong` / `redirect.temporary` | fail / review | From `--redirects`: before URL does not redirect to the expected target, or uses a temporary redirect |
+| Page-set coverage | shown in summary | With `--after-sitemap`: after pages not in the compared set |
+
+## Not tested
+
+Without `--interact`: form submission, search, carousels, tabs and menus. Always: logins, payments and multi-step flows, real form delivery (forms are only ever dry runs), cross-browser rendering, security headers, SEO ranking, and analytics interaction events.
